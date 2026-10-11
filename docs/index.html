@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Darmstadt in Bewegung</title>
+<link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.4/dist.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0d12; --panel: rgba(16, 19, 26, 0.95); --line: rgba(255,255,255,0.09);
+    --text: #e8eaf0; --muted: #8a90a0; --accent: #ffd166;
+    --tram: #ff6b6b; --bus: #2ec4b6; --rail: #c77dff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #map { position: absolute; inset: 0; }
+  .panel { position: absolute; z-index: 2; background: var(--panel); backdrop-filter: blur(10px);
+    border: 1px solid var(--line); border-radius: 14px; }
+  #head { top: 16px; left: 16px; padding: 14px 18px; max-width: 360px; }
+  #head h1 { margin: 0 0 2px; font-size: 17px; font-weight: 650; letter-spacing: .01em; }
+  #head p { margin: 0; color: var(--muted); font-size: 12.5px; }
+  .sec { margin-top: 14px; }
+  .lbl { font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 6px; }
+  #counts { display: flex; gap: 20px; }
+  .cnt b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; font-weight: 650; line-height: 1.15; }
+  .cnt span { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+  .cnt i, .tog i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+  .cnt.off { opacity: .35; }
+  #toggles { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tog { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 8px; font-size: 12.5px; }
+  .tog .box { width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid var(--muted);
+    display: grid; place-items: center; font-size: 10px; line-height: 1; color: #111; }
+  .tog[aria-pressed="true"] .box { background: var(--accent); border-color: var(--accent); }
+  .tog[aria-pressed="true"] .box::after { content: "✓"; font-weight: 800; }
+  .tog[aria-pressed="false"] { color: var(--muted); }
+  #head { display: flex; flex-direction: column; max-height: var(--head-max, calc(100vh - 32px)); }
+  #legend-sec { min-height: 0; display: flex; flex-direction: column; }
+  #legend { overflow-y: auto; margin-right: -8px; padding-right: 8px; }
+  #legend details { border-top: 1px solid var(--line); }
+  #legend summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
+    padding: 6px 0; font-size: 12.5px; user-select: none; }
+  #legend summary::-webkit-details-marker { display: none; }
+  #legend summary::before { content: "▸"; color: var(--muted); font-size: 10px; width: 10px; transition: transform .15s; }
+  #legend details[open] summary::before { transform: rotate(90deg); }
+  #legend summary .n { color: var(--muted); font-size: 11px; margin-left: auto; }
+  #legend .chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 0 9px 16px; }
+  #selinfo { font-size: 12px; margin-bottom: 6px; display: none; align-items: baseline; gap: 6px; }
+  #selinfo button { padding: 1px 7px; font-size: 11px; border-radius: 6px; margin-left: auto; flex: none; }
+  .chip { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; cursor: pointer;
+    color: #111; border: 2px solid transparent; }
+  .chip.sel { border-color: #fff; }
+  #bar { left: 16px; right: 16px; bottom: 16px; padding: 12px 16px 14px; }
+  #row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  #clock { font-size: 34px; font-weight: 650; font-variant-numeric: tabular-nums; min-width: 105px; letter-spacing: .02em; }
+  button, select { background: rgba(255,255,255,.07); color: var(--text); border: 1px solid var(--line);
+    border-radius: 9px; padding: 7px 12px; font: inherit; cursor: pointer; }
+  button:hover, select:hover { background: rgba(255,255,255,.13); }
+  #play { width: 44px; font-size: 16px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; background: transparent; }
+  .seg button.on { background: rgba(255,209,102,.18); color: var(--accent); }
+  .ctl { display: flex; flex-direction: column; gap: 3px; }
+  .ctl .lbl { margin: 0; }
+  #tempo-cap { text-transform: none; letter-spacing: 0; font-weight: 500; }
+  #hint { margin-left: auto; color: var(--muted); font-size: 12px; max-width: 220px; text-align: right; }
+  #timeline { position: relative; margin-top: 10px; height: 46px; cursor: pointer; }
+  #timeline canvas { width: 100%; height: 100%; display: block; }
+  #tip { position: absolute; pointer-events: none; padding: 6px 9px; font-size: 12.5px; display: none;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; z-index: 5; }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); z-index: 9; background: var(--bg); }
+  .maplibregl-ctrl-attrib { background: rgba(0,0,0,.5) !important; font-size: 10px; }
+  .maplibregl-ctrl-attrib a { color: #aaa !important; }
+
+  @media (max-width: 640px) {
+    #head { right: 16px; max-width: none; }
+    #legend-sec { display: none; }
+    .seg button { padding: 7px 9px; }
+    #clock { font-size: 26px; min-width: 80px; }
+    #hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="loading">Lade Fahrplandaten …</div>
+
+<div id="head" class="panel">
+  <h1>Darmstadt in Bewegung</h1>
+  <p>Straßenbahn, Bus und S-/Regionalbahn nach Soll-Fahrplan</p>
+  <div class="sec">
+    <div class="lbl">Gerade unterwegs</div>
+    <div id="counts">
+      <div class="cnt" data-mode="tram"><b id="n-tram">0</b><span><i style="background:var(--tram)"></i>Straßenbahnen</span></div>
+      <div class="cnt" data-mode="bus"><b id="n-bus">0</b><span><i style="background:var(--bus)"></i>Busse</span></div>
+      <div class="cnt" data-mode="rail"><b id="n-rail">0</b><span><i style="background:var(--rail)"></i>Züge</span></div>
+    </div>
+  </div>
+  <div class="sec">
+    <div class="lbl">Auf der Karte zeigen</div>
+    <div id="toggles">
+      <button class="tog" data-mode="tram" aria-pressed="true"><span class="box"></span><i style="background:var(--tram)"></i>Straßenbahn</button>
+      <button class="tog" data-mode="bus" aria-pressed="true"><span class="box"></span><i style="background:var(--bus)"></i>Bus</button>
+      <button class="tog" data-mode="rail" aria-pressed="true"><span class="box"></span><i style="background:var(--rail)"></i>S-/Regionalbahn</button>
+    </div>
+  </div>
+  <div class="sec" id="legend-sec">
+    <div class="lbl">Linie hervorheben</div>
+    <div id="selinfo"><span id="selname"></span><button id="selclear" title="Hervorhebung aufheben">✕</button></div>
+    <div id="legend"></div>
+  </div>
+</div>
+
+<div id="bar" class="panel">
+  <div id="row">
+    <div id="clock">04:00</div>
+    <button id="play" title="Abspielen/Pause (Leertaste)">❚❚</button>
+    <div class="ctl">
+      <div class="lbl">Fahrplan für</div>
+      <div class="seg" id="days">
+        <button data-day="werktag" class="on">Werktag</button><button data-day="samstag">Samstag</button><button data-day="sonntag">Sonntag</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <div class="lbl">Abspieltempo · <span id="tempo-cap"></span></div>
+      <div class="seg" id="speed">
+        <button data-speed="1" title="Aktuelle Uhrzeit, Fahrzeuge fahren in echter Geschwindigkeit">Live</button><button data-speed="60">Langsam</button><button data-speed="240" class="on">Mittel</button><button data-speed="960">Schnell</button>
+      </div>
+    </div>
+    <span id="hint">Fahrzeug anklicken, um seine Linie hervorzuheben · Leertaste: Pause</span>
+  </div>
+  <div id="timeline"><canvas id="tl"></canvas></div>
+</div>
+<div id="tip"></div>
+
+<script>
+const T0 = 3.5 * 3600, T1 = 27 * 3600;        // Betriebstag 03:30 – 03:00 (+1)
+const TRAIL = 90;                              // Schweiflänge in Sekunden Fahrplanzeit
+const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
+const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
+const fmt = s => { s = ((s % 86400) + 86400) % 86400; return String(Math.floor(s/3600)).padStart(2,'0') + ':' + String(Math.floor(s%3600/60)).padStart(2,'0'); };
+
+const state = { t: 5 * 3600, playing: true, speed: 240, day: 'werktag',
+  modes: { tram: true, bus: true, rail: true }, selLine: null };
+let META, SHAPES, SHAPE_CD, TRIPS = [], HIST = null;
+const cache = {};
+
+// kumulative Distanzen je Shape – gleiche Näherung wie im Python-Build
+function cumdist(f) {
+  const n = f.length / 2, out = new Float64Array(n);
+  for (let i = 1; i < n; i++) {
+    const x1 = f[2*i-2], y1 = f[2*i-1], x2 = f[2*i], y2 = f[2*i+1];
+    const kx = 111320 * Math.cos((y1 + y2) / 2 * Math.PI / 180);
+    out[i] = out[i-1] + Math.hypot((x2-x1)*kx, (y2-y1)*110540);
+  }
+  return out;
+}
+
+// Pfad + Zeitstempel einer Fahrt aus Shape und (Distanz, Zeit)-Stützstellen
+function buildTrip([li, si, dest, pts]) {
+  const f = SHAPES[si], cd = SHAPE_CD[si], n = cd.length;
+  const path = [], ts = [];
+  let j = 0;
+  const posAt = d => {
+    while (j < n - 2 && cd[j+1] < d) j++;
+    const seg = cd[j+1] - cd[j], u = seg > 0 ? Math.min(1, Math.max(0, (d - cd[j]) / seg)) : 0;
+    return [f[2*j] + u*(f[2*j+2]-f[2*j]), f[2*j+1] + u*(f[2*j+3]-f[2*j+1])];
+  };
+  let pd = -Infinity;
+  for (let k = 0; k < pts.length; k += 2) {
+    const d = Math.max(pd, pts[k]), t = pts[k+1];
+    if (k > 0 && d > pd) {                       // Stützpunkte des Shapes zwischen zwei Halten
+      const t0 = ts[ts.length-1];
+      let v = j + 1;
+      while (v < n && cd[v] < d) {
+        if (cd[v] > pd) { path.push([f[2*v], f[2*v+1]]); ts.push(t0 + (t - t0) * (cd[v] - pd) / (d - pd)); }
+        v++;
+      }
+    }
+    path.push(posAt(d)); ts.push(t); pd = d;
+  }
+  const line = META.lines[li];
+  return { path, ts, line: li, mode: line.mode, color: hex(line.color), dest,
+           start: ts[0], end: ts[ts.length-1] };
+}
+
+async function loadDay(day) {
+  if (!cache[day]) {
+    const raw = await fetch(`data/trips_${day}.json`).then(r => r.json());
+    const trips = raw.map(buildTrip).filter(t => t.path.length > 1);
+    // Histogramm aktiver Fahrzeuge je 5 min und Modus
+    const bins = Math.ceil((T1 - T0) / 300), hist = { tram: new Uint16Array(bins), bus: new Uint16Array(bins), rail: new Uint16Array(bins) };
+    for (const t of trips) {
+      const a = Math.max(0, Math.floor((t.start - T0) / 300)), b = Math.min(bins - 1, Math.floor((t.end - T0) / 300));
+      for (let i = a; i <= b; i++) hist[t.mode][i]++;
+    }
+    cache[day] = { trips, hist };
+  }
+  TRIPS = cache[day].trips; HIST = cache[day].hist;
+  drawTimeline();
+}
+
+function headPos(tr, t) {
+  const ts = tr.ts; let lo = 0, hi = ts.length - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (ts[m] <= t) lo = m; else hi = m; }
+  const u = ts[hi] > ts[lo] ? (t - ts[lo]) / (ts[hi] - ts[lo]) : 0;
+  const a = tr.path[lo], b = tr.path[hi];
+  return [a[0] + u*(b[0]-a[0]), a[1] + u*(b[1]-a[1])];
+}
+
+// ---------- Karte
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
+  center: [8.652, 49.872], zoom: 12.3, pitch: 35, bearing: -8, maxPitch: 60,
+  attributionControl: { compact: true, customAttribution: 'Fahrplan: DELFI e.V. via gtfs.de (CC BY 4.0) · Shapes: pfaedle · © OpenStreetMap-Mitwirkende (ODbL)' }
+});
+const overlay = new deck.MapboxOverlay({ interleaved: false, layers: [] });
+map.addControl(overlay);
+map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
+
+const tip = document.getElementById('tip');
+function render() {
+  const t = state.t, sel = state.selLine;
+  const vis = [], heads = [], counts = { tram: 0, bus: 0, rail: 0 };
+  for (const tr of TRIPS) {
+    if (tr.start > t + 1 || tr.end + TRAIL < t) continue;
+    const running = tr.start <= t && tr.end >= t;
+    if (running) counts[tr.mode]++;
+    if (!state.modes[tr.mode]) continue;
+    vis.push(tr); if (running) heads.push(tr);
+  }
+  for (const m in counts) document.getElementById('n-' + m).textContent = counts[m];
+  const alpha = tr => sel === null || tr.line === sel ? 255 : 40;
+  overlay.setProps({ layers: [
+    new deck.PathLayer({ id: 'tracks', data: META.tram_tracks, getPath: d => {
+        const p = []; for (let i = 0; i < d.length; i += 2) p.push([d[i], d[i+1]]); return p; },
+      getColor: [255, 255, 255, 38], widthUnits: 'pixels', getWidth: 1 }),
+    new deck.ScatterplotLayer({ id: 'stations', data: META.stations, getPosition: d => [d[1], d[2]],
+      getRadius: d => d[3].includes('rail') ? 5 : d[3].includes('tram') ? 3 : 2, radiusUnits: 'pixels',
+      getFillColor: d => d[3].includes('rail') ? [199,125,255,110] : [255,255,255,55], pickable: true }),
+    new deck.TripsLayer({ id: 'trails', data: vis, getPath: d => d.path, getTimestamps: d => d.ts,
+      getColor: d => [...d.color, alpha(d)], currentTime: t, trailLength: TRAIL, fadeTrail: true,
+      widthUnits: 'pixels', getWidth: d => d.mode === 'bus' ? 2.5 : 3.5, capRounded: true, jointRounded: true,
+      updateTriggers: { getColor: sel } }),
+    new deck.ScatterplotLayer({ id: 'heads', data: heads, getPosition: d => headPos(d, t),
+      getRadius: d => d.mode === 'bus' ? 3.2 : 4.5, radiusUnits: 'pixels',
+      getFillColor: d => [...d.color, alpha(d)], stroked: true, getLineColor: d => [255,255,255, sel === null || d.line === sel ? 200 : 25],
+      lineWidthUnits: 'pixels', getLineWidth: 1, pickable: true,
+      updateTriggers: { getPosition: t, getFillColor: sel, getLineColor: sel } }),
+  ],
+  onHover: info => {
+    if (!info.object) { tip.style.display = 'none'; return; }
+    const o = info.object;
+    tip.innerHTML = Array.isArray(o) ? `<b>${o[0]}</b>` :
+      `<b>${META.lines[o.line].name}</b> → ${shortStop(o.dest)}<br><span style="color:var(--muted)">${META.lines[o.line].agency ?? ''} · ${fmt(o.start)}–${fmt(o.end)}</span>`;
+    tip.style.display = 'block'; tip.style.left = info.x + 14 + 'px'; tip.style.top = info.y + 14 + 'px';
+  },
+  onClick: info => { selectLine(info.object && !Array.isArray(info.object) ? info.object.line : null); },
+  getCursor: ({ isHovering }) => isHovering ? 'pointer' : 'grab' });
+  document.getElementById('clock').textContent = fmt(t);
+  drawCursor();
+}
+
+// Stationsnamen kürzen: "Darmstadt-Eberstadt Frankenstein" -> "Eberstadt Frankenstein"
+const shortStop = n => n.replace(/^Darmstadt[- ]/, '');
+const lineEnds = l => l.ends.map(shortStop).join(' ↔ ');
+
+function selectLine(li) {
+  state.selLine = state.selLine === li ? null : li;
+  document.querySelectorAll('.chip').forEach(c => c.classList.toggle('sel', +c.dataset.line === state.selLine));
+  const info = document.getElementById('selinfo');
+  render();
+  if (state.selLine === null) { info.style.display = 'none'; return; }
+  const l = META.lines[state.selLine];
+  document.getElementById('selname').innerHTML = `<b>${l.name}</b> <span style="color:var(--muted)">${lineEnds(l)}</span>`;
+  info.style.display = 'flex';
+  const chip = document.querySelector(`.chip[data-line="${state.selLine}"]`);
+  if (chip) { chip.closest('details').open = true; chip.scrollIntoView({ block: 'nearest' }); }
+}
+
+// Linienleiste nach Verkehrsart/Betreiber gruppiert
+const GROUPS = [
+  { name: 'Straßenbahn', open: true, test: l => l.mode === 'tram' },
+  { name: 'S-Bahn', open: true, test: l => l.mode === 'rail' && l.name.startsWith('S') },
+  { name: 'Regionalzüge', test: l => l.mode === 'rail' },
+  { name: 'Stadtbusse HEAG', test: l => l.agency === 'HEAG' },
+  { name: 'Busse DADINA', test: l => l.agency === 'DADINA' },
+  { name: 'Regionalbusse RMV', test: l => l.agency === 'RMV' },
+  { name: 'Sonstige Busse', test: () => true },
+];
+function buildLegend() {
+  const lg = document.getElementById('legend'), done = new Set();
+  const byName = (a, b) => a.l.name.localeCompare(b.l.name, 'de', { numeric: true });
+  for (const g of GROUPS) {
+    const items = META.lines.map((l, i) => ({ l, i })).filter(x => !done.has(x.i) && g.test(x.l)).sort(byName);
+    if (!items.length) continue;
+    items.forEach(x => done.add(x.i));
+    const det = document.createElement('details'); det.open = !!g.open;
+    det.innerHTML = `<summary>${g.name}<span class="n">${items.length} ${items.length === 1 ? 'Linie' : 'Linien'}</span></summary><div class="chips"></div>`;
+    const box = det.querySelector('.chips');
+    for (const { l, i } of items) {
+      const c = document.createElement('span'); c.className = 'chip'; c.dataset.line = i;
+      c.textContent = l.name; c.style.background = l.color; c.onclick = () => selectLine(i);
+      c.onmouseenter = e => { tip.innerHTML = `<b>${l.name}</b> ${lineEnds(l)}`; tip.style.display = 'block';
+        const r = c.getBoundingClientRect(); tip.style.left = document.getElementById('head').getBoundingClientRect().right + 8 + 'px'; tip.style.top = r.top - 4 + 'px'; };
+      c.onmouseleave = () => { tip.style.display = 'none'; };
+      box.appendChild(c);
+    }
+    lg.appendChild(det);
+  }
+}
+
+// ---------- Zeitleiste: aktive Fahrzeuge über den Tag (gestapelt)
+const tl = document.getElementById('tl'), tctx = tl.getContext('2d');
+let tlImage = null;
+function drawTimeline() {
+  const dpr = devicePixelRatio || 1, w = tl.clientWidth, h = tl.clientHeight;
+  tl.width = w * dpr; tl.height = h * dpr; tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  tctx.clearRect(0, 0, w, h);
+  const bins = HIST.tram.length, modes = ['rail', 'tram', 'bus'].filter(m => state.modes[m]);
+  let max = 1;
+  for (let i = 0; i < bins; i++) max = Math.max(max, modes.reduce((s, m) => s + HIST[m][i], 0));
+  const bw = w / bins, top = 14, H = h - top;
+  for (let i = 0; i < bins; i++) {
+    let y = h;
+    for (const m of modes) {
+      const bh = HIST[m][i] / max * H;
+      tctx.fillStyle = `rgba(${MODE_RGB[m]},0.55)`; tctx.fillRect(i * bw, y - bh, Math.max(1, bw - 0.5), bh); y -= bh;
+    }
+  }
+  tctx.fillStyle = '#8a90a0'; tctx.font = '10px system-ui';
+  for (let hr = 4; hr <= 26; hr += 2) {
+    const x = (hr * 3600 - T0) / (T1 - T0) * w;
+    tctx.fillText(String(hr % 24).padStart(2, '0'), x - 6, 10);
+  }
+  tlImage = tctx.getImageData(0, 0, tl.width, tl.height);
+}
+function drawCursor() {
+  if (!tlImage) return;
+  tctx.putImageData(tlImage, 0, 0);
+  const w = tl.clientWidth, h = tl.clientHeight, x = (state.t - T0) / (T1 - T0) * w;
+  tctx.fillStyle = 'rgba(0,0,0,.35)'; tctx.fillRect(x, 13, w - x, h - 13);
+  tctx.fillStyle = '#ffd166'; tctx.fillRect(x - 1, 12, 2, h - 12);
+}
+const scrub = e => { state.live = false; const r = tl.getBoundingClientRect(); state.t = T0 + Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * (T1 - T0); render(); };
+tl.addEventListener('pointerdown', e => { tl.setPointerCapture(e.pointerId); scrub(e); tl.onpointermove = scrub; });
+tl.addEventListener('pointerup', () => { tl.onpointermove = null; });
+addEventListener('resize', () => HIST && drawTimeline());
+
+// Kartenbedienelemente immer über der unteren Leiste halten
+const placeCtrls = () => {
+  const bh = document.getElementById('bar').offsetHeight, off = bh + 24 + 'px';
+  document.documentElement.style.setProperty('--head-max', `calc(100vh - ${bh + 48}px)`);
+  document.querySelectorAll('.maplibregl-ctrl-bottom-right, .maplibregl-ctrl-bottom-left').forEach(e => e.style.bottom = off);
+};
+addEventListener('resize', placeCtrls); placeCtrls();
+
+// ---------- Steuerung
+const playBtn = document.getElementById('play');
+const setPlaying = p => { state.playing = p; playBtn.textContent = p ? '❚❚' : '▶'; };
+playBtn.onclick = () => setPlaying(!state.playing);
+addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); setPlaying(!state.playing); } });
+// Tempo als Klartext: wie lange eine Fahrplanstunde in echter Zeit dauert
+function setSpeed(v) {
+  state.speed = v;
+  document.querySelectorAll('#speed button').forEach(b => b.classList.toggle('on', +b.dataset.speed === v));
+  const sec = 3600 / v;
+  document.getElementById('tempo-cap').textContent = v === 1 ? 'wie in echt' :
+    '1 Std. in ' + (sec >= 60 ? Math.round(sec / 60) + ' Min.' : Math.round(sec) + ' Sek.');
+}
+// Echtzeit: zur aktuellen Uhrzeit springen und den passenden Tagestyp wählen
+// Fahrplanzeit + Tagestyp für "jetzt"
+function liveNow() {
+  const now = new Date();
+  let t = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+  let wd = now.getDay();                        // 0 = So
+  if (t < T0) { t += 86400; wd = (wd + 6) % 7; } // nach Mitternacht zählt zum Betriebstag davor
+  return { t: t + now.getMilliseconds() / 1000, day: wd === 0 ? 'sonntag' : wd === 6 ? 'samstag' : 'werktag' };
+}
+async function goLive() {
+  await setDay(liveNow().day);
+  state.live = true; setPlaying(true); render();
+}
+document.querySelectorAll('#speed button').forEach(b => b.onclick = () => {
+  setSpeed(+b.dataset.speed);
+  state.live = false;
+  if (state.speed === 1) goLive();
+});
+setSpeed(state.speed);
+async function setDay(day) {
+  document.querySelectorAll('#days button').forEach(x => x.classList.toggle('on', x.dataset.day === day));
+  state.day = day; await loadDay(day); render();
+}
+document.querySelectorAll('#days button').forEach(b => b.onclick = () => { state.live = false; setDay(b.dataset.day); });
+document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
+  const m = c.dataset.mode; state.modes[m] = !state.modes[m];
+  c.setAttribute('aria-pressed', state.modes[m]);
+  document.querySelector(`.cnt[data-mode="${m}"]`).classList.toggle('off', !state.modes[m]);
+  drawTimeline(); render();
+});
+
+let last = performance.now();
+function tick(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (state.playing) {
+    if (state.live) {                           // Echtzeit: direkt an die Systemuhr gekoppelt
+      const now = liveNow();
+      if (now.day !== state.day) setDay(now.day);
+      state.t = now.t;
+    } else { state.t += dt * state.speed; if (state.t > T1) state.t = T0; }
+    render();
+  }
+  requestAnimationFrame(tick);
+}
+
+(async () => {
+  [META, SHAPES] = await Promise.all([fetch('data/meta.json').then(r => r.json()), fetch('data/shapes.json').then(r => r.json())]);
+  SHAPE_CD = SHAPES.map(cumdist);
+  buildLegend();
+  document.getElementById('selclear').onclick = () => selectLine(state.selLine);
+  await loadDay(state.day);
+  document.getElementById('loading').remove();
+  map.on('load', render);
+  if (map.loaded()) render();
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
