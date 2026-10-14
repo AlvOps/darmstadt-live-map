@@ -298,6 +298,9 @@
     const alpha = v => (sel === null || v.lineIdx === sel) ? 255 : 45;
     const dim = v => (sel !== null && v.lineIdx !== sel);
     const vis = cur.filter(c => ctx.state.modes[c.v.mode]);
+    // Angeklicktes Fahrzeug dauerhaft markieren, damit der Punkt auch nach dem Kamera-Follow zu finden ist
+    const focusTrip = popupVehicle ? popupVehicle.tripId : null;
+    const focus = focusTrip ? cur.find(c => c.v.tripId === focusTrip) : null;
 
     const layers = [
       // Trefferfläche für Halte: unsichtbar, aber großzügig — die sichtbaren Punkte sind nur ~2 px,
@@ -322,14 +325,21 @@
       }),
       new ctx.deck.ScatterplotLayer({
         id: 'live-heads', data: vis, getPosition: d => d.pos,
-        getRadius: d => (d.v.mode === 'bus' ? 4 : 5), radiusUnits: 'pixels',
+        getRadius: d => (focusTrip && d.v.tripId === focusTrip ? 7.5 : (d.v.mode === 'bus' ? 4 : 5)), radiusUnits: 'pixels',
         getFillColor: d => { const c = colorFor(d.v); return [...c, alpha(d.v)]; },
         stroked: true, getLineColor: d => [...delayColor(d.v.delayMin), dim(d.v) ? 30 : 235],
-        getLineWidth: d => (d.v.delayMin !== null && Math.abs(d.v.delayMin) >= 1 ? 2 : 1.2), lineWidthUnits: 'pixels',
+        getLineWidth: d => (focusTrip && d.v.tripId === focusTrip ? 3 : (Math.abs(d.v.delayMin) >= 1 ? 2 : 1.2)), lineWidthUnits: 'pixels',
         pickable: true, radiusMinPixels: 3,
-        updateTriggers: { getPosition: t, getFillColor: sel, getLineColor: sel },
+        updateTriggers: { getPosition: t, getFillColor: sel, getLineColor: [sel, focusTrip], getRadius: focusTrip, getLineWidth: focusTrip },
       }),
-    ];
+      focus ? new ctx.deck.ScatterplotLayer({    // pulsierender Ring um das angeklickte Fahrzeug
+        id: 'live-focus', data: [focus], getPosition: d => d.pos,
+        getRadius: 13 + 6 * Math.abs(Math.sin(t / 430)), radiusUnits: 'pixels', radiusMinPixels: 13,
+        stroked: true, filled: false, getLineColor: [255, 255, 255, 240], getLineWidth: 3, lineWidthUnits: 'pixels',
+        pickable: false,
+        updateTriggers: { getPosition: t, getRadius: t },
+      }) : null,
+    ].filter(Boolean);
     ctx.overlay.setProps({ layers, onHover: hover, onClick: click, getCursor: cursor });
     if (force || Date.now() - lastPaint > 1000) {     // Statistik nur ~1x je Sekunde neu zeichnen
       lastPaint = Date.now();

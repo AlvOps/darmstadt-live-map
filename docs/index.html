@@ -60,7 +60,7 @@
   #legend summary::-webkit-details-marker { display: none; }
   #legend summary::before { content: "▸"; color: var(--muted); font-size: 10px; width: 10px; transition: transform .15s; }
   #legend details[open] summary::before { transform: rotate(90deg); }
-  #legend summary .n { color: var(--muted); font-size: 11px; margin-left: auto; }
+  #legend summary .n { display: none; }              /* Linienanzahl gibt es nicht mehr */
   #legend .chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 0 11px 16px; }
   #selinfo { font-size: 12px; margin-bottom: 6px; display: none; align-items: baseline; gap: 6px; }
   #selinfo button { padding: 1px 7px; font-size: 11px; border-radius: 6px; margin-left: auto; flex: none; }
@@ -508,8 +508,8 @@ function buildLegend() {
     items.forEach(x => done.add(x.i));
     const det = document.createElement('details'); det.open = !!g.open;
     det.dataset.modes = (g.modes || []).join(' ');      // erlaubt CSS, z. B. Bahn im Fahrplan zu verbergen
-    const n = items.length === 1 ? T('lineOne') : T('lineMany', { n: items.length });
-    det.innerHTML = `<summary>${esc(T(g.key))}<span class="n">${esc(n)}</span></summary><div class="chips"></div>`;
+    // Bewusst ohne Anzahl der Linien: der Betreiber will nur die Linien sehen
+    det.innerHTML = `<summary>${esc(T(g.key))}</summary><div class="chips"></div>`;
     const box = det.querySelector('.chips');
     for (const { l, i } of items) {
       const c = document.createElement('span'); c.className = 'chip'; c.dataset.line = i;

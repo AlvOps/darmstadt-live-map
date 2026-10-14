@@ -149,6 +149,12 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     check('Popup zeigt höchstens die nächsten drei Halte', rows >= 1 && rows <= 3);
     check('Popup nennt die Uhrzeiten der Halte', /class="st-clock"/.test(p.innerHTML));
     check('Popup nennt Status und Verspätung als Wort', /On time|Delayed|Early/.test(p.innerHTML));
+    sandbox.DarmstadtLive.render(true);          // Ebenen neu bauen, damit der Ring entsteht
+    const focusLayer = cap.layers.find(l => l.id === 'live-focus');
+    const focusR = focusLayer && focusLayer.data.length === 1
+      ? (typeof focusLayer.getRadius === 'function' ? focusLayer.getRadius(focusLayer.data[0]) : focusLayer.getRadius) : 0;
+    check('angeklicktes Fahrzeug bekommt einen deutlich sichtbaren Ring (pulsierend, >= 13px)',
+      !!focusLayer && focusLayer.data.length === 1 && focusR >= 13, `radius ${focusR}px`);
 
     console.log('\n=== Kamera folgt dem Fahrzeug, gibt nach 2 s frei ===');
     easeCalls.length = 0;
