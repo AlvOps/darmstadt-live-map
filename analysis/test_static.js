@@ -126,8 +126,17 @@ function run(check, log = console.log) {
   check('card is draggable (pointerdown wiring + grab cursor)',
     /el\.addEventListener\('pointerdown'/.test(liveSrc) && /\.pop-head \{[^}]*cursor: grab/.test(css));
   check('card drag keeps buttons and stop rows clickable', /closest\('button, a, li, \.pop-stops'\)/.test(liveSrc));
-  check('phone: dragging is limited to the card header so the stop list stays scrollable',
-    /closest\('\.pop-head'\)/.test(liveSrc) && /\.pop-stops \{[^}]*touch-action: pan-y/.test(css));
+  check('card drag is mouse-only and clamped to the viewport',
+    /function initDrag\(el\)[\s\S]*?if \(!finePointer\(\)\) return;/.test(liveSrc) &&
+    /function clampPopup\(/.test(liveSrc) &&
+    /const placed = clampPopup\(popupPos\.x \+ dx/.test(liveSrc));
+  check('phone: no drag affordance on the card header',
+    /\.pop-head \{ cursor: default; touch-action: auto; \}/.test(mob));
+  check('touch is detected by pointer, not only by width (landscape phones)',
+    /matchMedia\('\(hover: none\) and \(pointer: coarse\)'\)/.test(html) &&
+    /@media \(max-width: 700px\), \(hover: none\) and \(pointer: coarse\)/.test(css));
+  check('phone: picking a line slides the panel away too',
+    /if \(touchLayout\(\) && hidePanelNow\) hidePanelNow\(\)/.test(html));
   check('phone: panel is a drawer (hidden state + toggle + close)',
     /body\.panel-closed #head \{ display: none; \}/.test(mob) &&
     /#paneltoggle \{ display: inline-flex/.test(mob) && /#panelclose \{ display: inline-flex/.test(mob));
@@ -136,7 +145,7 @@ function run(check, log = console.log) {
   check('desktop keeps no drawer chrome (toggle/close hidden)',
     /#paneltoggle, #panelclose \{ display: none; \}/.test(css));
   check('tapping the map closes the phone drawer',
-    /hidePanel: \(\) => \{ if \(window\.innerWidth <= 700\) setPanel\(false\)/.test(html));
+    /hidePanel: \(\) => \{ if \(touchLayout\(\)\) setPanel\(false\); \}/.test(html));
   check('phone: the drawer toggle stays in one place (top-left, panel starts below it)',
     /#paneltoggle \{[^}]*top: calc\(6px \+ env\(safe-area-inset-top\)\)/.test(mob) &&
     /#head \{ top: calc\(56px \+ env\(safe-area-inset-top\)\)/.test(mob) &&
@@ -151,6 +160,13 @@ function run(check, log = console.log) {
     /const APP_V = '\d{8}-\d+'/.test(html) && /DarmstadtLive\.VERSION/.test(html) &&
     /location\.replace\(location\.pathname \+ '\?v='/.test(html) &&
     /sessionStorage/.test(html));
+  // Ruckeln: die Animation lief mit 5 Bildern/s, weil pro Fahrzeug und Frame linear gesucht und ein
+  // neues Pfad-Array geschnitten wurde. Jetzt ~30/s, Karte entkoppelt, Suche logarithmisch.
+  check('animation runs near display rate (not the old 5 fps)', /const FRAME_MS = 3[0-9];/.test(liveSrc));
+  check('card placement is decoupled from the throttled layer rebuild',
+    /if \(popupVehicle \|\| popupStation\) placePopup\(false\);/.test(liveSrc));
+  check('per-frame vehicle maths is O(log n) and does not re-slice the path every frame',
+    /function lowerBound\(/.test(liveSrc) && !/cd\.findIndex\(/.test(liveSrc) && /v\._restIdx !== idx/.test(liveSrc));
   check('chosen line swings the camera to its vehicles',
     /function focusLine\(/.test(liveSrc) && /fitBounds\(b, \{ padding: 72, maxZoom: 14\.5/.test(liveSrc));
 

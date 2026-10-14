@@ -344,6 +344,18 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     check('gezogene Karte wandert genau um den Versatz (und bleibt am Punkt)',
       Math.abs((dragL - baseL) + 80) < 1.5 && Math.abs((dragT - baseT) - 45) < 1.5);
 
+    // Weit über den Rand gezogen: die Karte muss im Bild bleiben (sie war oben nicht mehr greifbar)
+    el.setDrag({ dx: 0, dy: -5000 }); sandbox.DarmstadtLive.render(true);
+    const clampTop = parseFloat(sandbox.document.getElementById('popup').style.top);
+    el.setDrag({ dx: 5000, dy: 5000 }); sandbox.DarmstadtLive.render(true);
+    const clampBox = sandbox.document.getElementById('popup').style;
+    console.log(`  Begrenzung: oben ${clampTop} | rechts/unten ${clampBox.left}/${clampBox.top}`);
+    check('gezogene Karte bleibt im Bild (oberer Rand)', clampTop >= 8, `top ${clampTop}`);
+    check('gezogene Karte bleibt im Bild (rechter/unterer Rand)',
+      parseFloat(clampBox.left) <= 1280 - 240 - 8 && parseFloat(clampBox.top) <= 800 - 132 - 8,
+      `${clampBox.left}/${clampBox.top}`);
+    el.setDrag(null);
+
     // Tippen auf die Karte schließt auf dem Telefon das Panel
     const before = hideCalls;
     cap.onClick({ object: null });

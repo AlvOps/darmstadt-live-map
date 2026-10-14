@@ -45,10 +45,11 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261014-4';
+  const VERSION = '20261014-6';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
-  const FRAME_MS = 200;            // Live-Animation ~5 Bilder/s: spart Akku/GC auf Telefonen
+  const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
+                                   // Die Karten-Platzierung läuft davon entkoppelt in jedem Frame (tick).
 
   // Nur Nahverkehr (kein ICE/IC, keine Fernbusse, keine Flugzeuge) — sonst hängen Abschnitte
   // mit mehreren tausend Geometriepunkten bis Stuttgart/Nürnberg in der Karte.
@@ -71,6 +72,7 @@
   let popupStation = null, popupAnchor = null, popupDepartures = null;   // Haltestellenkarte
   let popupStopList = [];                // Halte der gerade gezeigten Fahrzeugkarte (Klick-Ziele)
   let dragOff = null;                    // vom Nutzer verschobene Karte: Versatz zur Auto-Position
+  let stopCache = null, stopCacheKey = '';   // zuletzt gezeichnete Haltestellen (nicht jeden Frame neu bauen)
   let lastSel = null;                    // nur für den Kamera-Schwenk bei neuer Linienwahl
   // Die Ruheuhr liegt in ctx.state.selAt: Fahrplan- und Echtzeitmodus brauchen dieselbe Regel
   // ("gewählte Linie -> nur sie; nach 10 s ohne Interaktion kommen die Haltestellen zurück").
@@ -275,12 +277,31 @@
     for (const v of vehicles) {
       if (t > v.arr + LEG_GRACE_MS) continue;   // Daten zu alt: nicht als Live-Position zeigen
       const u = Math.min(1, Math.max(0, (t - v.dep) / (v.arr - v.dep)));
-      const pos = posAt(v.path, v.cd)(u * v.total);
-      const idx = v.cd.findIndex(d => d >= u * v.total);
-      const rest = idx < 0 ? [] : [[pos[0], pos[1]]].concat(v.path.slice(idx));
-      out.push({ v, pos, rest, u });
+      const d = u * v.total;
+      const pos = posAt(v.path, v.cd)(d);
+      const idx = lowerBound(v.cd, d);
+      // Schweif-Geometrie nur neu schneiden, wenn das Fahrzeug einen Stützpunkt überschritten hat.
+      // Vorher wurde pro Fahrzeug und Frame über alle Punkte gesucht UND ein neues Array geschnitten —
+      // genau deshalb lief die Animation gedrosselt. Jetzt nur noch einmal pro Stützpunkt.
+      if (v._restIdx !== idx || !v._rest) {
+        v._restIdx = idx;
+        v._rest = idx < 0 ? [] : [[pos[0], pos[1]]].concat(v.path.slice(idx));
+      } else if (v._rest.length) {
+        v._rest[0] = [pos[0], pos[1]];          // erster Punkt ist immer die aktuelle Position
+      }
+      out.push({ v, pos, rest: v._rest, u });
     }
     return out;
+  }
+
+  // Erster Index mit cd[i] >= d (wie findIndex, nur logarithmisch statt linear)
+  function lowerBound(cd, d) {
+    let hi = cd.length - 1;
+    if (hi < 0) return -1;
+    if (d <= cd[0]) return 0;
+    let lo = 0;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (cd[mid] < d) lo = mid + 1; else hi = mid; }
+    return cd[lo] >= d ? lo : -1;
   }
 
   // ---------- Darstellung
@@ -322,11 +343,18 @@
     const dim = v => (focusTrip ? v.tripId !== focusTrip : false);
     const alpha = v => (dim(v) ? 45 : 255);
     // Bei gewähltem Fahrzeug nur dessen eigene Halte zeigen (nicht das ganze Netz)
-    const shownStops = focusTrip
-      ? (popupStopList || [])
-          .filter(s => s.lat !== null && s.lon !== null)
-          .map(s => ({ name: s.name, lat: s.lat, lon: s.lon, stopId: s.stopId, focus: true }))
-      : sel !== null ? (relaxed ? stops : []) : stops;
+    // Nur neu berechnen, wenn sich wirklich etwas geändert hat: sonst schiebt deck.gl die
+    // Haltestellen-Ebene 30-mal pro Sekunde neu hoch, obwohl sie still steht (spürbare Last).
+    const stopKey = `${focusTrip || ''}|${sel}|${relaxed ? 1 : 0}|${(popupStopList || []).length}|${stops.length}`;
+    if (stopKey !== stopCacheKey) {
+      stopCacheKey = stopKey;
+      stopCache = focusTrip
+        ? (popupStopList || [])
+            .filter(s => s.lat !== null && s.lon !== null)
+            .map(s => ({ name: s.name, lat: s.lat, lon: s.lon, stopId: s.stopId, focus: true }))
+        : sel !== null ? (relaxed ? stops : []) : stops;
+    }
+    const shownStops = stopCache;
 
     const layers = [
       // Trefferfläche für Halte: unsichtbar, aber großzügig — die sichtbaren Punkte sind nur ~2 px,
@@ -636,14 +664,21 @@
     if (svg && svg.classList) svg.classList.remove('on');
   }
 
-  // Karte verschiebbar: ziehen am Kartenkörper. Auf dem Telefon nur am Kopf, damit die Halteliste
-  // weiterhin scrollt; Knöpfe und Halte-Zeilen bleiben klickbar.
+  // Karte immer im Bild halten: gezogene Karten wurden über den Rand geschoben (meist nach oben),
+  // waren dort nicht mehr zu greifen und „zickten" herum.
+  function clampPopup(x, y, w, h, cw, ch, pad) {
+    return { x: Math.max(pad, Math.min(x, cw - w - pad)), y: Math.max(pad, Math.min(y, ch - h - pad)) };
+  }
+
+  // Karte verschiebbar: ziehen am Kartenkörper. Auf dem Telefon ist das Ziehen ABGESCHALTET
+  // (dort wird die Karte als Bottom-Sheet gehalten, Verschieben brach die Ausrichtung), und Knöpfe
+  // sowie Halte-Zeilen bleiben ohnehin klickbar.
   function initDrag(el) {
     if (!el || !el.addEventListener || el.dataset.dragReady) return;
     el.dataset.dragReady = '1';
     el.addEventListener('pointerdown', e => {
+      if (!finePointer()) return;                       // nur Maus: auf dem Telefon bleibt das Sheet
       const t = e.target;
-      if (!finePointer() && !(t && t.closest && t.closest('.pop-head'))) return;
       if (t && t.closest && t.closest('button, a, li, .pop-stops')) return;
       if (!el.getBoundingClientRect) return;
       const r = el.getBoundingClientRect();
@@ -652,7 +687,15 @@
       el.classList.add('dragging');
       if (el.setPointerCapture) { try { el.setPointerCapture(e.pointerId); } catch (_) {} }
       const move = ev => {
-        dragOff = { dx: base.dx + (ev.clientX - start.x), dy: base.dy + (ev.clientY - start.y) };
+        const w = el.offsetWidth || 240, h = el.offsetHeight || 132;
+        const box = ctx.map.getContainer ? ctx.map.getContainer() : null;
+        const cw = box && box.clientWidth ? box.clientWidth : 0, ch = box && box.clientHeight ? box.clientHeight : 0;
+        let nx = base.dx + (ev.clientX - start.x), ny = base.dy + (ev.clientY - start.y);
+        if (cw && ch) {                                  // Versatz so begrenzen, dass die Karte im Bild bleibt
+          const c = clampPopup(start.left + nx, start.top + ny, w, h, cw, ch, 8);
+          nx = c.x - start.left; ny = c.y - start.top;
+        }
+        dragOff = { dx: Math.round(nx), dy: Math.round(ny) };
         el.style.left = Math.round(start.left + dragOff.dx) + 'px';
         el.style.top = Math.round(start.top + dragOff.dy) + 'px';
         const p = popupAnchor || (popupVehicle && vehiclePosAt(popupVehicle, Date.now()));
@@ -701,10 +744,13 @@
     if (immediate || !popupPos) popupPos = auto;
     else popupPos = { x: popupPos.x + (auto.x - popupPos.x) * 0.18,       // sanft nachziehen
                       y: popupPos.y + (auto.y - popupPos.y) * 0.18 };
-    // Vom Nutzer gezogene Karte behält ihren Versatz und bleibt trotzdem am Punkt hängen
+    // Vom Nutzer gezogene Karte behält ihren Versatz und bleibt trotzdem am Punkt hängen — aber
+    // begrenzt: erst addieren, dann ins Bild zwingen und den Versatz entsprechend zurückrechnen.
     const dx = dragOff ? dragOff.dx : 0, dy = dragOff ? dragOff.dy : 0;
-    el.style.left = Math.round(popupPos.x + dx) + 'px';
-    el.style.top = Math.round(popupPos.y + dy) + 'px';
+    const placed = clampPopup(popupPos.x + dx, popupPos.y + dy, w, h, cw, ch, pad);
+    if (dragOff) dragOff = { dx: Math.round(placed.x - popupPos.x), dy: Math.round(placed.y - popupPos.y) };
+    el.style.left = Math.round(placed.x) + 'px';
+    el.style.top = Math.round(placed.y) + 'px';
     drawLeader(el, pt);
   }
 
@@ -973,9 +1019,12 @@
       document.addEventListener('keydown', e => { if (e.key === 'Escape' && popupVehicle) { stopFollow(); closePopup(); } });
     },
     render,
-    tick() {                                // aus requestAnimationFrame: gedrosselt
+    tick() {                                // aus requestAnimationFrame
+      // Die Karte/Popup folgt dem Punkt in JEDEM Frame — vorher hing sie am gedrosselten
+      // Ebenen-Takt und ruckelte sichtbar in Sprüngen.
+      if (popupVehicle || popupStation) placePopup(false);
       const now = Date.now();
-      if (now - lastFrame < FRAME_MS) return;
+      if (now - lastFrame < FRAME_MS) return;   // nur der Ebenen-Neuaufbau ist gedrosselt
       lastFrame = now;
       render();
     },

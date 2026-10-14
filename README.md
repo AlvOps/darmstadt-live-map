@@ -39,8 +39,10 @@ still yields smooth movement.
   the dot, follows the vehicle as it moves and stays inside the viewport.
 - **Connector line.** A thin dashed line runs from the card's bottom-left corner to the exact dot it
   belongs to, so there is never a doubt which vehicle a card is describing.
-- **Movable card.** Drag the card to shove it somewhere convenient; it keeps its offset and stays
-  attached to its dot. On phones it is dragged by its header, so the stop list inside stays scrollable.
+- **Movable card (mouse).** Drag the card to shove it somewhere convenient; it keeps its offset,
+  stays attached to its dot and is **clamped to the viewport**, so it can never be pushed off the
+  top edge where it could not be grabbed again. On touch the card is held as a bottom sheet instead —
+  no dragging there.
 - **Stations on the map.** Live mode draws the stops the feed publishes for the current view
   (`/api/v1/map/stops`) — real stop coordinates and stop ids, not our timetable dump. Tapping one
   moves the camera onto it and opens a card with the **next departures**: line badge in the line
@@ -58,9 +60,11 @@ still yields smooth movement.
   banner, histogram caption, `aria-label`s, document title and the map attribution.
   `analysis/test_i18n.js` fails if a key is missing in one language or if markup/JS contains
   hardcoded human-readable text.
-- **Phone-first UI.** The panel is a **drawer** with a handle that always sits in the same place
-  (top-left, directly above the panel) and says what it does: `☰ Lines` opens, `✕ Close panel`
-  closes. Tapping the map also slides the panel away. The header switches between *Lines* and
+- **Phone-first UI.** Touch is detected by **pointer**, not just width — a landscape phone is wider
+  than 700 px and used to miss the drawer entirely. The panel is a **drawer** with a handle that
+  always sits in the same place (top-left, directly above the panel) and says what it does:
+  `☰ Lines` opens, `✕ Close panel` closes. Tapping a vehicle *or picking a line* slides the panel
+  away, so the map shows what you just chose. The header switches between *Lines* and
   *Status & filters* so both fit without scrollbars, the card becomes a bottom sheet, all touch
   targets are ≥40 px, safe-area insets are respected and hover-only tooltips are disabled on touch
   devices.
