@@ -72,13 +72,15 @@ function run(check, log = console.log) {
 
   // scrollbars
   check('Firefox: thin scrollbars with themed colour', /scrollbar-width:\s*thin/.test(css) && /scrollbar-color:\s*var\(--scroll-thumb\)\s+transparent/.test(css));
-  for (const sel of ['.panel', '#legend', '.pop-stops']) {
+  for (const sel of ['.panel', '.pop-stops']) {          // #legend scrollt nicht mehr -> kein eigener Balken
     check(`WebKit scrollbar styled for ${sel}`, css.includes(sel + '::-webkit-scrollbar-thumb') && css.includes(sel + '::-webkit-scrollbar-track') &&
       css.includes(sel + '::-webkit-scrollbar-corner') && css.includes(sel + '::-webkit-scrollbar-thumb:hover'));
   }
   check('scrollbar thumb colour derives from --muted/--accent', /--scroll-thumb:\s*var\(--muted\)/.test(css) && /--scroll-thumb-hover:\s*var\(--accent\)/.test(css));
   check('overscroll-behavior: contain on panels and lists', /\.panel, #legend, \.pop-stops \{ overscroll-behavior: contain; \}/.test(css));
-  check('scrollbar-gutter: stable on legend and popup', /scrollbar-gutter:\s*stable/.test(rule('#legend') || '') && /scrollbar-gutter:\s*stable/.test(rule('#popup') || ''));
+  check('scrollbar-gutter: stable where a list can scroll (popup)', /scrollbar-gutter:\s*stable/.test(rule('#popup') || ''));
+  check('legend no longer carries a scrollbar of its own',
+    !/#legend[^{]*::-webkit-scrollbar/.test(css) && !/#legend \{[^}]*overflow-y:\s*auto/.test(css));
   check('map canvas has no scrollbar styling', !/#map[^{]*::-webkit-scrollbar/.test(css));
   check('schedule mode hides the frozen realtime stats', /body:not\(\.live\) #livestat, body:not\(\.live\) #livestat2 \{ display: none; \}/.test(css));
 
@@ -87,7 +89,23 @@ function run(check, log = console.log) {
   const legendIdx = html.indexOf('id="legend-sec"'), presIdx = html.indexOf('id="presentation"');
   log(`  markup order: legend-sec@${legendIdx} presentation@${presIdx}`);
   check('line browser comes before the presentation block in the markup', legendIdx > 0 && legendIdx < presIdx);
-  check('presentation layer is a collapsible block', /<details class="sec" id="presentation" open>/.test(html));
+  check('panel has a Lines/Status switcher (one pane at a time, so it fits)',
+    /id="panes"[\s\S]*data-pane="lines"[\s\S]*data-pane="status"/.test(html));
+  check('only one pane is visible at a time',
+    /body\[data-pane="status"\] #legend-sec \{ display: none; \}/.test(css) &&
+    /body\[data-pane="lines"\] #presentation \{ display: none; \}/.test(css));
+  check('panel shows no scrollbar (hidden by design)',
+    /#head::-webkit-scrollbar \{ width: 0; height: 0; \}/.test(css) && /#head \{[^}]*scrollbar-width: none/.test(css));
+  check('line list does not scroll on its own',
+    /#legend \{ flex: 0 0 auto; min-height: 0; max-height: none; overflow: visible; \}/.test(css));
+  check('map starts north-up and flat (no rotation/tilt by default)',
+    /pitch: 0, bearing: 0/.test(html));
+  const paneMob = prop(rule('#panes button', mob), 'min-height') || '0';
+  check(`phone pane switcher is thumb-sized (${paneMob})`, parseFloat(paneMob) >= 40);
+  const selMob = prop(rule('#selinfo button', mob), 'min-height') || '0';
+  check(`phone 'clear line' button is thumb-sized (${selMob})`, parseFloat(selMob) >= 40);
+  check('phone vehicle-card rows are tall enough to tap',
+    parseFloat((prop(rule('.pop-stops li', mob), 'padding') || '0')) >= 10);
   check('panel sits at the very top', /#head \{ top:\s*[0-8]px;/.test(css));
   check('phones keep the line browser visible (no display:none)', !/#legend-sec\s*\{\s*display:\s*none/.test(mob));
   check('phones get one scroll area, not a nested mini-scrollbar', /#legend \{[^}]*overflow:\s*visible/.test(mob));
@@ -114,15 +132,10 @@ function run(check, log = console.log) {
   check('stops in the vehicle card are marked as clickable targets',
     /\.pop-stops li\.st-go \{ cursor: pointer; \}/.test(css) && /\.pop-stops li\.st-go::after/.test(css));
 
-  // The line list must be usable: a real scroll area, a grabbable bar and hittable chips.
+  // The line list must be usable: hittable chips, no nested scroll areas.
   const legend = rule('#legend') || '', legendSec = rule('#legend-sec') || '';
-  const legendMin = parseFloat((legend.match(/min-height:\s*([\d.]+)px/) || [])[1] || '0');
   check('legend keeps a fixed band instead of growing (that caused the overlap)',
     /#legend \{ flex: 0 0 auto;/.test(css) && /#legend-sec \{ flex: 0 0 auto;/.test(css));
-  check(`legend scroll area tall enough to hold lines (${legendMin}px >= 120px)`, legendMin >= 120);
-  const lgWk = parseFloat(((rule('#legend::-webkit-scrollbar') || '').match(/width:\s*([\d.]+)px/) || [])[1] || '0');
-  check(`legend scrollbar is wide enough to grab (${lgWk}px >= 12px)`, lgWk >= 12);
-  check('legend gets a full-width Firefox scrollbar, not "thin"', /#legend \{[^}]*scrollbar-width:\s*auto/.test(css));
   const chipMin = parseFloat(((rule('.chip') || '').match(/min-height:\s*([\d.]+)px/) || [])[1] || '0');
   check(`line chips are big enough to hit (${chipMin}px >= 26px)`, chipMin >= 26);
 

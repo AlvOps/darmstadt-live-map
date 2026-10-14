@@ -42,6 +42,7 @@
   const MAX_SPAN = 0.28;           // max. bbox-Kantenlänge in Grad (verhindert 422)
   const STALE_MS = 45000;          // ab wann Daten als veraltet gelten
   const NEXT_STOPS = 3;            // das Popup zeigt die nächsten drei Halte (Wunsch des Betreibers)
+  const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 200;            // Live-Animation ~5 Bilder/s: spart Akku/GC auf Telefonen
@@ -66,6 +67,7 @@
   let popupVehicle = null, popupLeg = null, popupTimer = null, popupSeq = 0;
   let popupStation = null, popupAnchor = null, popupDepartures = null;   // Haltestellenkarte
   let popupStopList = [];                // Halte der gerade gezeigten Fahrzeugkarte (Klick-Ziele)
+  let relaxAt = 0, lastSel = null;       // 10-s-Ruheuhr für die Linien-Auswahl
   let active = false, lastFrame = 0;
 
   // API-Texte (Linien, Halte, Ziele, Betreiber, Fehlermeldungen) nie roh in innerHTML
@@ -296,27 +298,46 @@
     const t = Date.now();
     const sel = ctx.state.selLine;
     const cur = vehiclesAt(t);
-    const alpha = v => (sel === null || v.lineIdx === sel) ? 255 : 45;
-    const dim = v => (sel !== null && v.lineIdx !== sel);
-    const vis = cur.filter(c => ctx.state.modes[c.v.mode]);
     // Angeklicktes Fahrzeug dauerhaft markieren, damit der Punkt auch nach dem Kamera-Follow zu finden ist
     const focusTrip = popupVehicle ? popupVehicle.tripId : null;
     const focus = focusTrip ? cur.find(c => c.v.tripId === focusTrip) : null;
+
+    // Die Auswahl bestimmt, was zu sehen ist:
+    //   Linie im Panel gewählt -> nur diese Linie, keine Haltestellen (nach 10 s Ruhe kommen sie zurück)
+    //   Fahrzeug gewählt       -> dieses Fahrzeug samt seinen eigenen nächsten Halten
+    //   nichts gewählt         -> alles
+    if (sel !== lastSel) {                 // Auswahl hat gewechselt -> Ruheuhr neu starten
+      lastSel = sel;
+      relaxAt = sel === null ? 0 : Date.now() + RELAX_MS;
+    }
+    const relaxed = sel !== null && relaxAt > 0 && Date.now() > relaxAt;   // 10 s nichts passiert
+    const inMode = c => ctx.state.modes[c.v.mode];
+    const vis = sel !== null ? cur.filter(c => inMode(c) && c.v.lineIdx === sel) : cur.filter(inMode);
+    const dim = v => (focusTrip ? v.tripId !== focusTrip : false);
+    const alpha = v => (dim(v) ? 45 : 255);
+    // Bei gewähltem Fahrzeug nur dessen eigene Halte zeigen (nicht das ganze Netz)
+    const shownStops = focusTrip
+      ? (popupStopList || [])
+          .filter(s => s.lat !== null && s.lon !== null)
+          .map(s => ({ name: s.name, lat: s.lat, lon: s.lon, stopId: s.stopId, focus: true }))
+      : sel !== null ? (relaxed ? stops : []) : stops;
 
     const layers = [
       // Trefferfläche für Halte: unsichtbar, aber großzügig — die sichtbaren Punkte sind nur ~2 px,
       // und deck.gl prüft die Geometrie, nicht die Deckkraft. So trifft man den Halt auch mit dem Finger.
       new ctx.deck.ScatterplotLayer({
-        id: 'live-stations-hit', data: stops, getPosition: d => [d.lon, d.lat],
+        id: 'live-stations-hit', data: shownStops, getPosition: d => [d.lon, d.lat],
         getRadius: 11, radiusUnits: 'pixels', radiusMinPixels: 11,
         getFillColor: [0, 0, 0, 1], pickable: true,
       }),
       new ctx.deck.ScatterplotLayer({          // Haltestellen: Positionen direkt aus dem Feed
-        id: 'live-stations', data: stops, getPosition: d => [d.lon, d.lat],
-        getRadius: 2.6, radiusUnits: 'pixels', pickable: false, radiusMinPixels: 2.6,
-        stroked: true, getLineColor: [236, 241, 252, 170], getLineWidth: 0.8, lineWidthUnits: 'pixels',
-        getFillColor: [216, 223, 240, 215],
+        id: 'live-stations', data: shownStops, getPosition: d => [d.lon, d.lat],
+        getRadius: d => (d.focus ? 4.5 : 2.6), radiusUnits: 'pixels', pickable: false, radiusMinPixels: 2.6,
+        stroked: true, getLineColor: d => (d.focus ? [255, 255, 255, 240] : [236, 241, 252, 170]),
+        getLineWidth: d => (d.focus ? 1.8 : 0.8), lineWidthUnits: 'pixels',
+        getFillColor: d => (d.focus ? [255, 255, 255, 235] : [216, 223, 240, 215]),
         autoHighlight: true, highlightColor: [255, 255, 255, 130],
+        updateTriggers: { getRadius: focusTrip, getFillColor: focusTrip, getLineColor: focusTrip, getLineWidth: focusTrip },
       }),
       new ctx.deck.PathLayer({
         id: 'live-trails', data: vis, getPath: d => d.rest,
@@ -375,6 +396,7 @@
   }
 
   function click(info) {
+    relaxAt = ctx.state && ctx.state.selLine !== null ? Date.now() + RELAX_MS : 0;   // Interaktion -> Uhr neu
     const o = info.object;
     if (o && o.v) { startFollow(o.v); openPopup(o.v); return; }   // Fahrzeug: Kamera mitnehmen + Karte
     if (o && o.stopId) {                                          // Haltestelle: Kamera hin + Abfahrten
@@ -383,6 +405,8 @@
       return;
     }
     stopFollow(); closePopup();                                   // Tipp auf die Karte schließt
+    // Auswahl aufheben: erst dann erscheinen wieder alle Haltestellen
+    if (ctx.state && ctx.state.selLine !== null && ctx.selectLine) ctx.selectLine(null);
   }
 
   // Kurze Rückmeldung im Panel: sonst weiß man nicht, ob der Tipp auf einen Halt gewirkt hat
@@ -406,7 +430,7 @@
     const known = stops.find(x => s.stopId && x.stopId === s.stopId) ||
                   stops.find(x => normStopName(x.name) === normStopName(s.full));
     const target = known || { name: s.full || s.name, lat: s.lat, lon: s.lon, stopId: s.stopId, modes: [] };
-    openStation(target);
+    openStation(target, false, true);      // sofort springen (ohne Kamera-Animation)
     announceStation(target);
   }
 
@@ -616,7 +640,7 @@
   }
 
   // Öffnen (refreshing=false) oder Auffrischen (true: kein Kamerasprung, keine "lädt"-Anzeige)
-  async function openStation(stop, refreshing) {
+  async function openStation(stop, refreshing, instant) {
     const el = document.getElementById('popup');
     if (!el || !stop) return;
     const seq = ++popupSeq;
@@ -624,7 +648,8 @@
     if (!refreshing) {
       popupVehicle = null; popupLeg = null; popupDepartures = null;
       popupStation = stop; popupAnchor = [stop.lon, stop.lat];
-      ctx.map.easeTo({ center: [stop.lon, stop.lat], zoom: Math.max(ctx.map.getZoom(), 15.6), duration: 600 });
+      ctx.map.easeTo({ center: [stop.lon, stop.lat], zoom: Math.max(ctx.map.getZoom(), 15.6),
+                       duration: instant ? 0 : 600 });     // aus der Fahrzeugkarte: sofort dorthin
       el.classList.add('on');
       paintStation(true);
     } else {
@@ -828,6 +853,7 @@
       ctx.map.on('moveend', () => scheduleRefresh(700));
       // Der Betreiber hat Vorrang: eigene Geste beendet das Begleiten sofort
       ctx.map.on('dragstart', stopFollow);
+      ctx.map.on('dragstart', () => { if (ctx.state.selLine !== null) relaxAt = Date.now() + RELAX_MS; });
       const box = ctx.map.getContainer();
       ['wheel', 'mousedown', 'touchstart'].forEach(ev => box.addEventListener(ev, stopFollow, { passive: true }));
       document.addEventListener('visibilitychange', () => { if (!document.hidden && active) refresh(); });
@@ -864,6 +890,7 @@
       };
     },
     _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell,
-             goToStop, nextStops, stops: () => stops, popupStopList: () => popupStopList },
+             goToStop, nextStops, stops: () => stops, popupStopList: () => popupStopList,
+             setRelaxAt(t) { relaxAt = t; }, relaxAt: () => relaxAt },
   };
 })();

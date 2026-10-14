@@ -250,6 +250,50 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     await sandbox.DarmstadtLive.openPopup(heads.map(d => d.v)[0]);   // für die Sprachprüfung offen lassen
   }
 
+  console.log('\n=== Linie wählen -> nur diese Linie auf der Karte ===');
+  {
+    const byLine = new Map();
+    for (const d of heads) if (d.v.lineIdx >= 0) byLine.set(d.v.lineIdx, (byLine.get(d.v.lineIdx) || 0) + 1);
+    const pick = [...byLine.entries()].sort((a, b) => b[1] - a[1])[0];
+    check('mindestens eine Linie mit Fahrzeugen vorhanden', !!pick);
+    if (pick) {
+      const [lineIdx, before] = pick;
+      state.selLine = lineIdx;                      // wie ein Klick auf den Chip im Panel
+      sandbox.DarmstadtLive.closePopup();
+      sandbox.DarmstadtLive.render(true);
+      const shown = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
+      const st = (cap.layers.find(l => l.id === 'live-stations') || { data: [] }).data;
+      console.log(`  Linie ${META.lines[lineIdx].name}: ${before} Fahrzeuge vorher, ${shown.length} gezeichnet, Halte ${st.length}`);
+      check('nur Fahrzeuge der gewählten Linie werden gezeichnet', shown.length > 0 && shown.every(d => d.v.lineIdx === lineIdx));
+      check('und keine Haltestellen (kein Rauschen)', st.length === 0);
+
+      await sandbox.DarmstadtLive.openPopup(shown[0].v);
+      sandbox.DarmstadtLive.render(true);
+      const st2 = (cap.layers.find(l => l.id === 'live-stations') || { data: [] }).data;
+      console.log(`  Fahrzeug markiert: nur dessen Halte (${st2.length}), alle als Fokus: ${st2.every(s => s.focus === true)}`);
+      check('markiertes Fahrzeug zeigt nur seine eigenen Halte', st2.length > 0 && st2.every(s => s.focus === true));
+
+      sandbox.DarmstadtLive.closePopup(); state.selLine = null;
+      sandbox.DarmstadtLive.render(true);
+      const st3 = (cap.layers.find(l => l.id === 'live-stations') || { data: [] }).data;
+      check('ohne Auswahl erscheinen wieder alle Halte', st3.length > 0 && !st3.some(s => s.focus));
+
+      // Nach 10 s ohne Interaktion dürfen die Halte zurückkommen (Ruheuhr)
+      state.selLine = lineIdx;
+      sandbox.DarmstadtLive.render(true);
+      const stHidden = (cap.layers.find(l => l.id === 'live-stations') || { data: [] }).data.length;
+      sandbox.DarmstadtLive._test.setRelaxAt(Date.now() - 1000);
+      sandbox.DarmstadtLive.render(true);
+      const stBack = (cap.layers.find(l => l.id === 'live-stations') || { data: [] }).data.length;
+      console.log(`  Ruheuhr: Halte sofort ${stHidden} -> nach 10 s ${stBack}`);
+      check('sofort nach der Linienwahl keine Halte', stHidden === 0);
+      check('nach 10 s ohne Interaktion kommen die Halte zurück', stBack > 0);
+      state.selLine = null;
+      sandbox.DarmstadtLive.render(true);
+      await sandbox.DarmstadtLive.openPopup(heads.map(d => d.v)[0]);   // für die Sprachprüfung offen lassen
+    }
+  }
+
   console.log('\n=== Sprachumschaltung ===');
   const enTitle = el('livestat').innerHTML;
   sandbox.I18N.set('de');

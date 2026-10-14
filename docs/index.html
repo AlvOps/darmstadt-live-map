@@ -43,19 +43,19 @@
   .tog[aria-pressed="true"] .box { background: var(--accent); border-color: var(--accent); }
   .tog[aria-pressed="true"] .box::after { content: "✓"; font-weight: 800; }
   .tog[aria-pressed="false"] { color: var(--muted); }
-  /* Panel: darf scrollen, statt Inhalte übereinander zu legen (Status & Filter + Linienliste offen) */
+  /* Panel: immer nur ein Bereich (Umschalter oben) -> passt ohne Scrollbalken. overflow bleibt nur
+     als unsichtbares Sicherheitsnetz, falls sehr großer Zoom doch mehr Platz verlangt. */
   #head { display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain;
-    max-height: var(--head-max, calc(100vh - 32px)); scrollbar-gutter: stable; }
+    max-height: var(--head-max, calc(100vh - 32px)); scrollbar-width: none; }
+  #head::-webkit-scrollbar { width: 0; height: 0; }
   #legend-sec { flex: 0 0 auto; min-height: 0; display: flex; flex-direction: column; }
-  /* Eigene Scrollfläche der Linienliste. Ohne flex/min-height schrumpft sie im Panel auf wenige
-     Pixel — der Balken wird dann ein kaum greifbarer Splitter und die Linien sind nicht wählbar. */
-  #legend { flex: 0 0 auto; min-height: 182px; max-height: 44vh; overflow-y: auto; margin-right: -8px; padding-right: 10px; scrollbar-gutter: stable; }
-  /* Darstellungsebene (Status, Filter, Statistik): eingeklappt, damit die Linienliste oben bleibt */
-  #presentation > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; padding: 6px 0; }
-  #presentation > summary::-webkit-details-marker { display: none; }
-  #presentation > summary::before { content: "▸"; color: var(--muted); font-size: 10px; width: 10px; transition: transform .15s; }
-  #presentation[open] > summary::before { transform: rotate(90deg); }
-  #presentation > summary.lbl { margin-bottom: 0; }
+  /* Linienliste ohne eigenen Scrollbalken: sie wächst mit, solange das Panel in den Bildschirm passt */
+  #legend { flex: 0 0 auto; min-height: 0; max-height: none; overflow: visible; }
+  /* Umschalter zwischen Linien und Status */
+  #panes { margin-top: 10px; align-self: flex-start; }
+  #panes button { padding: 6px 11px; font-size: 12.5px; }
+  body[data-pane="status"] #legend-sec { display: none; }
+  body[data-pane="lines"] #presentation { display: none; }
   #legend details { border-top: 1px solid var(--line); }
   #legend summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
     padding: 9px 0; font-size: 12.5px; user-select: none; }
@@ -156,19 +156,13 @@
   @supports (scrollbar-width: thin) {
     .panel, .pop-stops { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
   }
-  /* Die Linienliste bekommt bewusst einen normalbreiten Balken — "thin" war ein Splitter, den man
-     kaum treffen konnte. */
-  @supports (scrollbar-width: auto) {
-    #legend { scrollbar-width: auto; scrollbar-color: var(--scroll-thumb) transparent; }
-  }
+  /* Kein Scrollbalken in der Linienliste — sie wächst mit, statt zu scrollen */
   .panel::-webkit-scrollbar, .pop-stops::-webkit-scrollbar { width: 9px; height: 9px; }
-  #legend::-webkit-scrollbar { width: 13px; height: 13px; }
-  .panel::-webkit-scrollbar-track, #legend::-webkit-scrollbar-track, .pop-stops::-webkit-scrollbar-track { background: transparent; }
-  .panel::-webkit-scrollbar-corner, #legend::-webkit-scrollbar-corner, .pop-stops::-webkit-scrollbar-corner { background: transparent; }
-  .panel::-webkit-scrollbar-thumb, #legend::-webkit-scrollbar-thumb, .pop-stops::-webkit-scrollbar-thumb {
+  .panel::-webkit-scrollbar-track, .pop-stops::-webkit-scrollbar-track { background: transparent; }
+  .panel::-webkit-scrollbar-corner, .pop-stops::-webkit-scrollbar-corner { background: transparent; }
+  .panel::-webkit-scrollbar-thumb, .pop-stops::-webkit-scrollbar-thumb {
     background: var(--scroll-thumb); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
-  #legend::-webkit-scrollbar-thumb { border-width: 3px; }
-  .panel::-webkit-scrollbar-thumb:hover, #legend::-webkit-scrollbar-thumb:hover, .pop-stops::-webkit-scrollbar-thumb:hover {
+  .panel::-webkit-scrollbar-thumb:hover, .pop-stops::-webkit-scrollbar-thumb:hover {
     background: var(--scroll-thumb-hover); background-clip: padding-box; }
 
   /* Fahrplan-Modus: keine Regionalzüge (Geometrie zu grob, siehe SCHEDULE_MODES) — also auch keine
@@ -193,6 +187,12 @@
     .chip { font-size: 13.5px; padding: 9px 13px; min-height: 40px; border-radius: 8px; }
     #legend summary .n { font-size: 12px; }
     #presentation > summary { padding: 10px 0; min-height: 40px; }
+    /* Neue Bedienelemente auch mit dem Daumen bedienbar */
+    #panes { align-self: stretch; display: flex; }
+    #panes button { flex: 1 1 0; min-height: 44px; font-size: 13.5px; }
+    #selinfo { font-size: 13.5px; }
+    #selinfo button { min-width: 40px; min-height: 40px; font-size: 15px; padding: 0; }
+    .pop-stops li { padding: 11px 0; }        /* Halte in der Karte: gut treffbar */
     #toggles { gap: 6px; }
     .tog { padding: 6px 9px; font-size: 12px; min-height: 40px; }
     .pop-close { min-width: 40px; min-height: 40px; font-size: 14px; }
@@ -231,16 +231,18 @@
 <div id="head" class="panel">
   <h1><span data-i18n="appTitle">Darmstadt Live Map</span><span class="badge-live" id="livebadge"><i></i><span id="livebadgetxt" data-i18n="modeLive">Realtime</span></span></h1>
 
-  <!-- Linienliste steht bewusst ganz oben: sie ist das wichtigste Bedienelement, nicht die Statistik -->
+  <!-- Umschalter: immer nur ein Bereich sichtbar -> das Panel passt ohne Scrollbalken -->
+  <div class="seg" id="panes" role="group">
+    <button data-pane="lines" class="on" aria-pressed="true" data-i18n="legendTitle">Lines</button><button data-pane="status" aria-pressed="false" data-i18n="presentation">Status &amp; filters</button>
+  </div>
+
+  <!-- Linienliste steht oben: sie ist das wichtigste Bedienelement, nicht die Statistik -->
   <div class="sec" id="legend-sec">
-    <div class="lbl" data-i18n="legendTitle">Lines</div>
     <div id="selinfo"><span id="selname"></span><button id="selclear" data-i18n-title="clear" data-i18n-aria="clear" aria-label="Clear highlight">✕</button></div>
     <div id="legend"></div>
   </div>
 
-  <!-- Darstellungsebene: auf dem Telefon standardmäßig eingeklappt (siehe index.html-Skript) -->
-  <details class="sec" id="presentation" open>
-    <summary class="lbl" data-i18n="presentation">Status &amp; filters</summary>
+  <div class="sec" id="presentation">
     <p data-i18n="subtitle">Tram, bus and regional rail — from the open realtime feed</p>
     <div class="sec">
       <div class="seg" id="mode">
@@ -266,7 +268,7 @@
       </div>
       <div class="livestat" id="livestat"></div>
     </div>
-  </details>
+  </div>
 </div>
 
 <div id="bar" class="panel">
@@ -406,7 +408,7 @@ function inlineTileSource() {
 const map = new maplibregl.Map({
   container: 'map',
   style: BASEMAP_STYLE,
-  center: [8.652, 49.872], zoom: 12.3, pitch: 35, bearing: -8, maxPitch: 60, maxZoom: 16,
+  center: [8.652, 49.872], zoom: 12.3, pitch: 0, bearing: 0, maxPitch: 60, maxZoom: 16,   // Nordansicht als Standard
   attributionControl: false             // eigene, übersetzte Quellenangabe (siehe setAttribution)
 });
 let basemapCapped = false;
@@ -699,10 +701,20 @@ function setLive(on) {
     const n = document.getElementById(id);
     if (n) n.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
   }
-  // Auf dem Telefon ist die Darstellungsebene eingeklappt: die Linienliste gehört nach oben.
-  if (window.innerWidth <= 700) {
-    const pres = document.getElementById('presentation');
-    if (pres) pres.open = false;
+  // Umschalter im Panel: Linien ODER Status — damit passen beide ohne Scrollbalken
+  function setPane(name) {
+    document.body.dataset.pane = name === 'status' ? 'status' : 'lines';
+    const bar = document.getElementById('panes');
+    if (bar) bar.querySelectorAll('button').forEach(b => {
+      const on = b.dataset.pane === document.body.dataset.pane;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+  }
+  const paneBar = document.getElementById('panes');
+  if (paneBar) {
+    setPane('lines');
+    paneBar.querySelectorAll('button').forEach(b => b.onclick = () => setPane(b.dataset.pane));
   }
   document.querySelectorAll('#lang button').forEach(b => b.onclick = () => window.I18N.set(b.dataset.lang));
   setAttribution();
