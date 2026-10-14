@@ -133,7 +133,8 @@ function run(check, log = console.log) {
   check('phone: no drag affordance on the card header',
     /\.pop-head \{ cursor: default; touch-action: auto; \}/.test(mob));
   check('touch is detected by pointer, not only by width (landscape phones)',
-    /matchMedia\('\(hover: none\) and \(pointer: coarse\)'\)/.test(html) &&
+    /const DRAWER_QUERY = '\(max-width: 700px\), \(hover: none\) and \(pointer: coarse\)'/.test(html) &&
+    /matchMedia\(DRAWER_QUERY\)/.test(html) &&
     /@media \(max-width: 700px\), \(hover: none\) and \(pointer: coarse\)/.test(css));
   check('phone: picking a line slides the panel away too',
     /if \(touchLayout\(\) && hidePanelNow\) hidePanelNow\(\)/.test(html));
@@ -199,7 +200,27 @@ function run(check, log = console.log) {
   check('the "no GPS" note is highlighted (bold, yellow) in the card and in the credits',
     /\.note-warn \{ color: var\(--accent\); font-weight: 700; \}/.test(css) &&
     /class="pop-note note-warn"/.test(liveSrc) &&
-    /<p class="note-warn" data-i18n="popup.positionNote">/.test(html));
+    /<p class="note-warn" data-i18n="attributionPosition">/.test(html));
+  // HEAG-Positionen: eigener Abruf, nur als Ergänzung — und in der Quellenangabe benannt.
+  const heagSrc = fs.readFileSync(path.join(DOCS, 'heag.js'), 'utf8');
+  check('operator positions are fetched from the HEAG backend, politely and without a hard dependency',
+    /service\.ivanto\.de\/srs\/api\/v1\/vehiclelivedata\?tenant=heag/.test(heagSrc) &&
+    /REFRESH_MS = 30000/.test(heagSrc) && /catch \(e\)/.test(heagSrc) &&
+    /heag\.js\?v=\d{8}-\d+/.test(html));
+  check('one source per vehicle: the operator dot replaces the derived one, never both',
+    /OP_TWIN_MAX_M = 350/.test(liveSrc) && /out\.splice\(twin, 1\)/.test(liveSrc) &&
+    /opOnly/.test(liveSrc));
+  check('the credits name the operator feed and the mixed provenance',
+    /attributionOperator: '/.test(i18nSrc) && /attributionPosition: '/.test(i18nSrc) &&
+    /<p data-i18n="attributionOperator">/.test(html));
+  check('vehicle dots are twice as big (easier to hit) and the picking radius grew too',
+    /getRadius: d => \(focusTrip && d\.v\.tripId === focusTrip \? 15 : \(d\.v\.mode === 'bus' \? 8 : 10\)\)/.test(liveSrc) &&
+    /pickable: true, radiusMinPixels: 6/.test(liveSrc));
+  check('the drawer check mirrors the CSS media query exactly (panel closes where the drawer exists)',
+    /const DRAWER_QUERY = '\(max-width: 700px\), \(hover: none\) and \(pointer: coarse\)'/.test(html) &&
+    /\(max-width: 700px\), \(hover: none\) and \(pointer: coarse\)/.test(css) &&
+    /hidePanel: \(\) => \{ if \(touchLayout\(\)\) setPanel\(false\); \}/.test(html) &&
+    /headEl\.addEventListener\('click'/.test(html));
   // Der Kartenraum ist begrenzt: vorher ließ sich die Karte endlos (auch nach oben) schieben.
   {
     const mb = (html.match(/maxBounds: \[\[([-\d.]+), ([-\d.]+)\], \[([-\d.]+), ([-\d.]+)\]\]/) || []).slice(1).map(Number);

@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261014-9"></script>
+<script src="i18n.js?v=20261014-11"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -354,9 +354,11 @@
       <div id="attribbox" hidden>
         <p data-i18n="attributionLive">Realtime: DELFI e.V. (CC BY-SA 4.0) via Transitous/MOTIS</p>
         <p data-i18n="attributionMap">Base map: © OpenStreetMap contributors (ODbL) · CARTO</p>
+        <p data-i18n="attributionOperator">HEAG positions: HEAG mobilo's own app backend (IVANTO) — an operator feed, not open data.</p>
         <!-- Was die Punkte sind (und was nicht): gelb und fett, in beiden Sprachen, direkt in der
-             Quellenangabe — damit die Einordnung dort steht, wo man die Herkunft nachliest. -->
-        <p class="note-warn" data-i18n="popup.positionNote">Position derived from realtime stop prognoses (the open feed carries no GPS).</p>
+             Quellenangabe — damit die Einordnung dort steht, wo man die Herkunft nachliest. Die Karte
+             mischt jetzt zwei Quellen, deshalb nennt der Hinweis beide. -->
+        <p class="note-warn" data-i18n="attributionPosition">Positions: HEAG reported live by the operator · all other vehicles derived from realtime stop prognoses (the open feed carries no GPS).</p>
       </div>
     </div>
   </div>
@@ -366,8 +368,9 @@
 <div id="banner" hidden></div>
 <div id="popup" class="panel" role="dialog" data-i18n-aria="popup.dialog" aria-label="Vehicle details"></div>
 
-<script src="search.js?v=20261014-9"></script>
-<script src="live.js?v=20261014-9"></script>
+<script src="heag.js?v=20261014-11"></script>
+<script src="search.js?v=20261014-11"></script>
+<script src="live.js?v=20261014-11"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -431,10 +434,11 @@ const tip = document.getElementById('tip');
 const shortStop = n => String(n == null ? '' : n).replace(/^Darmstadt[- ]/, '');
 const lineEnds = l => l.ends.map(shortStop).join(' ↔ ');
 
-  // Touch-Erkennung: NICHT nur über die Breite — ein Telefon im Querformat (oder ein großes Gerät)
-  // ist über 700 px breit, hatte damit nie eine Schublade und der Panel blieb einfach stehen.
-  const touchLayout = () => !!(window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches)
-                        || window.innerWidth <= 700;
+  // Telefon-Erkennung: GENAU die Abfrage des CSS (dort hängt die Schublade daran). Vorher stand hier
+  // eine eigene Formel — ein Gerät konnte damit im Schubladen-Layout sein, während das Skript glaubte,
+  // es sei Desktop, und das Panel blieb nach der Auswahl offen stehen.
+  const DRAWER_QUERY = '(max-width: 700px), (hover: none) and (pointer: coarse)';
+  const touchLayout = () => !!(window.matchMedia && window.matchMedia(DRAWER_QUERY).matches);
   let hidePanelNow = null;                  // wird von der Panel-Logik unten gesetzt
 
 function selectLine(li) {
@@ -516,7 +520,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261014-9';
+  const APP_V = '20261014-11';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {
@@ -683,6 +687,14 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
     if (panelClose) panelClose.onclick = () => setPanel(false);
     setPanel(true);                        // Start: offen, damit die Linien sofort wählbar sind
   }
+  // Sicherheitsnetz: jede Wahl INNERHALB des Panels (Linie, Favorit) räumt die Schublade weg — auch
+  // wenn der Tipp die Karte nicht erreicht hat. Ohne das blieb das Panel über genau der Linie stehen,
+  // die man gerade sehen wollte.
+  const headEl = document.getElementById('head');
+  if (headEl) headEl.addEventListener('click', e => {
+    if (!touchLayout() || !hidePanelNow) return;
+    if (e.target.closest('.chip, .fav-go, details summary')) hidePanelNow();
+  });
   document.querySelectorAll('#lang button').forEach(b => b.onclick = () => window.I18N.set(b.dataset.lang));
   // Quellenangabe: zugeklappt, bis man den ⓘ antippt; Tipp daneben schließt sie wieder
   const attribBtn = document.getElementById('attribbtn');
@@ -706,7 +718,11 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   });
   window.DarmstadtLive.attach({ map, overlay, deck, META, state, hex, shortStop, MODE_RGB, selectLine,
     fav: favApi,                                                  // Stern auf der Haltestellenkarte
+    heag: window.DarmstadtHeag,                                   // echte HEAG-Positionen (optional)
     hidePanel: () => { if (touchLayout()) setPanel(false); } });   // Telefon: Karte/Linienwahl schiebt das Panel weg
+  // Echte Betreiberpositionen zuschalten. Schlägt der Abruf fehl, bleibt die Karte wie sie ist —
+  // es hängt nichts daran. Nach jedem Abruf einmal neu zeichnen.
+  if (window.DarmstadtHeag) window.DarmstadtHeag.start(() => window.DarmstadtLive.render(true));
   document.getElementById('loading').remove();
   const start = () => { document.body.classList.add('live'); window.DarmstadtLive.setOn(true); };
   map.on('load', start);

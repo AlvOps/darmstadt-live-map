@@ -43,6 +43,15 @@ still yields smooth movement.
   accent colour, in both languages, that positions are **derived from realtime stop prognoses** — the
   open feed carries no GPS. The credits are where a reader checks the source, so the note lives there
   too, not only in the card.
+- **Real positions where they exist (HEAG).** HEAG mobilo reports actual coordinates through its own app
+  backend (IVANTO SRS, keyless, CORS-open). Where a reported position matches one of our trips
+  (same line, < 350 m), that dot **replaces** the derived one and keeps our delay and stop list — one
+  dot per vehicle, never two. Each card names its own source: *"reported live by the operator"* vs
+  *"derived from realtime stop prognoses"*. If that backend fails, nothing breaks: the map falls back
+  to the derived positions. Details, measurements and caveats: [`HEAG-POSITIONS.md`](HEAG-POSITIONS.md).
+- **Big, tappable dots.** Vehicle markers are ~2× the previous radius (8 px bus / 10 px tram & rail,
+  15 px while focused) and the picking radius grew with them, so a thumb hits the right vehicle
+  without zooming first.
 - **Realtime only.** Only vehicles that actually carry realtime data are drawn. Vehicles without
   realtime are dropped — a position derived solely from the timetable would be invented, not observed.
 - **Vehicle popup.** Tap a vehicle: line badge in its line colour, delay status
@@ -124,14 +133,16 @@ relative so they work under the GitHub Pages subpath.
 | Data | Origin | Licence |
 |------|--------|---------|
 | Realtime (prognoses) | DELFI e.V., via `api.transitous.org` (MOTIS) | **CC BY-SA 4.0** |
+| HEAG vehicle positions | HEAG mobilo app backend (IVANTO SRS) | not a published open-data feed |
 | Base map | CARTO dark-matter, © OpenStreetMap contributors | ODbL |
 
 **Attribution is required** (CC BY / CC BY-SA); the UI names the sources in the map attribution
 and the header panel. Redistributing the data requires the same terms (share-alike).
 
-A known-but-unused source of **true HEAG vehicle positions** (keyless, CORS-open, no delay, HEAG's own
-fleet only, licence unclear) is recorded in [`PARKED.md`](PARKED.md) together with its measurements and
-the three rules for a later integration.
+HEAG mobilo's own app backend (IVANTO SRS) additionally serves **true coordinates for HEAG's own fleet**
+— keyless, CORS-open, but no delay and no published licence. It is integrated under three rules
+(one source per vehicle, per-vehicle provenance label, no hard dependency) and documented in
+[`HEAG-POSITIONS.md`](HEAG-POSITIONS.md); the credits box names it as an operator feed, not open data.
 
 ## How the realtime API works — and what it does not provide
 

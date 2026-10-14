@@ -535,6 +535,28 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('Namensanfang steht vor Treffern mitten im Namen',
     ranked[0] === 'Bahnhofstraße' && ranked.slice(1).every(n => SE.norm(n).indexOf('bahnhof') > 0));
   check('Duplikate werden entfernt', SE.matchStations('haupt', pool, 9).filter(s => s.name === 'Darmstadt Hauptbahnhof').length === 1);
+  // Ein Halt, mehrere Bahnsteige: der Feed liefert je Steig einen Eintrag plus den Halt der Station.
+  // Für die Trefferliste zählt der Name — sonst stünde der Hauptbahnhof siebenmal da.
+  const platforms = [
+    { name: 'Darmstadt Hauptbahnhof', lon: 8.6631, lat: 49.8726 },                       // unser Bestand, ohne Kennung
+    { name: 'Darmstadt Hauptbahnhof', lon: 8.6632, lat: 49.8727, stopId: 'de-DELFI_de:06411:9071:1:1' },
+    { name: 'Darmstadt Hauptbahnhof', lon: 8.6633, lat: 49.8728, stopId: 'de-DELFI_de:06411:9071:2:2' },
+    { name: 'Darmstadt Hauptbahnhof', lon: 8.6634, lat: 49.8729, stopId: 'de-DELFI_de:06411:9071:3:3' },
+    { name: 'Darmstadt Hauptbahnhof', lon: 8.6635, lat: 49.8730, stopId: 'de-DELFI_de:06411:9071:4:4' },
+    { name: 'Darmstadt Hauptbahnhof', lon: 8.6636, lat: 49.8731, stopId: 'de-DELFI_de:06411:9071:5:5' },
+    { name: 'Darmstadt Hauptbahnhof', lon: 8.6637, lat: 49.8732, stopId: 'de-DELFI_de:06411:9071' },   // Halt der Station
+  ];
+  const hbf = SE.matchStations('darmstadt hauptbahnhof', platforms, 7);
+  check('derselbe Halt erscheint nur einmal, egal wie viele Steige der Feed meldet',
+    hbf.length === 1, `${hbf.length} Treffer`);
+  check('überlebt der Eintrag mit Halt-Kennung (Abfahrten brauchen sie)', !!(hbf[0] && hbf[0].stopId));
+  check('Stationshalt schlägt Steighalt', hbf[0].stopId === 'de-DELFI_de:06411:9071');
+  check('nur Steige vorhanden: ein Treffer mit Kennung',
+    SE.matchStations('darmstadt hauptbahnhof', platforms.slice(1, 4), 7).length === 1 &&
+    !!SE.matchStations('darmstadt hauptbahnhof', platforms.slice(1, 4), 7)[0].stopId);
+  const hbfMixed = SE.matchStations('hauptbahnhof', platforms.slice(0, 2), 7);
+  check('unser Eintrag ohne Kennung verliert gegen den Feed-Halt',
+    hbfMixed.length === 1 && hbfMixed[0].stopId === 'de-DELFI_de:06411:9071:1:1');
   check('Trefferzahl ist begrenzt', SE.matchStations('haupt', pool, 1).length === 1 && SE.matchStations('a', pool, 2).length === 2);
   check('leere Suche und Nullwerte liefern nichts', SE.matchStations('   ', pool, 7).length === 0 && SE.matchStations(null, null, 7).length === 0);
 
@@ -572,6 +594,93 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('Stern ist verdrahtet', typeof starEl.onclick === 'function');
   if (typeof starEl.onclick === 'function') starEl.onclick();
   check('Tippen auf den Stern meldet den Halt an die Favoritenlogik', tapped.length === 1 && /Hauptbahnhof/.test(tapped[0]));
+
+  console.log('\n=== Betreiber-Positionen (HEAG) ===');
+  vm.runInContext(fs.readFileSync(path.join(DOCS, 'heag.js'), 'utf8'), sandbox);
+  const HG = sandbox.DarmstadtHeag;
+  check('Modul wird bereitgestellt', !!HG && typeof HG.start === 'function' && typeof HG.list === 'function');
+  const nowIso = new Date().toISOString();
+  const parsed = HG._test.parse({ vehicles: [
+    { latitude: 'x', longitude: 8.65 },                                     // Müll raus
+    { latitude: 49.87, longitude: 8.65, offline: true },                    // abgemeldet raus
+    { latitude: 49.87, longitude: 8.65, line: '4', category: 1, date: new Date(Date.now() - 10 * 60 * 1000).toISOString() },  // zu alt raus
+    { latitude: 49.871, longitude: 8.651, line: '4', category: 1, vehicleId: 381, direction: 'Kranichstein', date: nowIso },
+    { latitude: 49.872, longitude: 8.652, line: 'F', category: 5, vehicleId: 402, direction: 'Hauptbahnhof', date: nowIso },
+  ] });
+  check('nur brauchbare, nicht abgemeldete und frische Positionen bleiben', parsed.length === 2, `${parsed.length}`);
+  check('Kategorie wird zur Verkehrsart (1 = Straßenbahn, 5 = Bus)',
+    parsed.find(x => x.line === '4').mode === 'tram' && parsed.find(x => x.line === 'F').mode === 'bus');
+
+  // Abgeleitetes Fahrzeug, das denselben Zug beschreibt: muss ersetzt werden, nicht doppelt erscheinen.
+  const mPerLon = 111320 * Math.cos(49.87 * Math.PI / 180);
+  const nowMs = Date.now();
+  const derived = { tripId: 'T1', mode: 'tram', running: true, lineName: '4', headsign: 'Kranichstein',
+    dest: 'Kranichstein', fromName: 'Hauptbahnhof', dep: nowMs - 60000, arr: nowMs + 600000,
+    delayMin: 2, realTime: true, routeColor: '', path: [[8.6600, 49.8700], [8.6700, 49.8700]],
+    cd: [0, 0.01 * mPerLon], total: 0.01 * mPerLon, lineIdx: 0 };
+  L._test.setVehicles([derived]);
+  HG._test.reset([{ line: '4', lat: 49.87005, lon: 8.6602, bearing: 90, vehicleId: 381, category: 1, mode: 'tram', dest: 'Kranichstein', at: nowMs }]);
+  sandbox.DarmstadtLive.attach({ map, overlay, deck: sandbox.deck, META, state, hex, fmt, shortStop, MODE_RGB,
+    selectLine: () => {}, hidePanel: () => { hideCalls++; }, heag: HG });
+  sandbox.DarmstadtLive.render(true);
+  let headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
+  const opDots = headsOp.filter(d => d.op);
+  console.log(`  Punkte: ${headsOp.length}, davon Betreiber: ${opDots.length}`);
+  check('ein Fahrzeug, ein Punkt: der Betreiberpunkt ersetzt den Zwilling', headsOp.length === 1 && opDots.length === 1);
+  check('Betreiberpunkt übernimmt unsere Verspätung (echte Position + echte Verspätung)',
+    opDots[0] && opDots[0].v.delayMin === 2 && opDots[0].v.op === true);
+  check('Betreiberpunkt sitzt an der gemeldeten Koordinate, nicht an der abgeleiteten',
+    Math.abs(opDots[0].pos[0] - 8.6602) < 1e-6 && Math.abs(opDots[0].pos[1] - 49.87005) < 1e-6);
+
+  const callsBefore = net.calls.filter(u => u.includes('/api/v1/trip?')).length;
+  await sandbox.DarmstadtLive.openPopup(opDots[0].v);
+  const opCard = el('popup').innerHTML;
+  check('Fahrzeugkarte weist die Betreiberposition aus (gelb, fett, beide Sprachen)',
+    opCard.includes(sandbox.I18N.t('popup.positionOperator')));
+  check('… und nicht mehr die Ableitung', !opCard.includes(sandbox.I18N.t('popup.positionNote')));
+  check('Zwilling hat weiterhin Fahrtdaten (Halte + Verspätung)', net.calls.filter(u => u.includes('/api/v1/trip?')).length > callsBefore);
+
+  // Fahrzeug ohne Zwilling: eigener Punkt, aber ohne Fahrtdaten vom offenen Strom.
+  HG._test.reset([{ line: '9', lat: 49.88, lon: 8.70, bearing: 0, vehicleId: 900, category: 5, mode: 'bus', dest: 'Irgendwo', at: Date.now() }]);
+  L._test.setVehicles([derived]);
+  sandbox.DarmstadtLive.render(true);
+  headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
+  const alone = headsOp.filter(d => d.op && d.v.opOnly);
+  check('ohne Zwilling entsteht ein eigener Punkt (Linie allein aus Betreiberdaten)', alone.length === 1);
+  const tripBefore = net.calls.filter(u => u.includes('/api/v1/trip?')).length;
+  await sandbox.DarmstadtLive.openPopup(alone[0].v);
+  check('für den eigenen Punkt wird keine Fahrt abgerufen (die gibt es dort nicht)', net.calls.filter(u => u.includes('/api/v1/trip?')).length === tripBefore);
+  check('Karte sagt, dass Verspätung und Halte unbekannt sind', el('popup').innerHTML.includes(sandbox.I18N.t('popup.operatorOnly')));
+
+  // Ausfall der Quelle: Karte fällt still auf die Ableitung zurück.
+  HG._test.reset([], 'HTTP 500');
+  L._test.setVehicles([derived]);
+  sandbox.DarmstadtLive.render(true);
+  headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
+  check('Quelle weg: die Karte läuft mit den abgeleiteten Positionen weiter',
+    headsOp.length === 1 && !headsOp[0].op);
+
+  console.log('\n=== Telefon: Panel schließt beim Auswählen ===');
+  // live.js bittet bei jeder Auswahl um das Schließen; ob es passiert, entscheidet index.html anhand
+  // der Layout-Abfrage. Der Haken hier spiegelt genau diese Entscheidung.
+  const DRAWER = '(max-width: 700px), (hover: none) and (pointer: coarse)';
+  const touchNow = () => !!sandbox.matchMedia(DRAWER).matches;
+  sandbox.DarmstadtLive.attach({ map, overlay, deck: sandbox.deck, META, state, hex, fmt, shortStop, MODE_RGB,
+    selectLine: () => {}, heag: HG, hidePanel: () => { if (touchNow()) hideCalls++; } });
+  sandbox.matchMedia = q => ({ matches: q === DRAWER });         // Telefon
+  hideCalls = 0;
+  sandbox.DarmstadtLive.render(true);
+  const opClick = cap.onClick;
+  if (typeof opClick === 'function') opClick({ object: { v: derived }, x: 10, y: 10 });
+  check('Fahrzeug antippen schließt auf dem Telefon das Panel', hideCalls === 1, `${hideCalls}`);
+  hideCalls = 0;
+  if (typeof opClick === 'function') opClick({ object: null, x: 10, y: 10 });
+  check('Tipp auf die Karte schließt es ebenfalls', hideCalls === 1, `${hideCalls}`);
+  sandbox.matchMedia = () => ({ matches: false });                // Rechner
+  hideCalls = 0;
+  if (typeof opClick === 'function') opClick({ object: { v: derived }, x: 10, y: 10 });
+  check('auf dem Rechner bleibt das Panel stehen', hideCalls === 0, `${hideCalls}`);
+  sandbox.DarmstadtLive.closePopup();
 
   console.log('\n=== EN/DE-Abdeckung ===');
   require('./test_i18n').run(check);

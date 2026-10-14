@@ -17,7 +17,21 @@
     return out.replace(/\s+/g, ' ').trim();
   }
 
+  // Kennung eines gemerkten Halts: echte Halt-Kennung, sonst der normalisierte Name — Haltestellen
+  // aus unserem eigenen Bestand haben keine Kennung und müssen trotzdem eindeutig bleiben.
   const idOf = s => String((s && (s.stopId || s.globalId)) || norm(s && s.name) || '');
+
+  // Stationsebene vs. Steig: der Feed liefert je Bahnsteig einen eigenen Halt
+  // ("de-DELFI_de:06411:16017:2:3") und zusätzlich den Halt der Station ("de-DELFI_de:06411:16017").
+  // Für die Trefferliste zählt der Name — sonst steht der Hauptbahnhof siebenmal da. Der Halt der
+  // Station ist die bessere Wahl: er liefert das ganze Abfahrtsbrett statt eines einzelnen Steigs.
+  const stationLevel = id => String(id || '').replace(/^de-DELFI_/, '').split(':').length <= 3;
+  const betterStop = (a, b) => {
+    const ida = !!(a && (a.stopId || a.globalId)), idb = !!(b && (b.stopId || b.globalId));
+    if (ida !== idb) return ida ? a : b;                       // mit Kennung schlägt ohne (Abfahrten!)
+    if (!ida) return a;
+    return stationLevel(a.stopId || a.globalId) ? a : b;       // Stationshalt schlägt Steig
+  };
 
   // Rang eines Treffers: 0 = am Namensanfang, 1 = am Wortanfang, 2 = irgendwo mitten im Namen.
   // "haupt" soll "Hauptbahnhof Nord" vor "Darmstadt Hauptbahnhof" stellen, beide vor "…-Hauptdurchgang".
@@ -27,23 +41,22 @@
     return /[\s\-/(.]/.test(n.charAt(at - 1)) ? 1 : 2;
   }
 
-  // Stationssuche: Rang zuerst, dann alphabetisch; Duplikate raus, Trefferzahl begrenzt.
+  // Stationssuche: ein Eintrag je Name (Rang zuerst, dann alphabetisch), Trefferzahl begrenzt.
   function matchStations(query, list, limit) {
     const q = norm(query);
     const out = [];
     if (!q || !Array.isArray(list)) return out;
-    const seen = new Set();
+    const seen = new Map();                                   // Name -> bester Treffer
     for (const s of list) {
       if (!s) continue;
       const n = norm(s.name);
       if (!n || n.indexOf(q) < 0) continue;
-      const id = idOf(s);
-      if (seen.has(id)) continue;
-      seen.add(id);
-      out.push({ s, r: rank(n, q), n });
+      const prev = seen.get(n);
+      seen.set(n, prev ? betterStop(prev, s) : s);
     }
-    out.sort((a, b) => (a.r === b.r ? a.n.localeCompare(b.n) : a.r - b.r));
-    return out.slice(0, limit || 7).map(x => x.s);
+    const rows = [...seen.entries()].map(([n, s]) => ({ s, r: rank(n, q), n }));
+    rows.sort((a, b) => (a.r === b.r ? a.n.localeCompare(b.n) : a.r - b.r));
+    return rows.slice(0, limit || 7).map(x => x.s);
   }
 
   // ---------- Favoriten
@@ -88,5 +101,6 @@
     return { stations: favs.stations.slice(), lines };
   }
 
-  window.DarmstadtSearch = { KEY, norm, matchStations, load, save, hasStation, hasLine, toggleStation, toggleLine, empty };
+  window.DarmstadtSearch = { KEY, norm, matchStations, load, save, hasStation, hasLine, toggleStation, toggleLine, empty,
+    stationLevel, betterStop };
 })();

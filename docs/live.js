@@ -45,7 +45,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261014-9';
+  const VERSION = '20261014-11';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -313,6 +313,53 @@
     return [230, 235, 245];
   }
 
+  // ---------- Betreiber-Positionen (HEAG) ----------
+  // Die HEAG meldet echte Koordinaten; der offene Strom liefert nur Ableitungen aus Haltzeiten. Regel:
+  // je Fahrzeug genau EIN Punkt. Findet sich ein Zwilling (gleiche Linie, nah dran), ersetzt der
+  // Betreiberpunkt ihn und übernimmt dessen Verspätung — echte Position plus echte Verspätung.
+  const OP_TWIN_MAX_M = 350;
+  let opLog = { merged: 0, added: 0, available: 0 };      // für Tests und Diagnose
+  const metresBetween = (aLat, aLon, bLat, bLon) => {
+    const dy = (aLat - bLat) * 111320, dx = (aLon - bLon) * 111320 * Math.cos(aLat * Math.PI / 180);
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  function withOperator(cur) {
+    const src = (ctx && ctx.heag && ctx.heag.list) ? ctx.heag.list() : null;
+    opLog = { merged: 0, added: 0, available: src ? src.length : 0 };
+    if (!src || !src.length) return cur;
+    const out = cur.slice();
+    for (const o of src) {
+      const key = normLine(o.line);
+      let twin = -1, best = OP_TWIN_MAX_M;
+      for (let i = 0; i < out.length; i++) {
+        const c = out[i];
+        if (c.op || !key || normLine(c.v.lineName) !== key) continue;
+        const d = metresBetween(o.lat, o.lon, c.pos[1], c.pos[0]);
+        if (d < best) { best = d; twin = i; }
+      }
+      const base = twin >= 0 ? out[twin].v : null;
+      if (twin >= 0) out.splice(twin, 1);                 // Zwilling raus: eine Quelle je Fahrzeug
+      const mode = (base && base.mode) || o.mode || 'bus';
+      out.push({
+        op: true, bearing: o.bearing,
+        pos: [o.lon, o.lat],
+        rest: [],
+        v: base ? Object.assign({}, base, { op: true, opId: o.vehicleId, opAt: o.at })
+                : {
+                    tripId: 'heag:' + (o.vehicleId == null ? o.line + ':' + o.lat : o.vehicleId),
+                    op: true, opId: o.vehicleId, opAt: o.at, opOnly: true,
+                    mode, lineName: o.line || '?', headsign: o.dest || '', dest: o.dest || '',
+                    fromName: '', delayMin: null, realTime: true, routeColor: '',
+                    dep: 0, arr: 0, path: null, cd: null, total: 0,
+                    lineIdx: matchLine(o.line, mode),
+                  },
+      });
+      if (base) opLog.merged++; else opLog.added++;
+    }
+    return out;
+  }
+
   function render(force) {
     if (!ctx) return;
     followTick();                      // Kamera am angeklickten Fahrzeug halten (kurzzeitig)
@@ -324,7 +371,7 @@
     if (!followTrip && ctx.map.isMoving && ctx.map.isMoving()) return;
     const t = Date.now();
     const sel = ctx.state.selLine;
-    const cur = vehiclesAt(t);
+    const cur = withOperator(vehiclesAt(t));
     // Angeklicktes Fahrzeug dauerhaft markieren, damit der Punkt auch nach dem Kamera-Follow zu finden ist
     const focusTrip = popupVehicle ? popupVehicle.tripId : null;
     const focus = focusTrip ? cur.find(c => c.v.tripId === focusTrip) : null;
@@ -381,16 +428,19 @@
       }),
       new ctx.deck.ScatterplotLayer({
         id: 'live-heads', data: vis, getPosition: d => d.pos,
-        getRadius: d => (focusTrip && d.v.tripId === focusTrip ? 7.5 : (d.v.mode === 'bus' ? 4 : 5)), radiusUnits: 'pixels',
+        // Punkte doppelt so groß wie vorher: mit dem Finger trifft man sie so ohne Zoomen.
+        // Die Trefferfläche von deck.gl folgt dem Radius — größere Punkte sind also auch leichter
+        // anzutippen, nicht nur besser zu sehen.
+        getRadius: d => (focusTrip && d.v.tripId === focusTrip ? 15 : (d.v.mode === 'bus' ? 8 : 10)), radiusUnits: 'pixels',
         getFillColor: d => { const c = colorFor(d.v); return [...c, alpha(d.v)]; },
         stroked: true, getLineColor: d => [...delayColor(d.v.delayMin), dim(d.v) ? 30 : 235],
-        getLineWidth: d => (focusTrip && d.v.tripId === focusTrip ? 3 : (Math.abs(d.v.delayMin) >= 1 ? 2 : 1.2)), lineWidthUnits: 'pixels',
-        pickable: true, radiusMinPixels: 3,
+        getLineWidth: d => (focusTrip && d.v.tripId === focusTrip ? 3 : (Math.abs(d.v.delayMin) >= 1 ? 2.6 : 1.8)), lineWidthUnits: 'pixels',
+        pickable: true, radiusMinPixels: 6,
         updateTriggers: { getPosition: t, getFillColor: sel, getLineColor: [sel, focusTrip], getRadius: focusTrip, getLineWidth: focusTrip },
       }),
       focus ? new ctx.deck.ScatterplotLayer({    // pulsierender Ring um das angeklickte Fahrzeug
         id: 'live-focus', data: [focus], getPosition: d => d.pos,
-        getRadius: 13 + 6 * Math.abs(Math.sin(t / 430)), radiusUnits: 'pixels', radiusMinPixels: 13,
+        getRadius: 20 + 8 * Math.abs(Math.sin(t / 430)), radiusUnits: 'pixels', radiusMinPixels: 20,
         stroked: true, filled: false, getLineColor: [255, 255, 255, 240], getLineWidth: 3, lineWidthUnits: 'pixels',
         pickable: false,
         updateTriggers: { getPosition: t, getRadius: t },
@@ -556,11 +606,16 @@
     }).join('') : '';
     const failMsg = leg && leg.error
       ? (leg.error === 'noLegs' ? T('popup.noTrip') : T('popup.failed') + ' (' + leg.error + ')') : '';
-    const body = leg && leg.error
+    const body = v.opOnly
+      ? `<div class="pop-sub">${esc(T('popup.operatorOnly'))}</div>`
+      : leg && leg.error
       ? `<div class="pop-sub pop-err">${esc(failMsg)}</div>`
       : loading
         ? `<div class="pop-sub">${esc(T('popup.loading'))}</div>`
         : `<ul class="pop-stops">${rows || `<li><span class="st-name">${esc(T('popup.noStops'))}</span></li>`}</ul>`;
+    // Herkunft der Position: vom Betreiber gemeldet oder von uns aus Haltzeiten abgeleitet. Beides
+    // gelb und fett, damit die Einordnung nicht im Kleingedruckten verschwindet.
+    const note = v.op ? T('popup.positionOperator') : T('popup.positionNote');
     return `
       <div class="pop-head">
         <span class="pop-line" style="background:${cssColor(v)}">${esc(v.lineName)}</span>
@@ -571,7 +626,7 @@
       <div class="pop-sub">${esc(T('popup.realtime'))}${v.fromName ? ' · ' + esc(ss(v.fromName)) + ' → ' : ' · '}${esc(ss(v.dest))}` +
         `${leg && !leg.error && leg.agency ? ' · ' + esc(T('popup.agency')) + ': ' + esc(leg.agency) : ''}</div>
       ${body}
-      <div class="pop-note note-warn">${esc(T('popup.positionNote'))}</div>`;
+      <div class="pop-note note-warn">${esc(note)}</div>`;
   }
 
   // ---------- Kamera begleitet das angeklickte Fahrzeug — kurz, dann gibt sie wieder frei
@@ -770,11 +825,16 @@
       `<span class="st-dly ${delay === null ? 'unknown' : delayClass(delay)}">${delay === null || delay === 0 ? '·' : delay > 0 ? '+' + delay : delay}</span></li>`;
   }
 
+  // Stationsebene ("…:16017") oder Steig ("…:16017:2:3")? Der Stationshalt liefert das ganze
+  // Abfahrtsbrett, ein Steig nur seine eigene Richtung — für Suche/Favoriten ist die Station besser.
+  const stationLevel = id => String(id || '').replace(/^de-DELFI_/, '').split(':').length <= 3;
+
   // Halt aus unserem Bestand dem Feed-Halt zuordnen: der Feed kennt die Kennung (für die Abfahrten)
   // und die echte Position. Suche und Favoriten liefern nur Name + Koordinaten.
   function resolveStop(stop) {
     if (!stop || stop.stopId) return stop;
-    const hit = stops.find(x => normStopName(x.name) === normStopName(stop.name));
+    const same = stops.filter(x => normStopName(x.name) === normStopName(stop.name));
+    const hit = same.find(x => stationLevel(x.stopId)) || same[0];
     if (!hit) return stop;
     return { name: hit.name || stop.name, lat: hit.lat, lon: hit.lon, stopId: hit.stopId,
              modes: (hit.modes && hit.modes.length) ? hit.modes : (stop.modes || []) };
@@ -891,12 +951,21 @@
     el.classList.add('on');
     paintPopup(!refreshing);
     let leg;
-    try {
+    if (v.opOnly) {
+      leg = { operator: true };            // nur der Betreiberpunkt: der offene Strom kennt keine Fahrt
+    } else try {
       const res = await fetch(`${API_TRIP}?tripId=${encodeURIComponent(v.tripId)}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       leg = pickLeg(await res.json(), v) || { error: 'noLegs' };
     } catch (err) {
       leg = { error: (err && err.message) || 'error' };
+    }
+    if (v.opOnly) {                          // Betreiberpunkt: kein Fahrtabruf, kein Auffrisch-Timer
+      if (seq !== popupSeq || !popupVehicle) return;
+      popupLeg = leg;
+      paintPopup(false);
+      popupTimer = setTimeout(popupTick, POPUP_REFRESH_MS);
+      return;
     }
     if (seq !== popupSeq || !popupVehicle) return;     // veraltet: Popup zu oder anderes Fahrzeug
     if (!(refreshing && leg.error && popupLeg && !popupLeg.error)) popupLeg = leg;  // Aussetzer: alte Liste behalten
