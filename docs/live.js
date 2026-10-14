@@ -39,7 +39,7 @@
   const WINDOW_MIN = 1;            // Zeitfenster je Anfrage (Nutzlast-Minimum)
   const MAX_SPAN = 0.28;           // max. bbox-Kantenlänge in Grad (verhindert 422)
   const STALE_MS = 45000;          // ab wann Daten als veraltet gelten
-  const NEXT_STOPS = 8;            // wie viele kommende Halte das Popup zeigt
+  const NEXT_STOPS = 3;            // das Popup zeigt die nächsten drei Halte (Wunsch des Betreibers)
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 200;            // Live-Animation ~5 Bilder/s: spart Akku/GC auf Telefonen
@@ -174,6 +174,10 @@
       if (built.length || failures === 0) {      // leere Antwort nicht als Erfolg überbügeln
         vehicles = built;
         lastOk = Date.now();
+        if (popupVehicle) {                      // offenes Popup am Fahrzeug halten
+          const again = vehicles.find(x => x.tripId === popupVehicle.tripId);
+          if (again) popupVehicle = again; else closePopup();   // Fahrt ist beendet
+        }
       }
       lastErr = null; failures = 0;
       setBanner(null);
@@ -258,10 +262,13 @@
 
   function render(force) {
     if (!ctx) return;
+    followTick();                      // Kamera am angeklickten Fahrzeug halten (kurzzeitig)
+    placePopup(false);                 // Popup bleibt am Fahrzeug — auch während die Karte sich bewegt
     // Während Zoom/Pan nichts neu bauen: Layer-Aufbau und Fahrzeugberechnung konkurrieren sonst mit
     // der Geste um den Hauptthread, was die Karte beim Zoomen hakelig wirken lässt. Der nächste
-    // Tick zeichnet direkt nach dem Ende der Geste.
-    if (ctx.map.isMoving && ctx.map.isMoving()) return;
+    // Tick zeichnet direkt nach dem Ende der Geste. Beim Verfolgen eines Fahrzeugs muss aber
+    // weitergezeichnet werden, sonst steht der Punkt still.
+    if (!followTrip && ctx.map.isMoving && ctx.map.isMoving()) return;
     const t = Date.now();
     const sel = ctx.state.selLine;
     const cur = vehiclesAt(t);
@@ -313,8 +320,8 @@
 
   function click(info) {
     const v = info.object && info.object.v;
-    if (v) openPopup(v);
-    else closePopup();                     // Tipp auf die Karte schließt das Popup
+    if (v) { startFollow(v); openPopup(v); }   // Kamera kurz mitnehmen + Karte öffnen
+    else { stopFollow(); closePopup(); }        // Tipp auf die Karte schließt
   }
 
   const cursor = ({ isHovering }) => (isHovering ? 'pointer' : 'grab');
@@ -409,6 +416,69 @@
       <div class="pop-note">${esc(T('popup.positionNote'))}</div>`;
   }
 
+  // ---------- Kamera begleitet das angeklickte Fahrzeug — kurz, dann gibt sie wieder frei
+  const FOLLOW_MS = 2000;          // so lange folgt die Kamera dem Punkt
+  const FOLLOW_ZOOM = 14.8;        // Zoomstufe, auf die beim Klick hineingegangen wird
+  let followTrip = null, followUntil = 0;
+
+  function startFollow(v) {
+    if (!v) return;
+    followTrip = v.tripId;
+    followUntil = Date.now() + FOLLOW_MS;
+    const p = vehiclePosAt(v, Date.now());
+    if (p) ctx.map.easeTo({ center: p, zoom: Math.max(ctx.map.getZoom(), FOLLOW_ZOOM), duration: 650 });
+  }
+
+  // Freigabe: nach FOLLOW_MS oder sobald der Betreiber selbst eingreift
+  function stopFollow() { followTrip = null; followUntil = 0; }
+
+  function followTick() {
+    if (!followTrip) return;
+    if (Date.now() > followUntil) { stopFollow(); return; }
+    const v = vehicles.find(x => x.tripId === followTrip) || (popupVehicle && popupVehicle.tripId === followTrip ? popupVehicle : null);
+    if (!v) { stopFollow(); return; }
+    const p = vehiclePosAt(v, Date.now());
+    if (!p) { stopFollow(); return; }
+    ctx.map.easeTo({ center: p, zoom: Math.max(ctx.map.getZoom(), FOLLOW_ZOOM),
+                     duration: FRAME_MS, easing: t => t });   // gleitend, nicht springend
+  }
+
+  // ---------- Popup-Position: am Fahrzeug ausgerichtet und dem Punkt gedämpft nachgeführt
+  let popupPos = null;                     // zuletzt gezeichnete Popup-Position (Container-Pixel)
+
+  // Position des Fahrzeugs zu einem Zeitpunkt — dieselbe Interpolation wie die Kartenpunkte
+  function vehiclePosAt(v, t) {
+    if (!v || !v.path || !v.cd || !(v.arr > v.dep)) return null;
+    const u = Math.min(1, Math.max(0, (t - v.dep) / (v.arr - v.dep)));
+    return posAt(v.path, v.cd)(u * v.total);
+  }
+
+  // Setzt das Popup neben den Punkt, hält es im Bild und zieht es weich nach (immediate = ohne Dämpfung).
+  function placePopup(immediate) {
+    const el = document.getElementById('popup');
+    if (!el || !popupVehicle || !el.classList.contains('on')) return;
+    if (!finePointer()) {                  // Telefon: Bottom-Sheet unten, keine Verfolgung
+      if (el.style.left || el.style.top) { el.style.left = ''; el.style.top = ''; }
+      popupPos = null;
+      return;
+    }
+    const p = vehiclePosAt(popupVehicle, Date.now());
+    if (!p) return;
+    const pt = ctx.map.project(p);
+    const w = el.offsetWidth || 240, h = el.offsetHeight || 132;
+    const box = ctx.map.getContainer(), cw = box.clientWidth, ch = box.clientHeight, pad = 8;
+    let x = pt.x + 18, y = pt.y - h - 12;  // bevorzugt rechts über dem Punkt
+    if (x + w > cw - pad) x = Math.max(pad, pt.x - w - 18);   // sonst links daneben
+    if (y < pad) y = pt.y + 18;                                // oben kein Platz -> darunter
+    x = Math.max(pad, Math.min(x, cw - w - pad));
+    y = Math.max(pad, Math.min(y, ch - h - pad));
+    if (immediate || !popupPos) popupPos = { x, y };
+    else popupPos = { x: popupPos.x + (x - popupPos.x) * 0.18,       // sanft nachziehen
+                      y: popupPos.y + (y - popupPos.y) * 0.18 };
+    el.style.left = Math.round(popupPos.x) + 'px';
+    el.style.top = Math.round(popupPos.y) + 'px';
+  }
+
   function paintPopup(loading) {
     const el = document.getElementById('popup');
     if (!el || !popupVehicle) return;
@@ -420,6 +490,7 @@
     const nl = el.querySelector('.pop-stops');           // Scrollposition beim Auffrischen behalten
     if (nl) nl.scrollTop = scroll;
     el.scrollTop = outer;
+    placePopup(true);                                    // neue Höhe -> sofort neu ausrichten
   }
 
   // Popup öffnen (refresh=false) oder auffrischen (refresh=true: keine "lädt"-Anzeige, Scroll bleibt).
@@ -460,10 +531,10 @@
 
   function closePopup() {
     popupSeq++;                              // laufende Antworten verwerfen
-    popupVehicle = null; popupLeg = null;
+    popupVehicle = null; popupLeg = null; popupPos = null;
     clearTimeout(popupTimer); popupTimer = null;
     const el = document.getElementById('popup');
-    if (el) { el.classList.remove('on'); el.innerHTML = ''; }
+    if (el) { el.classList.remove('on'); el.innerHTML = ''; el.style.left = ''; el.style.top = ''; }
   }
 
   // ---------- Statistik
@@ -574,8 +645,12 @@
       ctx = context;
       lineIndex = null;
       ctx.map.on('moveend', () => scheduleRefresh(700));
+      // Der Betreiber hat Vorrang: eigene Geste beendet das Begleiten sofort
+      ctx.map.on('dragstart', stopFollow);
+      const box = ctx.map.getContainer();
+      ['wheel', 'mousedown', 'touchstart'].forEach(ev => box.addEventListener(ev, stopFollow, { passive: true }));
       document.addEventListener('visibilitychange', () => { if (!document.hidden && active) refresh(); });
-      document.addEventListener('keydown', e => { if (e.key === 'Escape' && popupVehicle) closePopup(); });
+      document.addEventListener('keydown', e => { if (e.key === 'Escape' && popupVehicle) { stopFollow(); closePopup(); } });
     },
     render,
     tick() {                                // aus requestAnimationFrame: gedrosselt

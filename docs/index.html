@@ -25,7 +25,7 @@
   #map { position: absolute; inset: 0; }
   .panel { position: absolute; z-index: 2; background: var(--panel); backdrop-filter: blur(10px);
     border: 1px solid var(--line); border-radius: 14px; }
-  #head { top: 16px; left: 16px; padding: 14px 18px; max-width: 360px; }
+  #head { top: 11px; left: 14px; padding: 12px 15px; max-width: 320px; }
   #head h1 { margin: 0 0 2px; font-size: 17px; font-weight: 650; letter-spacing: .01em; }
   #head p { margin: 0; color: var(--muted); font-size: 12.5px; }
   .sec { margin-top: 14px; }
@@ -47,7 +47,7 @@
   #legend-sec { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   /* Eigene Scrollfläche der Linienliste. Ohne flex/min-height schrumpft sie im Panel auf wenige
      Pixel — der Balken wird dann ein kaum greifbarer Splitter und die Linien sind nicht wählbar. */
-  #legend { flex: 1 1 auto; min-height: 176px; overflow-y: auto; margin-right: -8px; padding-right: 10px; scrollbar-gutter: stable; }
+  #legend { flex: 1 1 auto; min-height: 150px; overflow-y: auto; margin-right: -8px; padding-right: 10px; scrollbar-gutter: stable; }
   #legend details { border-top: 1px solid var(--line); }
   #legend summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
     padding: 9px 0; font-size: 12.5px; user-select: none; }
@@ -98,8 +98,9 @@
   #lang { top: 16px; right: 16px; padding: 6px; z-index: 4; top: calc(16px + env(safe-area-inset-top)); }
   #lang .seg button { padding: 7px 11px; font-size: 12.5px; font-weight: 600; min-width: 40px; }
 
-  /* --- Fahrzeug-Popup (Karte unten: Bottom-Sheet, Desktop: Karte) --- */
-  #popup { display: none; z-index: 6; padding: 12px 14px 14px; scrollbar-gutter: stable; }
+  /* --- Fahrzeug-Popup: sitzt am angeklickten Fahrzeug (Position setzt live.js), Telefon: Bottom-Sheet --- */
+  #popup { display: none; z-index: 6; padding: 9px 11px 10px; width: 238px; max-width: 238px;
+    left: -9999px; top: 0; scrollbar-gutter: stable; }
   #popup.on { display: block; }
   .pop-head { display: flex; align-items: center; gap: 8px; }
   .pop-line { font-size: 13px; font-weight: 700; color: #111; padding: 2px 8px; border-radius: 7px; flex: none; }
@@ -180,13 +181,13 @@
     #clock { font-size: 24px; min-width: 72px; }
     .seg button { padding: 9px 11px; min-height: 40px; }
     #timeline { height: 40px; }
-    #popup { left: 8px; right: 8px; bottom: calc(var(--bar-h, 104px) + 16px + env(safe-area-inset-bottom)); max-height: 46vh; overflow-y: auto; }
+    #popup { left: 8px; right: 8px; top: auto; width: auto; max-width: none; bottom: calc(var(--bar-h, 104px) + 16px + env(safe-area-inset-bottom)); max-height: 46vh; overflow-y: auto; }
     .pop-stops { max-height: none; }
     #banner { top: calc(70px + env(safe-area-inset-top)); font-size: 12px; }
     #tip { display: none !important; }        /* auf Touch gibt es nur das Popup */
   }
   @media (min-width: 701px) {
-    #popup { left: 16px; bottom: 132px; width: 372px; max-height: 54vh; overflow-y: auto; }
+    #popup { max-height: 44vh; overflow-y: auto; }   /* Position und Breite kommen aus live.js/CSS-Basis */
   }
 </style>
 </head>
@@ -379,7 +380,7 @@ let basemapCapped = false;
 map.on('style.load', () => {            // einmalig nach dem ersten Laden begrenzen
   if (basemapCapped) return;
   try { basemapCapped = inlineTileSource(); }
-  catch (err) { console.warn('Basemap-Kacheln konnten nicht begrenzt werden:', err); }
+  catch (err) { console.warn('basemap-tile-cap-failed', err); }
 });
 // Quellenangabe in der aktuellen Sprache; beim Sprachwechsel neu einsetzen
 let attribCtrl = null;
@@ -472,6 +473,7 @@ const GROUPS = [
 function buildLegend() {
   const lg = document.getElementById('legend'), done = new Set();
   const T = k => (window.I18N ? window.I18N.t(k) : k);
+  const keepScroll = lg.scrollTop;                     // Scrollposition beim Neuaufbau halten
   lg.innerHTML = '';                                  // nötig beim Sprachwechsel
   const byName = (a, b) => a.l.name.localeCompare(b.l.name, window.I18N ? window.I18N.lang : 'de', { numeric: true });
   for (const g of GROUPS) {
@@ -493,6 +495,7 @@ function buildLegend() {
     }
     lg.appendChild(det);
   }
+  lg.scrollTop = keepScroll;                          // Position wiederherstellen
 }
 
 // ---------- Zeitleiste: aktive Fahrzeuge über den Tag (gestapelt)
@@ -658,6 +661,11 @@ function setLive(on) {
   META = await fetch('data/meta.json').then(r => r.json());
   buildLegend();
   document.getElementById('selclear').onclick = () => selectLine(state.selLine);
+  // Das Mausrad über den Bedienfeldern darf die Karte darunter nicht zoomen
+  for (const id of ['head', 'bar', 'popup']) {
+    const n = document.getElementById(id);
+    if (n) n.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
+  }
   document.querySelectorAll('#lang button').forEach(b => b.onclick = () => window.I18N.set(b.dataset.lang));
   setAttribution();
   window.addEventListener('langchange', () => {

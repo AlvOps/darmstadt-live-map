@@ -95,13 +95,23 @@ function jsLiterals(src) {
 
 const KEY_NAMES = new Set(['Escape', 'Space', 'Enter', 'Tab']);
 // Looks like a sentence for humans? (≥2 words, a word with ≥3 letters, not a selector/URL/CSS/id list)
+/* CSS-ish selector list or single token, e.g. "#speed button", ".pop-stops li", "#legend summary".
+ * Deliberately LINEAR: the previous pattern was /^[\w-]+(\s*[,>+~]?\s*[#.]?[\w-]+(\[[^\]]*\])?)*$/,
+ * whose nested quantifiers over [\w-]+ backtrack exponentially (ReDoS) on a long string that nearly
+ * matches. Long comment text scraped out of <style> hit exactly that and hung the whole test run. */
+function looksLikeSelectorOrToken(s) {
+  if (!s || !/^[\w\s,>+~#.[\]*:/=-]*$/.test(s)) return false;
+  const parts = s.split(/[\s,>+~]+/).filter(Boolean);
+  return parts.length > 0 && parts.every(p => /^[#.]?[\w-]+(\[[^\]]*\])?(:[\w-]+)?$/.test(p));
+}
+
 function isProse(lit) {
   const s = lit.replace(/<[^>]*>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\u0000/g, ' ').trim();
   if (!s) return false;
   if (/^(https?:|data\/|[#.\[]|\(|rgba?\(|var\(|calc\()/.test(s)) return false;
   if (/(^|[?&\s])[a-zA-Z]+=/.test(s)) return false;                 // URL query strings
   if (KEY_NAMES.has(s)) return false;                                // KeyboardEvent.key/code values
-  if (/^[\w-]+(\s*[,>+~]?\s*[#.]?[\w-]+(\[[^\]]*\])?)*$/.test(s) && !/[A-ZÄÖÜ][a-zäöüß]+ [a-zäöüß]/.test(s) && !/[äöüß]/.test(s)) {
+  if (looksLikeSelectorOrToken(s) && !/[A-ZÄÖÜ][a-zäöüß]+ [a-zäöüß]/.test(s) && !/[äöüß]/.test(s)) {
     // single tokens or css-ish selector lists like "#speed button": technical unless clearly sentence-cased
     if (!/\s/.test(s)) return /[äöüßÄÖÜ]/.test(s) || /^[A-ZÄÖÜ][a-zäöüß]{2,}$/.test(s);
     return /\b(the|and|der|die|das|und|nicht|not|no|in|of|ist|is)\b/i.test(s);
@@ -214,6 +224,15 @@ function run(check, log = console.log) {
   // the scanner must actually work: it has to flag a known prose literal
   check('scanner self-test flags a prose literal', jsLiterals("x = 'Fahrplan: DELFI via gtfs.de'; // c").some(isProse) &&
     !jsLiterals("q('#speed button'); r = /it's/g;").some(isProse));
+
+  // Regression guard: a long comment scraped out of <style> used to make the selector pattern
+  // backtrack exponentially and hang the whole run (ReDoS). The scan must stay linear and fast.
+  const tricky = ' war ein Splitter, den man kaum treffen konnte. */ @supports (scrollbar-width: auto) { #legend { sc';
+  const tProse = Date.now();
+  const trickyVerdict = isProse(tricky);
+  const msProse = Date.now() - tProse;
+  log(`  tricky selector-ish input evaluated in ${msProse} ms -> prose=${trickyVerdict}`);
+  check(`prose scanner stays fast on tricky input (${msProse} ms < 200)`, msProse < 200);
 
   // default language
   const htmlLang = (html.match(/<html[^>]*\slang="([^"]*)"/) || [])[1];

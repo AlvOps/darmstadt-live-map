@@ -51,6 +51,12 @@ vm.runInContext(code, sandbox);
 const map = {
   getBounds: () => ({ getWest: () => 8.63, getSouth: () => 49.86, getEast: () => 8.68, getNorth: () => 49.89 }),
   getZoom: () => 14, on() {},
+  // the live module now anchors the popup to the vehicle and may move the camera: stub those too,
+  // otherwise render() would throw once a popup is open
+  getContainer: () => ({ clientWidth: 1280, clientHeight: 800, addEventListener() {} }),
+  project: p => ({ x: 640, y: 400 }),
+  easeTo() {},
+  isMoving: () => false,
 };
 const overlay = { setProps(p) { captured.layers = p.layers; captured.handlers = p; } };
 const state = { modes: { tram: true, bus: true, rail: true }, selLine: null };

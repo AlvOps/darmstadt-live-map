@@ -63,11 +63,22 @@ vm.runInContext(fs.readFileSync(path.join(DOCS, 'i18n.js'), 'utf8'), sandbox);
 vm.runInContext(fs.readFileSync(path.join(DOCS, 'live.js'), 'utf8'), sandbox);
 
 const mapHandlers = {};
+const easeCalls = [];
+const containerListeners = {};
+const mapContainer = {
+  clientWidth: 1280, clientHeight: 800,
+  addEventListener: (ev, fn) => { (containerListeners[ev] = containerListeners[ev] || []).push(fn); },
+};
 const map = {
   getBounds: () => ({ getWest: () => 8.63, getSouth: () => 49.86, getEast: () => 8.68, getNorth: () => 49.89 }),
   getZoom: () => 14, on(ev, fn) { mapHandlers[ev] = fn; },
+  getContainer: () => mapContainer,
+  // lineare Näherung um Darmstadt, damit die Popup-Platzierung nachrechenbar ist
+  project: ([lon, lat]) => ({ x: 640 + (lon - 8.652) * 9000, y: 400 - (lat - 49.872) * 9000 }),
+  easeTo: opts => { easeCalls.push(opts); },
+  isMoving: () => false,
 };
-const overlay = { setProps(p) { cap.layers = p.layers; } };
+const overlay = { setProps(p) { cap.layers = p.layers; if (p.onClick) cap.onClick = p.onClick; } };
 const state = { modes: { tram: true, bus: true, rail: true }, selLine: null };
 
 sandbox.I18N.init();
@@ -123,6 +134,52 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     console.log(`  ${label.padEnd(11)} Verspätung=${String(cand.delayMin).padStart(3)} min  Klasse=${m[1]}  Text="${m[2]}"`);
     check(`${label}: Statuswort und Klassenfarbe`, !!m && wantWord.test(m[2]) && m[1] === wantCls);
   }
+  console.log('\n=== Popup sitzt am Fahrzeug (nächste 3 Halte, Uhrzeiten) ===');
+  {
+    sandbox.matchMedia = () => ({ matches: true });     // Desktop: Popup folgt dem Punkt
+    const pv = heads.map(d => d.v)[0];
+    await sandbox.DarmstadtLive.openPopup(pv);
+    const p = el('popup');
+    const left = parseFloat(p.style.left), top = parseFloat(p.style.top);
+    console.log(`  Position: left=${p.style.left} top=${p.style.top} (Fenster 1280x800)`);
+    check('Popup ist am Punkt platziert statt in einer festen Ecke',
+      Number.isFinite(left) && Number.isFinite(top) && left > 0 && top > 0 && left < 1280 && top < 800);
+    const rows = (p.innerHTML.match(/class="st-name"/g) || []).length;
+    console.log(`  Haltezeilen im Popup: ${rows}`);
+    check('Popup zeigt höchstens die nächsten drei Halte', rows >= 1 && rows <= 3);
+    check('Popup nennt die Uhrzeiten der Halte', /class="st-time"/.test(p.innerHTML));
+    check('Popup nennt Status und Verspätung als Wort', /On time|Delayed|Early/.test(p.innerHTML));
+
+    console.log('\n=== Kamera folgt dem Fahrzeug, gibt nach 2 s frei ===');
+    easeCalls.length = 0;
+    cap.onClick({ object: { v: pv } });
+    const zoom = easeCalls.length ? Math.max(...easeCalls.map(c => c.zoom || 0)) : 0;
+    console.log(`  easeTo beim Klick: ${easeCalls.length} Aufruf(e), Zoom ${zoom}`);
+    check('Klick zoomt auf das Fahrzeug', easeCalls.length > 0 && zoom >= 14.8);
+    await wait(300);
+    sandbox.DarmstadtLive.render(true);
+    const during = easeCalls.length;
+    check('Kamera begleitet den Punkt weiter', during > 1, `${during} Aufrufe`);
+    await wait(2100);
+    sandbox.DarmstadtLive.render(true);
+    const after = easeCalls.length;
+    sandbox.DarmstadtLive.render(true);
+    check('nach 2 s ist die Kamera wieder frei', easeCalls.length === after, `${easeCalls.length - after} Nachläufer`);
+    cap.onClick({ object: { v: pv } });
+    const nb = easeCalls.length;
+    (containerListeners.wheel || []).forEach(f => f({}));
+    sandbox.DarmstadtLive.render(true);
+    check('eigene Geste beendet das Begleiten sofort', easeCalls.length === nb, `${easeCalls.length - nb} Aufrufe nach dem Rad`);
+
+    // Touch-Gerät: das Popup bleibt Bottom-Sheet, es wird nicht am Punkt verschoben
+    sandbox.matchMedia = () => ({ matches: false });
+    await sandbox.DarmstadtLive.openPopup(pv);
+    const pt = el('popup');
+    check('auf Touch bleibt das Popup im Bottom-Sheet (keine Inline-Position)',
+      !pt.style.left && !pt.style.top, `${pt.style.left || '-'}/${pt.style.top || '-'}`);
+    sandbox.matchMedia = () => ({ matches: true });     // Popup bleibt für die Sprachprüfung offen
+  }
+
   console.log('\n=== Sprachumschaltung ===');
   const enTitle = el('livestat').innerHTML;
   sandbox.I18N.set('de');
