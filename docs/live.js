@@ -34,6 +34,8 @@
 
   const API = 'https://api.transitous.org/api/v1/map/trips';
   const API_TRIP = 'https://api.transitous.org/api/v1/trip';
+  const API_STOPS = 'https://api.transitous.org/api/v1/map/stops';      // echte Haltestellenpositionen
+  const API_STOPTIMES = 'https://api.transitous.org/api/v1/stoptimes';  // Abfahrten je Halt
   const REFRESH_MS = 30000;        // Abrufintervall (Positionen dazwischen lokal interpoliert)
   const POPUP_REFRESH_MS = 30000;
   const WINDOW_MIN = 1;            // Zeitfenster je Anfrage (Nutzlast-Minimum)
@@ -60,7 +62,9 @@
   let lastOk = 0, lastErr = null, failures = 0, lastPaint = 0;
   let pollTimer = null, refreshTimer = null, refreshInFlight = false;
   let lineIndex = null, viewBox = null;
+  let stops = [];                        // Haltestellen aus dem Feed (echte Koordinaten, mit stopId)
   let popupVehicle = null, popupLeg = null, popupTimer = null, popupSeq = 0;
+  let popupStation = null, popupAnchor = null, popupDepartures = null;   // Haltestellenkarte
   let active = false, lastFrame = 0;
 
   // API-Texte (Linien, Halte, Ziele, Betreiber, Fehlermeldungen) nie roh in innerHTML
@@ -165,9 +169,17 @@
     const t0 = new Date(now).toISOString().replace(/\.\d+Z$/, 'Z');
     const t1 = new Date(now + WINDOW_MIN * 60000).toISOString().replace(/\.\d+Z$/, 'Z');
     try {
-      const res = await fetch(`${API}?${bboxParams()}&startTime=${t0}&endTime=${t1}`, { cache: 'no-store' });
+      const bb = bboxParams();
+      const [res, stopsRes] = await Promise.all([
+        fetch(`${API}?${bb}&startTime=${t0}&endTime=${t1}`, { cache: 'no-store' }),
+        fetch(`${API_STOPS}?${bb}`, { cache: 'no-store' }).catch(() => null),
+      ]);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const json = await res.json();
+      if (stopsRes && stopsRes.ok) {                 // Halte mit echten Koordinaten aus dem Feed
+        const rawStops = await stopsRes.json().catch(() => null);
+        if (Array.isArray(rawStops)) stops = dedupeStops(rawStops);
+      }
       if (!active) return;                       // während des Abrufs ausgeschaltet
       if (!Array.isArray(json)) throw new Error('bad payload');
       const built = buildVehicles(json);
@@ -238,6 +250,17 @@
     return Array.from(byTrip.values()).filter(v => v.running);   // nur fahrende Fahrzeuge
   }
 
+  // Der Feed liefert je Bahnsteig/Kante einen Eintrag — für die Karte genügt ein Punkt je Halt.
+  function dedupeStops(raw) {
+    const seen = new Map();
+    for (const s of raw) {
+      if (!s || typeof s.lat !== 'number' || typeof s.lon !== 'number' || !s.name) continue;
+      const key = `${s.name}|${s.lat.toFixed(3)}|${s.lon.toFixed(3)}`;    // ~100 m Raster
+      if (!seen.has(key)) seen.set(key, { name: s.name, stopId: s.stopId, lat: s.lat, lon: s.lon, modes: s.modes || [] });
+    }
+    return Array.from(seen.values());
+  }
+
   function vehiclesAt(t) {
     const out = [];
     for (const v of vehicles) {
@@ -277,6 +300,12 @@
     const vis = cur.filter(c => ctx.state.modes[c.v.mode]);
 
     const layers = [
+      new ctx.deck.ScatterplotLayer({          // Haltestellen: Positionen direkt aus dem Feed
+        id: 'live-stations', data: stops, getPosition: d => [d.lon, d.lat],
+        getRadius: 2, radiusUnits: 'pixels', pickable: true, radiusMinPixels: 2,
+        stroked: true, getLineColor: [236, 241, 252, 150], getLineWidth: 0.8, lineWidthUnits: 'pixels',
+        getFillColor: [216, 223, 240, 215],
+      }),
       new ctx.deck.PathLayer({
         id: 'live-trails', data: vis, getPath: d => d.rest,
         getColor: d => { const c = colorFor(d.v); return [...c, dim(d.v) ? 25 : 90]; },
@@ -310,7 +339,15 @@
   function hover(info) {
     const tip = document.getElementById('tip');
     if (!tip) return;
-    if (!info.object || !info.object.v || !finePointer()) { tip.style.display = 'none'; return; }
+    if (!info.object || !finePointer()) { tip.style.display = 'none'; return; }
+    if (info.object.stopId) {                       // Haltestelle
+      tip.innerHTML = `<b>${esc(info.object.name)}</b><br>` +
+        `<span style="color:var(--muted)">${esc(T('station.departures'))}</span>`;
+      tip.style.display = 'block';
+      tip.style.left = info.x + 14 + 'px'; tip.style.top = info.y + 14 + 'px';
+      return;
+    }
+    if (!info.object.v) { tip.style.display = 'none'; return; }
     const v = info.object.v;
     tip.innerHTML = `<b>${esc(v.lineName)}</b> → ${esc(ss(v.headsign || v.dest))}<br>` +
       `<span style="color:var(--muted)">${esc(delayText(v.delayMin))} · ${esc(T('popup.realtime'))}</span>`;
@@ -319,9 +356,10 @@
   }
 
   function click(info) {
-    const v = info.object && info.object.v;
-    if (v) { startFollow(v); openPopup(v); }   // Kamera kurz mitnehmen + Karte öffnen
-    else { stopFollow(); closePopup(); }        // Tipp auf die Karte schließt
+    const o = info.object;
+    if (o && o.v) { startFollow(o.v); openPopup(o.v); return; }   // Fahrzeug: Kamera mitnehmen + Karte
+    if (o && o.stopId) { openStation(o); return; }                // Haltestelle: Kamera hin + Abfahrten
+    stopFollow(); closePopup();                                   // Tipp auf die Karte schließt
   }
 
   const cursor = ({ isHovering }) => (isHovering ? 'pointer' : 'grab');
@@ -456,13 +494,14 @@
   // Setzt das Popup neben den Punkt, hält es im Bild und zieht es weich nach (immediate = ohne Dämpfung).
   function placePopup(immediate) {
     const el = document.getElementById('popup');
-    if (!el || !popupVehicle || !el.classList.contains('on')) return;
+    if (!el || (!popupVehicle && !popupStation) || !el.classList.contains('on')) return;
     if (!finePointer()) {                  // Telefon: Bottom-Sheet unten, keine Verfolgung
       if (el.style.left || el.style.top) { el.style.left = ''; el.style.top = ''; }
       popupPos = null;
       return;
     }
-    const p = vehiclePosAt(popupVehicle, Date.now());
+    // Fahrzeug: Punkt auf der Strecke · Haltestelle: fester Ort
+    const p = popupAnchor || vehiclePosAt(popupVehicle, Date.now());
     if (!p) return;
     const pt = ctx.map.project(p);
     const w = el.offsetWidth || 240, h = el.offsetHeight || 132;
@@ -477,6 +516,79 @@
                       y: popupPos.y + (y - popupPos.y) * 0.18 };
     el.style.left = Math.round(popupPos.x) + 'px';
     el.style.top = Math.round(popupPos.y) + 'px';
+  }
+
+  // ---------- Haltestellenkarte: Kamera zum Halt, nächste Abfahrten aus demselben Feed
+  function departureRow(e) {
+    const dep = Date.parse(e.place.departure);
+    const sched = e.place.scheduledDeparture ? Date.parse(e.place.scheduledDeparture) : dep;
+    const delay = Number.isFinite(sched) ? Math.round((dep - sched) / 60000) : null;
+    const inMin = Math.round((dep - Date.now()) / 60000);
+    const line = String(e.routeShortName || '?').replace(/\s*\(.*?\)/, '');
+    const col = /^[0-9a-fA-F]{6}$/.test(String(e.routeColor || '')) ? '#' + e.routeColor : '#8a90a0';
+    const rel = inMin >= 0 && inMin <= 90 ? (inMin <= 0 ? T('popup.stopNow') : T('popup.inMin', { n: inMin })) : '';
+    return `<li><span class="st-line" style="background:${esc(col)}">${esc(line)}</span>` +
+      `<span class="st-name">${esc(ss(e.headsign || ''))}</span>` +
+      `${rel ? `<span class="st-time">${esc(rel)}</span>` : ''}` +
+      `<span class="st-time">${clock(dep)}</span>` +
+      `<span class="st-dly ${delay === null ? 'unknown' : delayClass(delay)}">${delay === null || delay === 0 ? '·' : delay > 0 ? '+' + delay : delay}</span></li>`;
+  }
+
+  function stationShell(stop, deps, loading) {
+    const modes = (stop.modes || []).map(m => String(m).toLowerCase().replace(/_/g, ' ')).join(' · ');
+    let body;
+    if (deps && deps.error) body = `<div class="pop-sub">${esc(T('station.failed'))} (${esc(deps.error)})</div>`;
+    else if (loading) body = `<div class="pop-sub">${esc(T('station.loading'))}</div>`;
+    else if (!deps || !deps.length) body = `<div class="pop-sub">${esc(T('station.none'))}</div>`;
+    else body = `<ul class="pop-stops">${deps.slice(0, 4).map(departureRow).join('')}</ul>`;
+    return `
+      <div class="pop-head">
+        <span class="pop-title">${esc(ss(stop.name))}</span>
+        <button class="pop-close" aria-label="${esc(T('popup.close'))}">✕</button>
+      </div>
+      <div class="pop-sub">${esc(T('station.departures'))}${modes ? ' · ' + esc(modes) : ''}</div>
+      ${body}
+      <div class="pop-note">${esc(T('station.note'))} ${esc(T('station.mapNote'))}</div>`;
+  }
+
+  function paintStation(loading) {
+    const el = document.getElementById('popup');
+    if (!el || !popupStation) return;
+    el.innerHTML = stationShell(popupStation, popupDepartures, loading);
+    const btn = el.querySelector('.pop-close');
+    if (btn) btn.onclick = closePopup;
+    placePopup(true);
+  }
+
+  // Öffnen (refreshing=false) oder Auffrischen (true: kein Kamerasprung, keine "lädt"-Anzeige)
+  async function openStation(stop, refreshing) {
+    const el = document.getElementById('popup');
+    if (!el || !stop) return;
+    const seq = ++popupSeq;
+    clearTimeout(popupTimer); popupTimer = null;
+    if (!refreshing) {
+      popupVehicle = null; popupLeg = null; popupDepartures = null;
+      popupStation = stop; popupAnchor = [stop.lon, stop.lat];
+      ctx.map.easeTo({ center: [stop.lon, stop.lat], zoom: Math.max(ctx.map.getZoom(), 15.6), duration: 600 });
+      el.classList.add('on');
+      paintStation(true);
+    } else {
+      popupStation = stop; popupAnchor = [stop.lon, stop.lat];
+    }
+    try {
+      const res = await fetch(`${API_STOPTIMES}?stopId=${encodeURIComponent(stop.stopId)}&n=4`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      if (seq !== popupSeq || !popupStation) return;
+      popupDepartures = (json && Array.isArray(json.stopTimes) ? json.stopTimes : [])
+        .filter(e => e && e.place && e.place.departure);
+    } catch (err) {
+      if (seq !== popupSeq || !popupStation) return;
+      if (!refreshing) popupDepartures = { error: (err && err.message) || 'error' };   // alte Liste behalten
+    }
+    if (seq !== popupSeq || !popupStation) return;
+    paintStation(false);
+    popupTimer = setTimeout(popupTick, POPUP_REFRESH_MS);
   }
 
   function paintPopup(loading) {
@@ -501,7 +613,10 @@
     if (!el || !v) return;
     const seq = ++popupSeq;
     clearTimeout(popupTimer); popupTimer = null;
-    if (!refreshing) { popupVehicle = v; popupLeg = null; }
+    if (!refreshing) {                       // Fahrzeugkarte ersetzt eine eventuell offene Haltestellenkarte
+      popupVehicle = v; popupLeg = null;
+      popupStation = null; popupAnchor = null; popupDepartures = null;
+    }
     else {                                   // aktuellen Datensatz der Fahrt übernehmen (Verspätung ändert sich)
       const fresh = vehicles.find(x => x.tripId === v.tripId);
       if (fresh) popupVehicle = fresh;
@@ -524,14 +639,16 @@
 
   function popupTick() {
     popupTimer = null;
-    if (!popupVehicle || !active) return;
     if (document.hidden) { popupTimer = setTimeout(popupTick, POPUP_REFRESH_MS); return; }
+    if (popupStation && active) { openStation(popupStation, true); return; }   // Abfahrten auffrischen
+    if (!popupVehicle || !active) return;
     openPopup(popupVehicle, true);
   }
 
   function closePopup() {
     popupSeq++;                              // laufende Antworten verwerfen
     popupVehicle = null; popupLeg = null; popupPos = null;
+    popupStation = null; popupAnchor = null; popupDepartures = null;
     clearTimeout(popupTimer); popupTimer = null;
     const el = document.getElementById('popup');
     if (el) { el.classList.remove('on'); el.innerHTML = ''; el.style.left = ''; el.style.top = ''; }
@@ -664,15 +781,21 @@
     setLang() {                             // nach Sprachwechsel: Statistik, Histogramm, Popup neu beschriften
       if (ctx) render(true);
       if (popupVehicle) paintPopup(false);  // aus dem Zwischenspeicher, kein neuer Abruf
+      else if (popupStation) paintStation(false);
     },
     closePopup,
     openPopup: v => openPopup(v, false),
+    openStation: s => openStation(s, false),
     info() {
       return {
-        active, count: vehicles.length, lastOk,
+        active, count: vehicles.length, stops: stops.length, lastOk,
         lastErr: lastErr ? String(lastErr.message || lastErr) : null, failures,
         polling: !!pollTimer, popupTimer: !!popupTimer,
-        popupOpen: !!popupVehicle, popupStops: popupLeg && !popupLeg.error ? nextStops(popupLeg).length : null,
+        popupOpen: !!popupVehicle || !!popupStation,
+        popupKind: popupStation ? 'station' : popupVehicle ? 'vehicle' : null,
+        popupStops: popupLeg && !popupLeg.error ? nextStops(popupLeg).length : null,
+        popupDepartures: Array.isArray(popupDepartures) ? popupDepartures.length
+          : (popupDepartures && popupDepartures.error ? 'error' : null),
         popupError: popupLeg && popupLeg.error ? popupLeg.error : null,
       };
     },

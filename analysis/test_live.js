@@ -87,10 +87,13 @@ sandbox.window.DarmstadtLive.attach({
   }
 
   sandbox.window.DarmstadtLive.render(true);
-  const [trails, heads] = captured.layers;
+  // Ebenen nach id suchen, nicht nach Position — die Haltestellen-Ebene kam später dazu
+  const byId = id => captured.layers.find(l => l.id === id) || { data: [] };
+  const trails = byId('live-trails'), heads = byId('live-heads'), stations = byId('live-stations');
   console.log('\n=== Ebenen ===');
   console.log('  Ebenen gesetzt:', captured.layers.map(l => l.id).join(', '));
-  console.log('  Trails:', trails.data.length, '| Heads:', heads.data.length, '| Canvas-Zeichenaufrufe:', captured.canvasCalls);
+  console.log('  Trails:', trails.data.length, '| Heads:', heads.data.length,
+              '| Halte:', stations.data.length, '| Canvas-Zeichenaufrufe:', captured.canvasCalls);
 
   // Positionen aller Fahrzeuge einsammeln
   const pos = heads.data.map(d => d.pos);
@@ -127,6 +130,7 @@ sandbox.window.DarmstadtLive.attach({
   console.log('\n=== Geprüft ===');
   console.log(`  Fahrzeuge > 0: ${info.count > 0} | ungültige Koordinaten = 0: ${nan === 0} | alle im Raum Darmstadt: ${inBox === pos.length}`);
   console.log(`  Trails == Heads: ${trails.data.length === heads.data.length} | nur realTime===true: ${rtOnly}`);
+  console.log(`  Halte besitzen Koordinaten und stopId: ${stations.data.length > 0 && stations.data.every(s => isFinite(s.lat) && isFinite(s.lon) && !!s.stopId)}`);
   sandbox.window.DarmstadtLive.setOn(false);
   const off = sandbox.window.DarmstadtLive.info();
   console.log(`  nach setOn(false): active=${off.active} polling=${off.polling}`);
@@ -136,7 +140,8 @@ sandbox.window.DarmstadtLive.attach({
   require('./test_i18n').run((n, c, e) => { console.log(`  ${c ? 'PASS' : 'FAIL'}  ${n}${!c && e ? ' — ' + e : ''}`); if (!c) i18nFails++; });
 
   const ok = info.count > 0 && nan === 0 && inBox === pos.length && trails.data.length === heads.data.length &&
-    rtOnly && !off.active && !off.polling && i18nFails === 0;
+    rtOnly && !off.active && !off.polling && i18nFails === 0 &&
+    stations.data.length > 0 && stations.data.every(s => isFinite(s.lat) && isFinite(s.lon) && !!s.stopId);
   console.log('\nRESULT:', ok ? 'PASS' : 'FAIL');
   process.exit(ok ? 0 : 1);
 })();

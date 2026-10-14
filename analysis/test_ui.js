@@ -99,7 +99,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('Fahrzeuge vorhanden', info.count > 0);
 
   sandbox.DarmstadtLive.render(true);
-  const heads = cap.layers[1].data;
+  const heads = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
   console.log(`  Ebenen: ${cap.layers.map(l => l.id).join(' + ')} | Punkte: ${heads.length}`);
   check('jedes Fahrzeug hat realTime', heads.every(d => d.v.realTime === true));
   check('keine ungültigen Koordinaten', heads.every(d => isFinite(d.pos[0]) && isFinite(d.pos[1])));
@@ -180,6 +180,44 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     sandbox.matchMedia = () => ({ matches: true });     // Popup bleibt für die Sprachprüfung offen
   }
 
+  console.log('\n=== Haltestellen aus dem Feed (echte Positionen, Klick bewegt die Kamera) ===');
+  {
+    sandbox.DarmstadtLive.render(true);
+    const layer = cap.layers.find(l => l.id === 'live-stations');
+    const sts = (layer && layer.data) || [];
+    console.log(`  Halte im Ausschnitt: ${sts.length} (Modul meldet ${sandbox.DarmstadtLive.info().stops})`);
+    check('Haltestellen-Ebene existiert und ist befüllt', !!layer && sts.length > 0);
+    check('Halte haben echte Koordinaten und eine stopId',
+      sts.length > 0 && sts.every(s => Number.isFinite(s.lat) && Number.isFinite(s.lon) && !!s.stopId));
+    check('Halte liegen im Darmstadt-Ausschnitt (keine Fantasiekoordinaten)',
+      sts.length > 0 && sts.every(s => s.lat > 49.6 && s.lat < 50.2 && s.lon > 8.3 && s.lon < 9.0));
+
+    let found = null, deps = null;
+    for (const cand of sts.slice(0, 6)) {                 // erster Halt mit gemeldeten Abfahrten
+      easeCalls.length = 0;
+      await sandbox.DarmstadtLive.openStation(cand);
+      const n = sandbox.DarmstadtLive.info().popupDepartures;
+      if (typeof n === 'number' && n > 0) { found = cand; deps = n; break; }
+    }
+    const target = found || sts[0];
+    if (!found) { easeCalls.length = 0; await sandbox.DarmstadtLive.openStation(target); }
+    const inf = sandbox.DarmstadtLive.info();
+    console.log(`  Halt "${target.name}": Kamera-Zoom ${easeCalls.length ? easeCalls[0].zoom : '-'} | Abfahrten ${inf.popupDepartures}`);
+    check('Klick auf einen Halt bewegt die Kamera genau dorthin',
+      easeCalls.length > 0 && Array.isArray(easeCalls[0].center) &&
+      Math.abs(easeCalls[0].center[0] - target.lon) < 1e-9 && Math.abs(easeCalls[0].center[1] - target.lat) < 1e-9);
+    check('Popup ist als Haltestelle geöffnet', inf.popupKind === 'station' && inf.popupOpen === true);
+    check('Haltestellenkarte listet Abfahrten', typeof inf.popupDepartures === 'number' && inf.popupDepartures >= 1,
+      `popupDepartures=${inf.popupDepartures}`);
+    const sh = el('popup').innerHTML;
+    check('Karte nennt Halt, Abfahrtsüberschrift und Linienbadge',
+      /class="st-line"/.test(sh) && sh.includes(sandbox.I18N.t('station.departures')));
+    check('Karte nennt Uhrzeiten der Abfahrten', /class="st-time"/.test(sh));
+    check('Karte weist die Quelle der Positionen aus', sh.includes(sandbox.I18N.t('station.mapNote')));
+    // Für die folgende Sprachprüfung eine Fahrzeugkarte geöffnet lassen (dort steht "Nächste Halte")
+    await sandbox.DarmstadtLive.openPopup(heads.map(d => d.v)[0]);
+  }
+
   console.log('\n=== Sprachumschaltung ===');
   const enTitle = el('livestat').innerHTML;
   sandbox.I18N.set('de');
@@ -189,6 +227,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   console.log(`  DE: ${deTitle.replace(/<[^>]+>/g, '')}`);
   check('livestat ist deutsch', /Fahrzeuge unterwegs/.test(deTitle));
   check('livestat war englisch', /vehicles en route/.test(enTitle));
+  console.log(`  Popup-Text (de): ${el('popup').innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 130)}`);
   check('Popup wurde übersetzt', el('popup').innerHTML.includes('Nächste Halte'));
   check('Sprachwahl gespeichert', store['darmstadt-live-lang'] === 'de');
   check('Dokumentensprache gesetzt', sandbox.document.documentElement.lang === 'de');
@@ -234,7 +273,8 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('keine NaN-Positionen aus fehlerhaften Datensätzen', at.length > 0 && at.every(c => isFinite(c.pos[0]) && isFinite(c.pos[1])), `${at.length} Positionen`);
   const bc = built.find(v => v.tripId === 'badcolor');
   sandbox.DarmstadtLive.render(true);
-  const fills = cap.layers[1].data.map(d => cap.layers[1].getFillColor(d));
+  const headsLayer = cap.layers.find(l => l.id === 'live-heads');
+  const fills = headsLayer.data.map(d => headsLayer.getFillColor(d));
   check('ungültige routeColor ergibt keine NaN-Farbe', !!bc && fills.every(c => c.every(Number.isFinite)));
   const ns = built.find(v => v.tripId === 'nostops');
   check('fehlende from/to-Halte: leere Namen statt "undefined"', ns && ns.fromName === '' && ns.dest === '');

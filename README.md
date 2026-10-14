@@ -25,8 +25,15 @@ still yields smooth movement.
 - **Realtime only.** Only vehicles that actually carry realtime data are drawn. Vehicles without
   realtime are dropped — a position derived solely from the timetable would be invented, not observed.
 - **Vehicle popup.** Tap a vehicle: line badge in its line colour, delay status
-  (`on time` / `+N min late` / `−N min early`), operator, and the **next stops** with their
-  clock times and per-stop delay (fetched on demand from `/api/v1/trip`).
+  (`on time` / `+N min late` / `−N min early`), operator, and the **next 3 stops** with their
+  clock times and per-stop delay (fetched on demand from `/api/v1/trip`). The card opens next to
+  the dot, follows the vehicle as it moves and stays inside the viewport.
+- **Stations on the map.** Live mode draws the stops the feed publishes for the current view
+  (`/api/v1/map/stops`) — real stop coordinates and stop ids, not our timetable dump. Tapping one
+  moves the camera onto it and opens a card with the **next departures**: line badge in the line
+  colour, destination, clock time, relative arrival and delay (from `/api/v1/stoptimes`).
+- **Short camera follow.** Tapping a vehicle zooms onto it and follows it for 2 s, then releases;
+  a wheel, drag, tap or Escape releases it immediately.
 - **EN/DE toggle** in the top-right corner. English is the default (also for German browsers);
   the choice is remembered (`localStorage`). Everything switches — panels, legend, tooltips, popup,
   banner, histogram caption, `aria-label`s, document title and the map attribution.
@@ -42,7 +49,7 @@ still yields smooth movement.
 ```
 docs/index.html      UI, map (MapLibre + deck.gl), timetable simulation
 docs/i18n.js         EN/DE strings + toggle + apply/set logic
-docs/live.js         realtime module (polling, vehicles, positions, layers, popup, stats)
+docs/live.js         realtime module (polling, vehicles, stations, popup, camera follow, layers, stats)
 docs/data/meta.json  lines, colours, stops, tram tracks (used by both modes)
 docs/data/*.json     static timetable data (simulation mode only)
 docs/favicon.svg     site icon (vector, used for the browser tab and the manifest)
@@ -136,6 +143,8 @@ node analysis/test_static.js      # CSS for phones/scrollbars/legend sizing, sta
                                   # icons, basemap zoom cap (offline)
 node analysis/check_tile_ceiling.js    # ONLINE: measures the basemap's real tile ceiling and fails if the
                                        # cap baked into index.html no longer matches
+node analysis/check_stations.js       # ONLINE: compares our station coordinates with the positions the
+                                      # feed publishes for the same stops (median deviation 10 m)
 python3 analysis/where_is_vehicle.py   # proves: polyline == hop geometry, no position field
 python3 analysis/hop_structure.py      # hop/vehicle structure, payload per time window
 python3 analysis/poll_shape.py         # payload vs. time window and bbox limits
