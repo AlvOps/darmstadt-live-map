@@ -46,7 +46,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261014-15';
+  const VERSION = '20261014-17';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -72,6 +72,7 @@
   let popupVehicle = null, popupLeg = null, popupTimer = null, popupSeq = 0;
   let popupStation = null, popupAnchor = null, popupDepartures = null;   // Haltestellenkarte
   let popupStopList = [];                // Halte der gerade gezeigten Fahrzeugkarte (Klick-Ziele)
+  let popupChain = null, chainCache = [];  // volle Länge der Linie der geöffneten Fahrt
   let dragOff = null;                    // vom Nutzer verschobene Karte: Versatz zur Auto-Position
   let stopCache = null, stopCacheKey = '';   // zuletzt gezeichnete Haltestellen (nicht jeden Frame neu bauen)
   let lastSel = null;                    // nur für den Kamera-Schwenk bei neuer Linienwahl
@@ -443,6 +444,21 @@
     return keep;
   }
 
+  // Beschriftete Fahrzeugmarken wie in der HEAG-Karte: Sinnbild der Verkehrsart, daneben die
+  // Liniennummer, beides in einem abgerundeten Pill. Immer an (nicht erst beim Hineinzoomen). Das Pill
+  // trägt die Linienfarbe mit dunkler Schrift — passt zur dunklen Karte und zur Linienleiste im Panel.
+  const MODE_GLYPH = { tram: '🚋', bus: '🚌', rail: '🚆' };
+  const LABEL_TEXT = [17, 17, 17];          // fast schwarz, wie die Linien-Chips im Panel
+  // Schrift der Marken = Schrift der Seite: keine zweite Typografie im Bild. Über das Dokument
+  // geholt, damit hier kein Schriftnamen-Literal steht.
+  function pageFont() {
+    try {
+      const f = window.getComputedStyle(document.body).fontFamily;
+      if (f && f.length > 2) return f;
+    } catch (_) { /* Testumgebung ohne getComputedStyle */ }
+    return 'sans-serif';
+  }
+
   function render(force) {
     if (!ctx) return;
     followTick();                      // Kamera am angeklickten Fahrzeug halten (kurzzeitig)
@@ -496,22 +512,37 @@
         getRadius: 11, radiusUnits: 'pixels', radiusMinPixels: 11,
         getFillColor: [0, 0, 0, 1], pickable: true,
       }),
-      new ctx.deck.ScatterplotLayer({          // Haltestellen: Positionen direkt aus dem Feed
+      new ctx.deck.ScatterplotLayer({          // Haltestelle: Kreis wie das H-Schild, Buchstabe darüber
         id: 'live-stations', data: shownStops, getPosition: d => [d.lon, d.lat],
-        // Klein und gedämpft statt fast weiß: die Halte sollen die Fahrzeugpunkte nicht mit ihnen
-        // verwechselbar machen (am Hauptbahnhof standen vorher viele weiße Punkte übereinander).
-        getRadius: d => (d.focus ? 4 : 2.2), radiusUnits: 'pixels', pickable: false, radiusMinPixels: 2.2,
-        stroked: true, getLineColor: d => (d.focus ? [255, 209, 102, 220] : [150, 158, 178, 150]),
-        getLineWidth: d => (d.focus ? 1.6 : 0.7), lineWidthUnits: 'pixels',
-        getFillColor: d => (d.focus ? [255, 209, 102, 200] : [128, 136, 156, 140]),
+        getRadius: d => (d.focus ? 10 : 8), radiusUnits: 'pixels', pickable: false, radiusMinPixels: 7,
+        stroked: true, getLineColor: d => (d.focus ? [255, 209, 102, 240] : [120, 200, 140, 230]),
+        getLineWidth: d => (d.focus ? 2 : 1.4), lineWidthUnits: 'pixels',
+        getFillColor: d => (d.focus ? [46, 40, 18, 240] : [22, 26, 36, 240]),
         updateTriggers: { getRadius: focusTrip, getFillColor: focusTrip, getLineColor: focusTrip, getLineWidth: focusTrip },
       }),
+      // Der Buchstabe im Kreis: im Deutschen „H" (Haltestelle), im Englischen „S" (station).
+      ctx.deck.TextLayer ? new ctx.deck.TextLayer({
+        id: 'live-station-marks', data: shownStops, getPosition: d => [d.lon, d.lat],
+        getText: () => T('stopMark'),
+        getSize: d => (d.focus ? 11 : 10), sizeUnits: 'pixels', fontFamily: pageFont(), fontWeight: 800,
+        getColor: d => (d.focus ? [255, 209, 102, 255] : [235, 245, 255, 240]),
+        getTextAnchor: 'middle', getAlignmentBaseline: 'center',
+        pickable: false, billboard: true,
+        updateTriggers: { getSize: focusTrip, getColor: focusTrip, getText: ctx.lang || 'en' },
+      }) : null,
       new ctx.deck.PathLayer({
         id: 'live-trails', data: vis, getPath: d => d.rest,
         getColor: d => { const c = colorFor(d.v); return [...c, dim(d.v) ? 25 : 90]; },
         widthUnits: 'pixels', getWidth: 2, capRounded: true, jointRounded: true,
         updateTriggers: { getPath: t, getColor: sel },
       }),
+      // Volle Länge der gewählten Linie: alle Halte der Fahrt, verbunden, in der Linienfarbe des
+      // Betreibers (dieselbe Farbe wie Pill und Fahrzeug).
+      chainCache.length ? new ctx.deck.PathLayer({
+        id: 'live-line-chain', data: chainCache, getPath: d => d,
+        getColor: () => { const c = popupVehicle ? colorFor(popupVehicle) : [255, 209, 102]; return [...c, 170]; },
+        widthUnits: 'pixels', getWidth: 4, capRounded: true, jointRounded: true,
+      }) : null,
       new ctx.deck.ScatterplotLayer({
         id: 'live-heads', data: vis, getPosition: d => d.pos,
         // Größe: mit dem Finger trifft man sie so ohne Zoomen (die Trefferfläche von deck.gl folgt
@@ -530,12 +561,31 @@
       }),
       focus ? new ctx.deck.ScatterplotLayer({    // Ring um das angeklickte Fahrzeug
         id: 'live-focus', data: [focus], getPosition: d => d.pos,
-        // Nur etwas größer als der Punkt selbst und in der Akzentfarbe statt Weiß: der Ring soll zeigen
-        // „dieser Punkt ist gewählt", nicht wie ein zweiter weißer Punkt daneben aussehen.
-        getRadius: 13 + 4 * Math.abs(Math.sin(t / 430)), radiusUnits: 'pixels', radiusMinPixels: 12,
+        // Nur etwas größer als die Marke selbst und in der Akzentfarbe statt Weiß: der Ring soll zeigen
+        // „dieses Fahrzeug ist gewählt", nicht wie ein zweiter weißer Punkt daneben aussehen.
+        getRadius: 22 + 4 * Math.abs(Math.sin(t / 430)), radiusUnits: 'pixels', radiusMinPixels: 21,
         stroked: true, filled: false, getLineColor: [255, 209, 102, 240], getLineWidth: 2, lineWidthUnits: 'pixels',
         pickable: false,
         updateTriggers: { getPosition: t, getRadius: t },
+      }) : null,
+      // Beschriftete Marke: Sinnbild der Verkehrsart + Liniennummer auf der Linienfarbe. Immer sichtbar
+      // und antippbar (deck.gl prüft die Fläche) — auf dem Telefon ein viel größeres Ziel als ein Punkt.
+      ctx.deck.TextLayer ? new ctx.deck.TextLayer({
+        id: 'live-labels', data: vis, getPosition: d => d.pos,
+        getText: d => `${MODE_GLYPH[d.v.mode] || ''} ${d.v.lineName}`.trim(),
+        // Immer sichtbar; nur in der Übersicht etwas kleiner, damit sich die Marken nicht überlagern.
+        getSize: d => (focusTrip && d.v.tripId === focusTrip ? 13.5
+          : (ctx.map.getZoom() < 12.5 ? 10.5 : 12)),
+        sizeUnits: 'pixels',
+        fontFamily: pageFont(),
+        fontWeight: 700,
+        getColor: d => [...LABEL_TEXT, dim(d.v) ? 150 : 255],
+        getBackgroundColor: d => [...colorFor(d.v), dim(d.v) ? 130 : 245],
+        background: true, backgroundPadding: [8, 4],
+        getTextAnchor: 'middle', getAlignmentBaseline: 'center',
+        pickable: true, billboard: true,
+        updateTriggers: { getPosition: t, getText: sel, getBackgroundColor: [sel, focusTrip],
+                          getColor: [sel, focusTrip], getSize: focusTrip },
       }) : null,
     ].filter(Boolean);
     ctx.overlay.setProps({ layers, onHover: hover, onClick: click, getCursor: cursor });
@@ -640,6 +690,18 @@
     const d = new Date(ts);
     return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
   };
+
+  // Alle Halte der Fahrt der Reihe nach (auch die bereits durchfahrenen) — das ist die volle Länge der
+  // Linie, nicht nur der Rest vor dem Fahrzeug. Die Halte bringen Koordinaten mit.
+  function tripChain(leg) {
+    if (!leg || leg.error || leg.operator || leg.noLegs) return null;
+    const seq = [];
+    if (leg.from) seq.push(leg.from);
+    (leg.intermediateStops || []).forEach(s => seq.push(s));
+    if (leg.to) seq.push(leg.to);
+    const pts = seq.filter(s => s && Number.isFinite(s.lat) && Number.isFinite(s.lon)).map(s => [s.lon, s.lat]);
+    return pts.length >= 2 ? pts : null;
+  }
 
   function nextStops(leg) {
     const now = Date.now();
@@ -1011,6 +1073,7 @@
     if (!refreshing) {
       stop = resolveStop(stop);             // Kennung/Position aus dem Feed nachziehen, falls vorhanden
       popupVehicle = null; popupLeg = null; popupDepartures = null;
+      popupChain = null; chainCache = [];   // Haltestellenkarte: keine Linienlänge anzeigen
       popupStation = stop; popupAnchor = [stop.lon, stop.lat];
       ctx.map.easeTo({ center: [stop.lon, stop.lat], zoom: Math.max(ctx.map.getZoom(), 15.6),
                        duration: instant ? 0 : 600 });     // aus der Fahrzeugkarte: sofort dorthin
@@ -1094,6 +1157,9 @@
     } catch (err) {
       leg = { error: (err && err.message) || 'error' };
     }
+    // Volle Länge der Linie: alle Halte dieser Fahrt in Reihenfolge, auch die schon durchfahrenen.
+    popupChain = tripChain(leg);
+    chainCache = popupChain ? [popupChain] : [];
     if (v.opOnly) {                          // Betreiberpunkt: kein Fahrtabruf, kein Auffrisch-Timer
       if (seq !== popupSeq || !popupVehicle) return;
       popupLeg = leg;
@@ -1118,6 +1184,7 @@
   function closePopup() {
     popupSeq++;                              // laufende Antworten verwerfen
     popupVehicle = null; popupLeg = null; popupPos = null;
+    popupChain = null; chainCache = [];
     popupStation = null; popupAnchor = null; popupDepartures = null;
     clearTimeout(popupTimer); popupTimer = null;
     const el = document.getElementById('popup');
@@ -1277,6 +1344,7 @@
     },
     _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell,
              dedupeStops, opInfo: () => opLog, sameDirection, metresBetween,
+             tripChain, chain: () => chainCache,
              goToStop, nextStops, stops: () => stops, popupStopList: () => popupStopList,
              setRelaxAt(t) { ctx.state.selAt = t; }, relaxAt: () => ctx.state.selAt, RELAX_MS,
              following: () => !!followTrip, resetFollow() { followTrip = null; followUntil = 0; },

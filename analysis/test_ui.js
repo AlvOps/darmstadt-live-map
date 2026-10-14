@@ -52,7 +52,7 @@ const sandbox = {
     getElementById: el, addEventListener() {}, hidden: false, documentElement: { lang: '' }, title: '',
     querySelectorAll: () => [], createElement: () => el('tmp'),
   },
-  deck: { PathLayer: Layer, ScatterplotLayer: Layer },
+  deck: { PathLayer: Layer, ScatterplotLayer: Layer, TextLayer: Layer },
 };
 sandbox.window = sandbox;
 sandbox.devicePixelRatio = 1;
@@ -735,6 +735,75 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   if (typeof opClick === 'function') opClick({ object: { v: derived }, x: 10, y: 10 });
   check('auf dem Rechner bleibt das Panel stehen', hideCalls === 0, `${hideCalls}`);
   sandbox.DarmstadtLive.closePopup();
+
+  console.log('\n=== Beschriftete Marken (Liniennummer + Sinnbild) ===');
+  L._test.setVehicles([
+    Object.assign({}, derived, { tripId: 'A1', lineName: '3', mode: 'tram', lineIdx: 0 }),
+    Object.assign({}, derived, { tripId: 'A2', lineName: 'F', mode: 'bus', lineIdx: 1 }),
+    Object.assign({}, derived, { tripId: 'A3', lineName: 'S6', mode: 'rail', lineIdx: 2 }),
+  ]);
+  HG._test.reset([], null);
+  const zoomBackup = map.getZoom;
+  map.getZoom = () => 14;                                  // Straßenebene
+  L.render(true);
+  let labels = cap.layers.find(l => l.id === 'live-labels');
+  let headLayer = cap.layers.find(l => l.id === 'live-heads');
+  check('beschriftete Marke und Punkt liegen beide an (Marke trägt die Liniennummer)',
+    !!labels && labels.data.length === 3 && headLayer.data.length === 3);
+  const txt = labels ? labels.data.map(d => labels.getText(d)) : [];
+  console.log(`  Marken: ${txt.join(' | ')}`);
+  check('jede Marke nennt Verkehrsart und Linie',
+    txt.some(t => /🚋\s*3/.test(t)) && txt.some(t => /🚌\s*F/.test(t)) && txt.some(t => /🚆\s*S6/.test(t)));
+  check('Marke trägt die Linienfarbe und dunkle Schrift (dunkle Karte)',
+    typeof labels.getBackgroundColor === 'function' &&
+    labels.getBackgroundColor(labels.data[0]).length === 4 &&
+    JSON.stringify(labels.getColor(labels.data[0]).slice(0, 3)) === '[17,17,17]');
+  check('Marke ist antippbar (größeres Ziel als ein Punkt)',
+    labels.pickable === true && labels.background === true &&
+    Array.isArray(labels.backgroundPadding));
+  check('Marken brauchen keine Zoomstufe (immer sichtbar)',
+    (map.getZoom = () => 11, L.render(true), !!cap.layers.find(l => l.id === 'live-labels')));
+  map.getZoom = zoomBackup;
+  L.render(true);
+
+  console.log('\n=== Haltestelle als Kreis mit Buchstabe (H/S) und volle Linienlänge ===');
+  HG._test.reset([], null);
+  L._test.setVehicles([Object.assign({}, derived, { tripId: 'B1', lineName: '3', mode: 'tram', lineIdx: 0 })]);
+  if (mapHandlers.moveend) mapHandlers.moveend();
+  sandbox.DarmstadtLive.render(true);
+  const markLayer = cap.layers.find(l => l.id === 'live-station-marks');
+  check('Haltestellen tragen einen Buchstaben im Kreis', !!markLayer && markLayer.data.length > 0);
+  sandbox.I18N.set('en');
+  check('englisch: „S" im Kreis', markLayer.getText() === 'S' && sandbox.I18N.t('stopMark') === 'S');
+  sandbox.I18N.set('de');
+  check('deutsch: „H" im Kreis', markLayer.getText() === 'H' && sandbox.I18N.t('stopMark') === 'H');
+  sandbox.I18N.set('en');
+  // Volle Länge der Linie: alle Halte der Fahrt, in der Linienfarbe.
+  check('Linienlänge = alle Halte der Fahrt (auch die schon durchfahrenen)',
+    JSON.stringify(L._test.tripChain({ from: { lat: 1, lon: 1 }, intermediateStops: [{ lat: 2, lon: 2 }, { lat: 3, lon: 3 }], to: { lat: 4, lon: 4 } })) ===
+    JSON.stringify([[1, 1], [2, 2], [3, 3], [4, 4]]));
+  check('ohne Koordinaten oder ohne Fahrt entsteht keine Linie',
+    L._test.tripChain({ from: { name: 'x' }, to: { name: 'y' } }) === null &&
+    L._test.tripChain({ error: 'noLegs' }) === null && L._test.tripChain({ operator: true }) === null);
+  L.setOn(true);
+  await sandbox.DarmstadtLive.refresh();                    // echte Fahrten für den Linien-Test
+  await wait(600);
+  sandbox.DarmstadtLive.render(true);
+  const chainV = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data[0].v;
+  await sandbox.DarmstadtLive.openPopup(chainV);             // echte Fahrt -> Halte mit Koordinaten
+  await wait(400);
+  const chain = L._test.chain();
+  check('Klick auf eine Marke zeichnet die Linie in ihrer Länge', chain.length === 1 && chain[0].length >= 2,
+    chain.length ? `${chain[0].length} Stützpunkte` : 'keine Linie');
+  sandbox.DarmstadtLive.render(true);                       // Ebenenliste neu aufbauen
+  check('Linie liegt als eigene Ebene in der Linienfarbe',
+    !!cap.layers.find(l => l.id === 'live-line-chain') &&
+    typeof cap.layers.find(l => l.id === 'live-line-chain').getColor === 'function' &&
+    cap.layers.find(l => l.id === 'live-line-chain').getColor().length === 4);
+  sandbox.DarmstadtLive.closePopup();
+  check('nach dem Schließen ist die Linie wieder weg',
+    (sandbox.DarmstadtLive.render(true), !cap.layers.some(l => l.id === 'live-line-chain')));
+  map.getZoom = zoomBackup;
 
   console.log('\n=== Haltestellenpunkte am Knotenpunkt ===');
   const hbfRaw = [];

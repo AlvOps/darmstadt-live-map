@@ -43,9 +43,18 @@ still yields smooth movement.
   accent colour, in both languages, that positions are **derived from realtime stop prognoses** — the
   open feed carries no GPS. The credits are where a reader checks the source, so the note lives there
   too, not only in the card.
+- **Labelled vehicle markers, always on.** Each vehicle is a rounded pill carrying the mode pictogram
+  (🚋 tram / 🚌 bus / 🚆 rail) and its line number, on the line's own colour with dark text — the way
+  the operator's own map does it, adapted to the dark theme. In the overview the pills shrink slightly
+  so they do not pile up. A pill is a much larger tap target than a dot.
+- **Stops are circled letters,** like the sign on the street: **H** in German (*Haltestelle*), **S** in
+  English (*station*) — one per stop, never per platform.
+- **Click a vehicle: the whole run of its line.** Besides the card, the map draws every stop of that
+  trip in order — the stretches already covered included — in the line's own colour, and removes it
+  again when the card closes.
 - **Real positions where they exist (HEAG).** HEAG mobilo reports actual coordinates through its own app
   backend (IVANTO SRS, keyless, CORS-open). Where a reported position matches one of our trips
-  (same line, < 350 m), that dot **replaces** the derived one and keeps our delay and stop list — one
+  (same line, proximity-matched), that dot **replaces** the derived one and keeps our delay and stop list — one
   dot per vehicle, never two. Each card names its own source: *"reported live by the operator"* vs
   *"derived from realtime stop prognoses"*. If that backend fails, nothing breaks: the map falls back
   to the derived positions. Details, measurements and caveats: [`HEAG-POSITIONS.md`](HEAG-POSITIONS.md).

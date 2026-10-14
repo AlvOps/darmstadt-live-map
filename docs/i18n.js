@@ -34,6 +34,7 @@
       attributionPosition: 'Positions: HEAG reported live by the operator · all other vehicles derived from realtime stop prognoses (the open feed carries no GPS).',
       attribLabel: 'Data sources',
       langGroup: 'Language',
+      stopMark: 'S',                       // englische Beschriftung der Haltestelle
       loading: 'Loading …',
       bannerUnreachable: 'Realtime data unreachable ({err}) — showing last known positions, retrying.',
       bannerBlip: 'Realtime data: brief interruption, retrying …',
@@ -126,6 +127,7 @@
       attributionPosition: 'Positionen: HEAG direkt vom Betreiber gemeldet · alle anderen Fahrzeuge aus Echtzeit-Prognosen abgeleitet (der offene Datenstrom enthält kein GPS).',
       attribLabel: 'Datenquellen',
       langGroup: 'Sprache',
+      stopMark: 'H',                       // deutsche Beschriftung der Haltestelle
       loading: 'Lade …',
       bannerUnreachable: 'Echtzeitdaten nicht erreichbar ({err}) – letzte bekannte Positionen, neuer Versuch läuft.',
       bannerBlip: 'Echtzeitdaten: kurzer Aussetzer, neuer Versuch läuft …',

@@ -220,6 +220,17 @@ function run(check, log = console.log) {
   check('operator dots glide between reports instead of jumping every 30 s',
     /OP_SMOOTH_MS = 15000/.test(liveSrc) && /function withOperator\(cur, t\)/.test(liveSrc) &&
     /st\.from\[0\] \+ \(st\.to\[0\] - st\.from\[0\]\) \* k/.test(liveSrc));
+  // Marken wie in der HEAG-Karte: Liniennummer auf der Linienfarbe plus Sinnbild der Verkehrsart,
+  // in der dunklen Ansicht also dunkle Schrift; nur auf Straßenebene, sonst bleibt es beim Punkt.
+  check('vehicle markers carry the line number and a mode pictogram (HEAG style, dark theme)',
+    /const MODE_GLYPH = \{ tram: '🚋', bus: '🚌', rail: '🚆' \}/.test(liveSrc) &&
+    /const LABEL_TEXT = \[17, 17, 17\]/.test(liveSrc) &&
+    /id: 'live-labels'/.test(liveSrc) &&
+    /getText: d => `\$\{MODE_GLYPH\[d\.v\.mode\] \|\| ''\} \$\{d\.v\.lineName\}`\.trim\(\)/.test(liveSrc) &&
+    /background: true, backgroundPadding: \[8, 4\]/.test(liveSrc) &&
+    /fontFamily: pageFont\(\)/.test(liveSrc) &&            // keine zweite Typografie im Bild
+    !/LABEL_MIN_ZOOM/.test(liveSrc) &&                     // Marken immer, nicht erst beim Zoomen
+    /getRadius: 22 \+ 4 \* Math\.abs\(Math\.sin\(t \/ 430\)\), radiusUnits: 'pixels', radiusMinPixels: 21/.test(liveSrc));
   check('dots we could never describe are not drawn (operator fleet is network-wide, we are not)',
     /const inBox = \(lat, lon\) => \{/.test(liveSrc) && /opLog\.skipped\+\+; return;/.test(liveSrc));
   check('the credits name the operator feed and the mixed provenance',
@@ -232,7 +243,7 @@ function run(check, log = console.log) {
   // liefert 230,235,245 für pünktlich/unbekannt) und der Ring war 20-28 px groß.
   check('the selected vehicle is marked in the accent colour, not white, with a small ring',
     /getLineColor: d => \(focusTrip && d\.v\.tripId === focusTrip \? \[255, 209, 102, 255\]/.test(liveSrc) &&
-    /getRadius: 13 \+ 4 \* Math\.abs\(Math\.sin\(t \/ 430\)\), radiusUnits: 'pixels', radiusMinPixels: 12/.test(liveSrc) &&
+    /getRadius: 22 \+ 4 \* Math\.abs\(Math\.sin\(t \/ 430\)\), radiusUnits: 'pixels', radiusMinPixels: 21/.test(liveSrc) &&
     /getLineColor: \[255, 209, 102, 240\], getLineWidth: 2/.test(liveSrc) &&
     !/autoHighlight: true, highlightColor: \[255, 255, 255, 130\]/.test(liveSrc));
   check('camera follow uses the drawn operator position (no drift off the dot)',
@@ -245,8 +256,18 @@ function run(check, log = console.log) {
   // Am Knotenpunkt (Hauptbahnhof: 16 Steig-Einträge) standen viele fast weiße Punkte übereinander.
   check('station dots are deduped per stop (not per platform) and no longer near-white',
     /normStopName\(s\.name\)\}\|\$\{s\.lat\.toFixed\(2\)\}/.test(liveSrc) &&
-    /getFillColor: d => \(d\.focus \? \[255, 209, 102, 200\] : \[128, 136, 156, 140\]\)/.test(liveSrc) &&
-    /getRadius: d => \(d\.focus \? 4 : 2\.2\)/.test(liveSrc));
+    /id: 'live-stations'/.test(liveSrc) && /id: 'live-station-marks'/.test(liveSrc) &&
+    /getText: \(\) => T\('stopMark'\)/.test(liveSrc) &&
+    /getRadius: d => \(d\.focus \? 10 : 8\)/.test(liveSrc));
+  // Haltestelle als Kreis mit Buchstabe: im Deutschen „H" (Haltestelle), im Englischen „S" (station).
+  check('stop letter is localised (H in German, S in English)',
+    /stopMark: 'S'/.test(i18nSrc) && /stopMark: 'H'/.test(i18nSrc) &&
+    i18nSrc.indexOf("stopMark: 'S'") < i18nSrc.indexOf("stopMark: 'H'"));
+  // Volle Länge der Linie beim Klick auf eine Marke, in der Farbe des Betreibers.
+  check('clicking a vehicle draws the whole run of its line in the line colour',
+    /function tripChain\(leg\)/.test(liveSrc) && /id: 'live-line-chain'/.test(liveSrc) &&
+    /const c = popupVehicle \? colorFor\(popupVehicle\)/.test(liveSrc) &&
+    /chainCache = popupChain \? \[popupChain\] : \[\]/.test(liveSrc));
   check('unselected vehicles are dimmed but still readable (not pale ghosts)',
     /const alpha = v => \(dim\(v\) \? 130 : 255\)/.test(liveSrc));
   check('the drawer check mirrors the CSS media query exactly (panel closes where the drawer exists)',
