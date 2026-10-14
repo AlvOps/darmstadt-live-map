@@ -641,8 +641,9 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('Zwilling hat weiterhin Fahrtdaten (Halte + Verspätung)', net.calls.filter(u => u.includes('/api/v1/trip?')).length > callsBefore);
 
   // Fahrzeug ohne Zwilling: eigener Punkt, aber ohne Fahrtdaten vom offenen Strom.
-  HG._test.reset([{ line: '9', lat: 49.88, lon: 8.70, bearing: 0, vehicleId: 900, category: 5, mode: 'bus', dest: 'Irgendwo', at: Date.now() }]);
+  HG._test.reset([{ line: '9', lat: 49.87, lon: 8.665, bearing: 0, vehicleId: 900, category: 5, mode: 'bus', dest: 'Irgendwo', at: Date.now() }]);
   L._test.setVehicles([derived]);
+  if (mapHandlers.moveend) mapHandlers.moveend();          // Ausschnitt setzen (sonst gibt es keine Box)
   sandbox.DarmstadtLive.render(true);
   headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
   const alone = headsOp.filter(d => d.op && d.v.opOnly);
@@ -651,6 +652,36 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   await sandbox.DarmstadtLive.openPopup(alone[0].v);
   check('für den eigenen Punkt wird keine Fahrt abgerufen (die gibt es dort nicht)', net.calls.filter(u => u.includes('/api/v1/trip?')).length === tripBefore);
   check('Karte sagt, dass Verspätung und Halte unbekannt sind', el('popup').innerHTML.includes(sandbox.I18N.t('popup.operatorOnly')));
+  check('Karte nennt trotzdem Ziel und Alter der Meldung',
+    el('popup').innerHTML.includes('Irgendwo') && /aktualisiert vor|updated/.test(el('popup').innerHTML));
+
+  // Zwei Fahrzeuge derselben Linie, Gegenrichtung: ohne passende Richtung wird nicht geraten.
+  const opp = { tripId: 'T2', mode: 'tram', running: true, lineName: '4', headsign: 'Hauptbahnhof',
+    dest: 'Hauptbahnhof', fromName: 'Kranichstein', dep: nowMs - 60000, arr: nowMs + 600000,
+    delayMin: 0, realTime: true, routeColor: '', path: [[8.6600, 49.8700], [8.6700, 49.8700]],
+    cd: [0, 0.01 * mPerLon], total: 0.01 * mPerLon, lineIdx: 0 };
+  L._test.setVehicles([opp]);
+  HG._test.reset([{ line: '4', lat: 49.8705, lon: 8.6602, bearing: 270, vehicleId: 381, category: 1, mode: 'tram', dest: 'Kranichstein', at: Date.now() }]);
+  sandbox.DarmstadtLive.render(true);
+  headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
+  check('gleiche Linie, andere Richtung: kein Zusammenlegen (Fahrzeug bleibt doppelt sichtbar)',
+    headsOp.length === 2 && headsOp.some(d => d.op && d.v.opOnly));
+
+  // Weit weg, aber gleiche Richtung: derselbe Zug ein paar Halte weiter -> zusammenlegen.
+  HG._test.reset([{ line: '4', lat: 49.8700, lon: 8.6600, bearing: 90, vehicleId: 381, category: 1, mode: 'tram', dest: 'Kranichstein', at: Date.now() }]);
+  L._test.setVehicles([derived]);
+  sandbox.DarmstadtLive.render(true);
+  headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
+  check('gleiche Richtung: auch mit Abstand zusammengelegt (ein Punkt)',
+    headsOp.length === 1 && !!headsOp[0].op && !headsOp[0].v.opOnly);
+
+  // Außerhalb des geladenen Ausschnitts: gar nicht zeichnen (dazu gäbe es nie Fahrtdaten).
+  HG._test.reset([{ line: '9', lat: 50.05, lon: 8.95, bearing: 0, vehicleId: 901, category: 5, mode: 'bus', dest: 'Irgendwo', at: Date.now() }]);
+  L._test.setVehicles([derived]);
+  sandbox.DarmstadtLive.render(true);
+  headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
+  check('Betreiberpunkte außerhalb unseres Ausschnitts werden nicht gezeichnet',
+    headsOp.every(d => !d.v.opOnly));
 
   // Ausfall der Quelle: Karte fällt still auf die Ableitung zurück.
   HG._test.reset([], 'HTTP 500');
@@ -681,6 +712,18 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   if (typeof opClick === 'function') opClick({ object: { v: derived }, x: 10, y: 10 });
   check('auf dem Rechner bleibt das Panel stehen', hideCalls === 0, `${hideCalls}`);
   sandbox.DarmstadtLive.closePopup();
+
+  console.log('\n=== Halt von außerhalb der Ansicht (Suche/Favorit) ===');
+  if (mapHandlers.moveend) mapHandlers.moveend();
+  const geoBefore = net.calls.filter(u => u.includes('/api/v1/geocode')).length;
+  const stBefore = net.calls.filter(u => u.includes('/api/v1/stoptimes')).length;
+  await sandbox.DarmstadtLive.openStation({ name: 'Langen (Hessen) Bahnhof', lat: 49.9931, lon: 8.6587 }, true);
+  await wait(3000);
+  check('Halt außerhalb des Ausschnitts wird per Namen nachgeschlagen',
+    net.calls.filter(u => u.includes('/api/v1/geocode')).length > geoBefore);
+  check('… und die Abfahrten kommen trotzdem',
+    net.calls.filter(u => u.includes('/api/v1/stoptimes')).length > stBefore,
+    `${net.calls.filter(u => u.includes('/api/v1/stoptimes')).length - stBefore} Abrufe`);
 
   console.log('\n=== EN/DE-Abdeckung ===');
   require('./test_i18n').run(check);

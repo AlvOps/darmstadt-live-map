@@ -208,14 +208,38 @@ function run(check, log = console.log) {
     /REFRESH_MS = 30000/.test(heagSrc) && /catch \(e\)/.test(heagSrc) &&
     /heag\.js\?v=\d{8}-\d+/.test(html));
   check('one source per vehicle: the operator dot replaces the derived one, never both',
-    /OP_TWIN_MAX_M = 350/.test(liveSrc) && /out\.splice\(twin, 1\)/.test(liveSrc) &&
-    /opOnly/.test(liveSrc));
+    /OP_TWIN_MAX_M = 2500/.test(liveSrc) && /OP_TWIN_TIGHT_M = 250/.test(liveSrc) &&
+    /out\.splice\(twin, 1\)/.test(liveSrc) && /opOnly/.test(liveSrc));
+  // Zwei Fahrzeuge derselben Linie in Gegenrichtung dürfen nicht verwechselt werden: ohne passende
+  // Richtung wird nur bei sehr großer Nähe gepaart, sonst gar nicht.
+  check('operator pairing is direction-aware (same line, opposite direction is not merged)',
+    /function sameDirection\(op, v\)/.test(liveSrc) &&
+    /ok = sameDirection\(o, near\.v\) && best <= OP_TWIN_MAX_M/.test(liveSrc) &&
+    /ok = best <= OP_TWIN_TIGHT_M;/.test(liveSrc));
+  check('dots we could never describe are not drawn (operator fleet is network-wide, we are not)',
+    /const inBox = \(lat, lon\) => \{/.test(liveSrc) && /opLog\.skipped\+\+; continue;/.test(liveSrc));
   check('the credits name the operator feed and the mixed provenance',
     /attributionOperator: '/.test(i18nSrc) && /attributionPosition: '/.test(i18nSrc) &&
     /<p data-i18n="attributionOperator">/.test(html));
-  check('vehicle dots are twice as big (easier to hit) and the picking radius grew too',
-    /getRadius: d => \(focusTrip && d\.v\.tripId === focusTrip \? 15 : \(d\.v\.mode === 'bus' \? 8 : 10\)\)/.test(liveSrc) &&
-    /pickable: true, radiusMinPixels: 6/.test(liveSrc));
+  check('vehicle dots are comfortably tappable but not oversized',
+    /getRadius: d => \(focusTrip && d\.v\.tripId === focusTrip \? 11 : \(d\.v\.mode === 'bus' \? 6\.5 : 7\.5\)\)/.test(liveSrc) &&
+    /pickable: true, radiusMinPixels: 5/.test(liveSrc));
+  // Ein angetipptes Fahrzeug darf nicht weiß aussehen: vorher war der Rand fast weiß (delayColor
+  // liefert 230,235,245 für pünktlich/unbekannt) und der Ring war 20-28 px groß.
+  check('the selected vehicle is marked in the accent colour, not white, with a small ring',
+    /getLineColor: d => \(focusTrip && d\.v\.tripId === focusTrip \? \[255, 209, 102, 255\]/.test(liveSrc) &&
+    /getRadius: 13 \+ 4 \* Math\.abs\(Math\.sin\(t \/ 430\)\), radiusUnits: 'pixels', radiusMinPixels: 12/.test(liveSrc) &&
+    /getLineColor: \[255, 209, 102, 240\], getLineWidth: 2/.test(liveSrc) &&
+    !/autoHighlight: true, highlightColor: \[255, 255, 255, 130\]/.test(liveSrc));
+  check('camera follow uses the drawn operator position (no drift off the dot)',
+    /const op = opPos\.get\(followTrip\)/.test(liveSrc) && /opPos\.set\(trip, \[o\.lon, o\.lat\]\)/.test(liveSrc));
+  // Eine Suche von außerhalb des Ausschnitts muss trotzdem Abfahrten zeigen: der Halt wird über den
+  // Namen nachgeschlagen, statt auf die Halte des aktuellen Ausschnitts zu hoffen ("mal ja, mal nein").
+  check('a stop outside the current view is looked up by name (departures are no longer hit-and-miss)',
+    /API_GEOCODE = 'https:\/\/api\.transitous\.org\/api\/v1\/geocode'/.test(liveSrc) &&
+    /async function lookupStop\(name\)/.test(liveSrc) && /lookupStop\(stop\.name\)\.then/.test(liveSrc));
+  check('unselected vehicles are dimmed but still readable (not pale ghosts)',
+    /const alpha = v => \(dim\(v\) \? 130 : 255\)/.test(liveSrc));
   check('the drawer check mirrors the CSS media query exactly (panel closes where the drawer exists)',
     /const DRAWER_QUERY = '\(max-width: 700px\), \(hover: none\) and \(pointer: coarse\)'/.test(html) &&
     /\(max-width: 700px\), \(hover: none\) and \(pointer: coarse\)/.test(css) &&

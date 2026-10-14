@@ -36,6 +36,7 @@
   const API_TRIP = 'https://api.transitous.org/api/v1/trip';
   const API_STOPS = 'https://api.transitous.org/api/v1/map/stops';      // echte Haltestellenpositionen
   const API_STOPTIMES = 'https://api.transitous.org/api/v1/stoptimes';  // Abfahrten je Halt
+  const API_GEOCODE = 'https://api.transitous.org/api/v1/geocode';      // Halt per Namen (auch außerhalb des Ausschnitts)
   const REFRESH_MS = 30000;        // Abrufintervall (Positionen dazwischen lokal interpoliert)
   const POPUP_REFRESH_MS = 30000;
   const WINDOW_MIN = 1;            // Zeitfenster je Anfrage (Nutzlast-Minimum)
@@ -45,7 +46,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261014-11';
+  const VERSION = '20261014-13';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -317,37 +318,78 @@
   // Die HEAG meldet echte Koordinaten; der offene Strom liefert nur Ableitungen aus Haltzeiten. Regel:
   // je Fahrzeug genau EIN Punkt. Findet sich ein Zwilling (gleiche Linie, nah dran), ersetzt der
   // Betreiberpunkt ihn und übernimmt dessen Verspätung — echte Position plus echte Verspätung.
-  const OP_TWIN_MAX_M = 350;
-  let opLog = { merged: 0, added: 0, available: 0 };      // für Tests und Diagnose
+  const OP_TWIN_MAX_M = 2500;      // MIT gleicher Richtung: derselbe Zug, auch ein paar Halte weiter
+  const OP_TWIN_TIGHT_M = 250;     // ohne Richtungsangabe nur bei sehr großer Nähe raten
+  let opLog = { merged: 0, added: 0, skipped: 0, available: 0 };   // für Tests und Diagnose
+  const opPos = new Map();                               // tripId -> zuletzt gezeichnete Betreiberposition
   const metresBetween = (aLat, aLon, bLat, bLon) => {
     const dy = (aLat - bLat) * 111320, dx = (aLon - bLon) * 111320 * Math.cos(aLat * Math.PI / 180);
     return Math.sqrt(dx * dx + dy * dy);
   };
+  const flat = s => String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9ÄÖÜß]/g, '');
+  // Zielangaben vergleichen: die HEAG nennt das Ziel, unser Abschnitt kennt Kopfschild und Endhalt.
+  // Gleiche Richtung ist das, was zwei Fahrzeuge derselben Linie auseinanderhält (Gegenrichtung!).
+  function sameDirection(op, v) {
+    const d = flat(op.dest);
+    if (!d || d.length < 3) return false;
+    for (const cand of [v.headsign, v.dest]) {
+      const c = flat(cand);
+      if (c && c.length >= 3 && (c.includes(d) || d.includes(c))) return true;
+    }
+    return false;
+  }
 
   function withOperator(cur) {
     const src = (ctx && ctx.heag && ctx.heag.list) ? ctx.heag.list() : null;
-    opLog = { merged: 0, added: 0, available: src ? src.length : 0 };
+    opLog = { merged: 0, added: 0, skipped: 0, available: src ? src.length : 0 };
+    opPos.clear();
     if (!src || !src.length) return cur;
+    // Von der Betreiberflotte nur zeigen, was im geladenen Ausschnitt liegt. Außerhalb könnten wir nie
+    // Fahrtdaten dazu haben — ein Punkt, dessen Karte nichts weiß, verwirrt mehr, als er nützt.
+    const inBox = (lat, lon) => {
+      if (!viewBox) return true;
+      const padLat = (viewBox.n - viewBox.s) * 0.1, padLon = (viewBox.e - viewBox.w) * 0.1;
+      return lat >= viewBox.s - padLat && lat <= viewBox.n + padLat &&
+             lon >= viewBox.w - padLon && lon <= viewBox.e + padLon;
+    };
     const out = cur.slice();
     for (const o of src) {
       const key = normLine(o.line);
-      let twin = -1, best = OP_TWIN_MAX_M;
+      let twin = -1, best = Infinity;
       for (let i = 0; i < out.length; i++) {
         const c = out[i];
         if (c.op || !key || normLine(c.v.lineName) !== key) continue;
         const d = metresBetween(o.lat, o.lon, c.pos[1], c.pos[0]);
         if (d < best) { best = d; twin = i; }
       }
-      const base = twin >= 0 ? out[twin].v : null;
-      if (twin >= 0) out.splice(twin, 1);                 // Zwilling raus: eine Quelle je Fahrzeug
+      const near = twin >= 0 ? out[twin] : null;
+      let ok = false;
+      if (near) {
+        // Beide Seiten nennen ein Ziel -> es muss passen. Zwei Fahrzeuge derselben Linie in
+        // Gegenrichtung stehen oft am selben Halt; ohne diese Prüfung hinge unsere Verspätung am
+        // falschen Fahrzeug, nur weil es 50 m entfernt war.
+        const ours = near.v.headsign || near.v.dest;
+        if (String(o.dest || '').trim().length >= 3 && String(ours || '').trim().length >= 3) {
+          ok = sameDirection(o, near.v) && best <= OP_TWIN_MAX_M;
+        } else {
+          ok = best <= OP_TWIN_TIGHT_M;                  // eine Seite ohne Ziel: nur bei großer Nähe
+        }
+      }
+      if (!ok) twin = -1;                                  // nicht raten, wenn Richtung und Nähe fehlen
+      const base = ok ? out[twin].v : null;
+      if (!base && !inBox(o.lat, o.lon)) { opLog.skipped++; continue; }
+      if (ok) out.splice(twin, 1);                         // Zwilling raus: eine Quelle je Fahrzeug
       const mode = (base && base.mode) || o.mode || 'bus';
+      const trip = base ? base.tripId
+                        : 'heag:' + (o.vehicleId == null ? o.line + ':' + o.lat : o.vehicleId);
+      opPos.set(trip, [o.lon, o.lat]);
       out.push({
         op: true, bearing: o.bearing,
         pos: [o.lon, o.lat],
         rest: [],
         v: base ? Object.assign({}, base, { op: true, opId: o.vehicleId, opAt: o.at })
                 : {
-                    tripId: 'heag:' + (o.vehicleId == null ? o.line + ':' + o.lat : o.vehicleId),
+                    tripId: trip,
                     op: true, opId: o.vehicleId, opAt: o.at, opOnly: true,
                     mode, lineName: o.line || '?', headsign: o.dest || '', dest: o.dest || '',
                     fromName: '', delayMin: null, realTime: true, routeColor: '',
@@ -388,7 +430,9 @@
     const inMode = c => ctx.state.modes[c.v.mode];
     const vis = sel !== null ? cur.filter(c => inMode(c) && c.v.lineIdx === sel) : cur.filter(inMode);
     const dim = v => (focusTrip ? v.tripId !== focusTrip : false);
-    const alpha = v => (dim(v) ? 45 : 255);
+    // Gedämpft statt fast unsichtbar: alpha 45 ließ alle anderen Punkte über der dunklen Karte wie
+    // blasse weiße Geister wirken (auf dem Telefon als „da läuft ein weißer Punkt" gemeldet).
+    const alpha = v => (dim(v) ? 130 : 255);
     // Bei gewähltem Fahrzeug nur dessen eigene Halte zeigen (nicht das ganze Netz)
     // Nur neu berechnen, wenn sich wirklich etwas geändert hat: sonst schiebt deck.gl die
     // Haltestellen-Ebene 30-mal pro Sekunde neu hoch, obwohl sie still steht (spürbare Last).
@@ -417,7 +461,6 @@
         stroked: true, getLineColor: d => (d.focus ? [255, 255, 255, 240] : [236, 241, 252, 170]),
         getLineWidth: d => (d.focus ? 1.8 : 0.8), lineWidthUnits: 'pixels',
         getFillColor: d => (d.focus ? [255, 255, 255, 235] : [216, 223, 240, 215]),
-        autoHighlight: true, highlightColor: [255, 255, 255, 130],
         updateTriggers: { getRadius: focusTrip, getFillColor: focusTrip, getLineColor: focusTrip, getLineWidth: focusTrip },
       }),
       new ctx.deck.PathLayer({
@@ -428,20 +471,26 @@
       }),
       new ctx.deck.ScatterplotLayer({
         id: 'live-heads', data: vis, getPosition: d => d.pos,
-        // Punkte doppelt so groß wie vorher: mit dem Finger trifft man sie so ohne Zoomen.
-        // Die Trefferfläche von deck.gl folgt dem Radius — größere Punkte sind also auch leichter
-        // anzutippen, nicht nur besser zu sehen.
-        getRadius: d => (focusTrip && d.v.tripId === focusTrip ? 15 : (d.v.mode === 'bus' ? 8 : 10)), radiusUnits: 'pixels',
+        // Größe: mit dem Finger trifft man sie so ohne Zoomen (die Trefferfläche von deck.gl folgt
+        // dem Radius). Etwas kleiner als die erste Fassung — sie stand zu dick über der Karte.
+        getRadius: d => (focusTrip && d.v.tripId === focusTrip ? 11 : (d.v.mode === 'bus' ? 6.5 : 7.5)), radiusUnits: 'pixels',
         getFillColor: d => { const c = colorFor(d.v); return [...c, alpha(d.v)]; },
-        stroked: true, getLineColor: d => [...delayColor(d.v.delayMin), dim(d.v) ? 30 : 235],
-        getLineWidth: d => (focusTrip && d.v.tripId === focusTrip ? 3 : (Math.abs(d.v.delayMin) >= 1 ? 2.6 : 1.8)), lineWidthUnits: 'pixels',
-        pickable: true, radiusMinPixels: 6,
+        // Der Rand trägt die Verspätungsfarbe. Beim gewählten Fahrzeug stattdessen die Akzentfarbe:
+        // der Rand war vorher fast weiß (delayColor liefert für „pünktlich/unbekannt" 230,235,245) und
+        // ließ den angetippten Punkt auf dem Telefon wie einen weißen Klumpen aussehen.
+        stroked: true,
+        getLineColor: d => (focusTrip && d.v.tripId === focusTrip ? [255, 209, 102, 255]
+                            : [...delayColor(d.v.delayMin), dim(d.v) ? 30 : 235]),
+        getLineWidth: d => (focusTrip && d.v.tripId === focusTrip ? 2.2 : (Math.abs(d.v.delayMin) >= 1 ? 2.2 : 1.4)), lineWidthUnits: 'pixels',
+        pickable: true, radiusMinPixels: 5,
         updateTriggers: { getPosition: t, getFillColor: sel, getLineColor: [sel, focusTrip], getRadius: focusTrip, getLineWidth: focusTrip },
       }),
-      focus ? new ctx.deck.ScatterplotLayer({    // pulsierender Ring um das angeklickte Fahrzeug
+      focus ? new ctx.deck.ScatterplotLayer({    // Ring um das angeklickte Fahrzeug
         id: 'live-focus', data: [focus], getPosition: d => d.pos,
-        getRadius: 20 + 8 * Math.abs(Math.sin(t / 430)), radiusUnits: 'pixels', radiusMinPixels: 20,
-        stroked: true, filled: false, getLineColor: [255, 255, 255, 240], getLineWidth: 3, lineWidthUnits: 'pixels',
+        // Nur etwas größer als der Punkt selbst und in der Akzentfarbe statt Weiß: der Ring soll zeigen
+        // „dieser Punkt ist gewählt", nicht wie ein zweiter weißer Punkt daneben aussehen.
+        getRadius: 13 + 4 * Math.abs(Math.sin(t / 430)), radiusUnits: 'pixels', radiusMinPixels: 12,
+        stroked: true, filled: false, getLineColor: [255, 209, 102, 240], getLineWidth: 2, lineWidthUnits: 'pixels',
         pickable: false,
         updateTriggers: { getPosition: t, getRadius: t },
       }) : null,
@@ -607,7 +656,8 @@
     const failMsg = leg && leg.error
       ? (leg.error === 'noLegs' ? T('popup.noTrip') : T('popup.failed') + ' (' + leg.error + ')') : '';
     const body = v.opOnly
-      ? `<div class="pop-sub">${esc(T('popup.operatorOnly'))}</div>`
+      ? `<div class="pop-sub">${esc(T('popup.operatorOnly'))}</div>` +
+        (v.opAt ? `<div class="pop-sub">${esc(T('updatedAgo', { s: Math.max(0, Math.round((Date.now() - v.opAt) / 1000)) }))}</div>` : '')
       : leg && leg.error
       ? `<div class="pop-sub pop-err">${esc(failMsg)}</div>`
       : loading
@@ -619,7 +669,8 @@
     return `
       <div class="pop-head">
         <span class="pop-line" style="background:${cssColor(v)}">${esc(v.lineName)}</span>
-        <span class="pop-title">${esc(T('popup.nextStops'))} → ${esc(ss(v.headsign || v.dest))}</span>
+        <span class="pop-title">${v.opOnly ? esc(ss(v.headsign || v.dest))
+          : esc(T('popup.nextStops')) + ' → ' + esc(ss(v.headsign || v.dest))}</span>
         <button class="pop-close" aria-label="${esc(T('popup.close'))}">✕</button>
       </div>
       <div class="pop-delay ${delayClass(v.delayMin)}">${esc(delayText(v.delayMin))}</div>
@@ -662,6 +713,14 @@
   function followTick() {
     if (!followTrip) return;
     if (Date.now() > followUntil) { stopFollow(); return; }
+    // Betreiberpunkte liegen nicht auf unserer abgeleiteten Linie: dann der zuletzt GEZEICHNETEN
+    // Position folgen, sonst zieht die Kamera an einer Stelle, an der der Punkt nicht ist.
+    const op = opPos.get(followTrip);
+    if (op) {
+      ctx.map.easeTo({ center: op, zoom: Math.max(ctx.map.getZoom(), FOLLOW_ZOOM),
+                       duration: FRAME_MS, easing: t => t });
+      return;
+    }
     const v = vehicles.find(x => x.tripId === followTrip) || (popupVehicle && popupVehicle.tripId === followTrip ? popupVehicle : null);
     if (!v) { stopFollow(); return; }
     const p = vehiclePosAt(v, Date.now());
@@ -876,6 +935,31 @@
   }
 
   // Öffnen (refreshing=false) oder Auffrischen (true: kein Kamerasprung, keine "lädt"-Anzeige)
+  const geoCache = new Map();             // Name -> Halt (auch negative Treffer), damit nur einmal gefragt wird
+
+  // Halt per Namen nachschlagen. Nötig, weil `stops` nur die Halte des AKTUELLEN Ausschnitts enthält:
+  // eine Suche oder ein Favorit von woanders fand dort nichts und die Karte blieb ohne Abfahrten —
+  // mal mit, mal ohne, je nachdem wo die Karte gerade stand.
+  async function lookupStop(name) {
+    const key = normStopName(name);
+    if (!key) return null;
+    if (geoCache.has(key)) return geoCache.get(key);
+    let hit = null;
+    try {
+      const res = await fetch(`${API_GEOCODE}?text=${encodeURIComponent(name)}&type=STOP`, { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        const arr = Array.isArray(data) ? data : (data.results || []);
+        const stops = arr.filter(x => x && x.type === 'STOP' && x.id && x.lat != null);
+        const same = stops.filter(x => normStopName(x.name) === key);   // erst gleicher Name
+        const pool = same.length ? same : stops;                        // sonst irgendetwas Nahes am Namen
+        hit = pool.find(x => stationLevel(x.id)) || pool[0] || null;    // Stationshalt schlägt Steig
+      }
+    } catch (_) { /* dann bleibt die Karte eben ohne Abfahrten */ }
+    geoCache.set(key, hit);
+    return hit;
+  }
+
   async function openStation(stop, refreshing, instant) {
     const el = document.getElementById('popup');
     if (!el || !stop) return;
@@ -889,6 +973,13 @@
                        duration: instant ? 0 : 600 });     // aus der Fahrzeugkarte: sofort dorthin
       el.classList.add('on');
       paintStation(true);
+      if (!stop.stopId) {                   // Ausschnitt kennt den Halt nicht -> Namen nachschlagen
+        lookupStop(stop.name).then(found => {
+          if (!found || popupStation !== stop) return;             // inzwischen etwas anderes angeklickt
+          openStation({ name: found.name || stop.name, lat: found.lat, lon: found.lon,
+                        stopId: found.id, modes: stop.modes || [] }, true);
+        });
+      }
     } else {
       popupStation = stop; popupAnchor = [stop.lon, stop.lat];
     }
