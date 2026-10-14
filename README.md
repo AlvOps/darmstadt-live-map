@@ -1,17 +1,19 @@
 # Darmstadt Live Map
 
 Interactive **live-only** map of public transport in Darmstadt, Germany: trams, city/regional buses
-and S-Bahn/regional trains. This fork of `agent-mili/darmstadt_nahverkehr` replaced the original
-timetable replay with a **realtime layer** driven by the open DELFI realtime feed — plus a full
-**EN/DE language toggle**, a **vehicle popup** with the upcoming stops, and a **phone-first layout**.
+and S-Bahn/regional trains. The project started from the open-source base
+`agent-mili/darmstadt_nahverkehr`, whose timetable replay it replaced with a **realtime layer** driven
+by the open DELFI realtime feed — plus a full **EN/DE language toggle**, a **vehicle popup** with the
+upcoming stops, and a **phone-first layout**.
 
 The timetable simulation (and its data files) was removed on 2026-10-14: the site shows live
 vehicles only, so nothing on the map is ever derived from a schedule.
 
 Live: https://alvops.github.io/darmstadt-live-map/
 
-Repository: `AlvOps/darmstadt-live-map` (renamed from `darmstadt_nahverkehr` on 2026-10-14; GitHub
-redirects the old repository and Pages URLs, but the current address is the one above).
+Repository: `AlvOps/darmstadt-live-map` — an **independent repository**, not a GitHub fork and not part
+of any fork network. It was rebuilt as a standalone repository on 2026-10-15 (the earlier fork lives on
+as the archived `AlvOps/darmstadt-nahverkehr-fork`). Pages serves from `master` / `docs`.
 
 ## What the selection does
 
