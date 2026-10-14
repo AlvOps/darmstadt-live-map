@@ -19,6 +19,7 @@ function el(id) {
     clientWidth: 900, clientHeight: 46, width: 0, height: 0,
     classList: { _s: new Set(), toggle(c, on) { on ? this._s.add(c) : this._s.delete(c); }, add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); }, contains(c) { return this._s.has(c); } },
     querySelector(sel) { return el(id + sel); },
+    querySelectorAll() { return []; },        // live.js verdrahtet Klick-Ziele in den Popup-Zeilen
     getContext() { return { setTransform() {}, clearRect() {}, fillRect() {}, fillText() {}, set fillStyle(v) {}, set font(v) {} }; },
   });
 }
@@ -227,6 +228,26 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     check('Karte weist die Quelle der Positionen aus', sh.includes(sandbox.I18N.t('station.mapNote')));
     // Für die folgende Sprachprüfung eine Fahrzeugkarte geöffnet lassen (dort steht "Nächste Halte")
     await sandbox.DarmstadtLive.openPopup(heads.map(d => d.v)[0]);
+  }
+
+  console.log('\n=== Halt in der Fahrzeugkarte anklicken -> dorthin springen ===');
+  {
+    await sandbox.DarmstadtLive.openPopup(heads.map(d => d.v)[0]);
+    const list = sandbox.DarmstadtLive._test.popupStopList();
+    const withCoords = list.find(s => s.lat !== null && s.lon !== null);
+    console.log(`  Halte in der Karte: ${list.length}, davon mit Koordinaten: ${list.filter(s => s.lat !== null && s.lon !== null).length}`);
+    check('Halte der Fahrzeugkarte bringen Koordinaten und Kennung mit', !!withCoords && !!withCoords.stopId);
+    if (withCoords) {
+      easeCalls.length = 0;
+      sandbox.DarmstadtLive._test.goToStop(list.indexOf(withCoords));
+      const inf = sandbox.DarmstadtLive.info();
+      console.log(`  Sprung zu "${withCoords.full}": Kamera ${easeCalls.length ? JSON.stringify(easeCalls[0].center) : '-'} | Art ${inf.popupKind} | Abfahrten ${inf.popupDepartures}`);
+      check('Klick auf einen Halt springt genau dorthin',
+        easeCalls.length > 0 && Math.abs(easeCalls[0].center[0] - withCoords.lon) < 1e-9 && Math.abs(easeCalls[0].center[1] - withCoords.lat) < 1e-9);
+      check('und öffnet die Haltestellenkarte', inf.popupKind === 'station');
+    }
+    sandbox.DarmstadtLive.closePopup();
+    await sandbox.DarmstadtLive.openPopup(heads.map(d => d.v)[0]);   // für die Sprachprüfung offen lassen
   }
 
   console.log('\n=== Sprachumschaltung ===');

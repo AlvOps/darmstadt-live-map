@@ -65,6 +65,7 @@
   let stops = [];                        // Haltestellen aus dem Feed (echte Koordinaten, mit stopId)
   let popupVehicle = null, popupLeg = null, popupTimer = null, popupSeq = 0;
   let popupStation = null, popupAnchor = null, popupDepartures = null;   // Haltestellenkarte
+  let popupStopList = [];                // Halte der gerade gezeigten Fahrzeugkarte (Klick-Ziele)
   let active = false, lastFrame = 0;
 
   // API-Texte (Linien, Halte, Ziele, Betreiber, Fehlermeldungen) nie roh in innerHTML
@@ -393,6 +394,22 @@
     box.style.display = 'flex';
   }
 
+  function normStopName(x) {
+    return String(x || '').toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-zäöüß0-9]/g, '');
+  }
+
+  // Klick auf einen Halt in der Fahrzeugkarte: Kamera dorthin und die Haltestellenkarte öffnen
+  function goToStop(i) {
+    const s = popupStopList && popupStopList[i];
+    if (!s || s.lat === null || s.lon === null) return;
+    // Bevorzugt den Halt aus dem Kartenbestand (der kennt Abfahrten), sonst die Angaben der Fahrt
+    const known = stops.find(x => s.stopId && x.stopId === s.stopId) ||
+                  stops.find(x => normStopName(x.name) === normStopName(s.full));
+    const target = known || { name: s.full || s.name, lat: s.lat, lon: s.lon, stopId: s.stopId, modes: [] };
+    openStation(target);
+    announceStation(target);
+  }
+
   const cursor = ({ isHovering }) => (isHovering ? 'pointer' : 'grab');
 
   // ---------- Popup: Linie, Verspätungsstatus, nächste Halte
@@ -420,19 +437,23 @@
   function nextStops(leg) {
     const now = Date.now();
     const seq = [];
-    if (leg.from) seq.push({ name: leg.from.name, time: leg.startTime, sched: leg.scheduledStartTime });
+    if (leg.from) seq.push({ name: leg.from.name, time: leg.startTime, sched: leg.scheduledStartTime, stop: leg.from });
     (leg.intermediateStops || []).forEach(s => seq.push({
       name: s.name, time: s.departure || s.arrival,
-      sched: s.scheduledDeparture || s.scheduledArrival, cancelled: s.cancelled,
+      sched: s.scheduledDeparture || s.scheduledArrival, cancelled: s.cancelled, stop: s,
     }));
-    if (leg.to) seq.push({ name: leg.to.name, time: leg.endTime, sched: leg.scheduledEndTime });
+    if (leg.to) seq.push({ name: leg.to.name, time: leg.endTime, sched: leg.scheduledEndTime, stop: leg.to });
     return seq
       .filter(s => s.time && num(s.time) >= now - 45000)
       .slice(0, NEXT_STOPS)
       .map(s => {
         const tm = num(s.time), sc = s.sched ? num(s.sched) : tm;
         return {
-          name: ss(s.name), time: tm,
+          name: ss(s.name), time: tm, full: s.name,       // vollständiger Name für den Sprung zum Halt
+          // Die Halte der Fahrt bringen Koordinaten und ihre Kennung mit -> direkt dorthin springen
+          lat: s.stop && Number.isFinite(s.stop.lat) ? s.stop.lat : null,
+          lon: s.stop && Number.isFinite(s.stop.lon) ? s.stop.lon : null,
+          stopId: (s.stop && s.stop.stopId) || null,
           delay: Number.isFinite(sc) ? Math.round((tm - sc) / 60000) : null,
           inMin: Math.round((tm - now) / 60000),
           cancelled: !!s.cancelled,
@@ -456,12 +477,15 @@
 
   function popupShell(v, leg, loading) {
     const stops = leg && !leg.error ? nextStops(leg) : null;
-    const rows = stops ? stops.map(s => {
+    popupStopList = stops || [];                 // Klick-Ziele im Popup (Index -> Halt)
+    const rows = stops ? stops.map((s, i) => {
       const rel = s.inMin >= 0 && s.inMin <= 60
         ? `<span class="st-rel">${esc(s.inMin <= 0 ? T('popup.stopNow') : T('popup.inMin', { n: s.inMin }))}</span>` : '';
       const d = s.delay;
       const dl = d === null ? '–' : d > 0 ? '+' + d : d < 0 ? '−' + Math.abs(d) : '·';
-      return `<li><span class="st-name">${esc(s.name)}${s.cancelled ? ' ⚠' : ''}</span>${rel}` +
+      // Jeder Halt ist anklickbar und führt zur Haltestelle (wenn der Feed Koordinaten mitliefert)
+      const go = s.lat !== null && s.lon !== null;
+      return `<li${go ? ` class="st-go" data-i="${i}"` : ''}><span class="st-name">${esc(s.name)}${s.cancelled ? ' ⚠' : ''}</span>${rel}` +
         `<span class="st-clock">${clock(s.time)}</span>` +
         `<span class="st-dly ${delayClass(d)}">${dl}</span></li>`;
     }).join('') : '';
@@ -606,6 +630,12 @@
     } else {
       popupStation = stop; popupAnchor = [stop.lon, stop.lat];
     }
+    if (!stop.stopId) {                 // Halt ohne Kennung (z. B. aus Fahrtdaten) -> Karte ohne Abfahrten
+      popupDepartures = [];
+      paintStation(false);
+      popupTimer = setTimeout(popupTick, POPUP_REFRESH_MS);
+      return;
+    }
     try {
       const res = await fetch(`${API_STOPTIMES}?stopId=${encodeURIComponent(stop.stopId)}&n=4`, { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -633,6 +663,9 @@
     const nl = el.querySelector('.pop-stops');           // Scrollposition beim Auffrischen behalten
     if (nl) nl.scrollTop = scroll;
     el.scrollTop = outer;
+    el.querySelectorAll('li.st-go[data-i]').forEach(li => {   // Halte in der Fahrzeugkarte sind anklickbar
+      li.onclick = e => { e.stopPropagation(); goToStop(+li.dataset.i); };
+    });
     placePopup(true);                                    // neue Höhe -> sofort neu ausrichten
   }
 
@@ -830,6 +863,7 @@
         popupError: popupLeg && popupLeg.error ? popupLeg.error : null,
       };
     },
-    _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell },
+    _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell,
+             goToStop, nextStops, stops: () => stops, popupStopList: () => popupStopList },
   };
 })();

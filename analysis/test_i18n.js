@@ -108,7 +108,7 @@ function looksLikeSelectorOrToken(s) {
 function isProse(lit) {
   const s = lit.replace(/<[^>]*>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\u0000/g, ' ').trim();
   if (!s) return false;
-  if (/^(https?:|data\/|[#.\[]|\(|rgba?\(|var\(|calc\()/.test(s)) return false;
+  if (/^(https?:|data\/|[#.\[]|\(|rgba?\(|var\(|calc\(|min\(|max\(|clamp\()/.test(s)) return false;   // CSS-Werte sind keine Prosa
   if (/(^|[?&\s])[a-zA-Z]+=/.test(s)) return false;                 // URL query strings
   if (KEY_NAMES.has(s)) return false;                                // KeyboardEvent.key/code values
   if (looksLikeSelectorOrToken(s) && !/[A-ZÄÖÜ][a-zäöüß]+ [a-zäöüß]/.test(s) && !/[äöüß]/.test(s)) {

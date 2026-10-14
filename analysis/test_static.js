@@ -102,11 +102,23 @@ function run(check, log = console.log) {
   check(`vehicle card is wide enough for line + destination + time (${popupW}px >= 280px)`, popupW >= 280);
   check('departure/stop clock time has its own prominent style', /\.pop-stops \.st-clock \{/.test(css));
 
+  // Overlap fix: with 'Status & filters' AND the line list open, the blocks used to collide because
+  // the panel could not scroll and the legend still had a grow factor. Now the panel scrolls and the
+  // legend keeps a fixed band.
+  const head = rule('#head') || '';
+  check('panel scrolls instead of letting open blocks overlap', /#head \{[\s\S]*?overflow-y:\s*auto/.test(css));
+  check('legend and its section no longer grow into the panel',
+    /#legend \{ flex: 0 0 auto;/.test(css) && /#legend-sec \{ flex: 0 0 auto;/.test(css));
+  check('panel height leaves only a small gap above the bar (and caps at 92vh)',
+    /--head-max'[^\n]*bh \+ 30[^\n]*92vh/.test(html));
+  check('stops in the vehicle card are marked as clickable targets',
+    /\.pop-stops li\.st-go \{ cursor: pointer; \}/.test(css) && /\.pop-stops li\.st-go::after/.test(css));
+
   // The line list must be usable: a real scroll area, a grabbable bar and hittable chips.
   const legend = rule('#legend') || '', legendSec = rule('#legend-sec') || '';
   const legendMin = parseFloat((legend.match(/min-height:\s*([\d.]+)px/) || [])[1] || '0');
-  check('legend can grow inside the panel (flex on legend and its section)',
-    /flex:\s*1 1 auto/.test(legend) && /flex:\s*1 1 auto/.test(legendSec));
+  check('legend keeps a fixed band instead of growing (that caused the overlap)',
+    /#legend \{ flex: 0 0 auto;/.test(css) && /#legend-sec \{ flex: 0 0 auto;/.test(css));
   check(`legend scroll area tall enough to hold lines (${legendMin}px >= 120px)`, legendMin >= 120);
   const lgWk = parseFloat(((rule('#legend::-webkit-scrollbar') || '').match(/width:\s*([\d.]+)px/) || [])[1] || '0');
   check(`legend scrollbar is wide enough to grab (${lgWk}px >= 12px)`, lgWk >= 12);
