@@ -655,25 +655,48 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('Karte nennt trotzdem Ziel und Alter der Meldung',
     el('popup').innerHTML.includes('Irgendwo') && /aktualisiert vor|updated/.test(el('popup').innerHTML));
 
-  // Zwei Fahrzeuge derselben Linie, Gegenrichtung: ohne passende Richtung wird nicht geraten.
-  const opp = { tripId: 'T2', mode: 'tram', running: true, lineName: '4', headsign: 'Hauptbahnhof',
-    dest: 'Hauptbahnhof', fromName: 'Kranichstein', dep: nowMs - 60000, arr: nowMs + 600000,
+  // Zwei Fahrzeuge derselben Linie: egal wie die Zielangaben lauten, darf dieselbe Bahn NICHT zweimal
+  // auf der Karte stehen — der Betreiberpunkt gewinnt, der abgeleitete verschwindet.
+  const opp = { tripId: 'T2', mode: 'tram', running: true, lineName: '4', headsign: '',
+    dest: 'Darmstadt Luisenplatz', fromName: 'Kranichstein', dep: nowMs - 60000, arr: nowMs + 600000,
     delayMin: 0, realTime: true, routeColor: '', path: [[8.6600, 49.8700], [8.6700, 49.8700]],
     cd: [0, 0.01 * mPerLon], total: 0.01 * mPerLon, lineIdx: 0 };
-  L._test.setVehicles([opp]);
-  HG._test.reset([{ line: '4', lat: 49.8705, lon: 8.6602, bearing: 270, vehicleId: 381, category: 1, mode: 'tram', dest: 'Kranichstein', at: Date.now() }]);
+  L._test.setVehicles([derived, opp]);
+  HG._test.reset([
+    { line: '4', lat: 49.87005, lon: 8.6602, bearing: 90, vehicleId: 381, category: 1, mode: 'tram', dest: 'Kranichstein', at: Date.now() },
+    { line: '4', lat: 49.87010, lon: 8.6604, bearing: 270, vehicleId: 382, category: 1, mode: 'tram', dest: 'Hauptbahnhof', at: Date.now() },
+  ]);
   sandbox.DarmstadtLive.render(true);
   headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
-  check('gleiche Linie, andere Richtung: kein Zusammenlegen (Fahrzeug bleibt doppelt sichtbar)',
-    headsOp.length === 2 && headsOp.some(d => d.op && d.v.opOnly));
+  console.log(`  Linie 4: 2 Betreiberpunkte, 2 abgeleitete -> ${headsOp.length} Punkte`);
+  check('keine Doppelpunkte: zwei gemeldete Fahrzeuge, genau zwei Punkte', headsOp.length === 2 && headsOp.every(d => d.op));
+  check('Betreiberpunkte übernehmen die Daten ihres Zwillings (Verspätung bleibt)',
+    headsOp.every(d => d.v.delayMin !== null));
+  check('das Kopfschild wird nicht gebraucht (unser Feed liefert für Bahnen keins)',
+    headsOp.every(d => !!d.op));
 
-  // Weit weg, aber gleiche Richtung: derselbe Zug ein paar Halte weiter -> zusammenlegen.
-  HG._test.reset([{ line: '4', lat: 49.8700, lon: 8.6600, bearing: 90, vehicleId: 381, category: 1, mode: 'tram', dest: 'Kranichstein', at: Date.now() }]);
-  L._test.setVehicles([derived]);
+  // Ein abgeleiteter Punkt, der einem gemeldeten Fahrzeug zu nah steht, wird nicht zusätzlich gezeichnet.
+  const far = Object.assign({}, derived, { tripId: 'T3', lineName: '4', path: [[8.6600, 49.8700], [8.6700, 49.8700]] });
+  L._test.setVehicles([far]);
+  HG._test.reset([{ line: '4', lat: 49.8702, lon: 8.6609, bearing: 90, vehicleId: 383, category: 1, mode: 'tram', dest: 'Kranichstein', at: Date.now() }]);
   sandbox.DarmstadtLive.render(true);
   headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
-  check('gleiche Richtung: auch mit Abstand zusammengelegt (ein Punkt)',
-    headsOp.length === 1 && !!headsOp[0].op && !headsOp[0].v.opOnly);
+  check('zu naher Zwilling verschwindet (Sicherheitsnetz gegen Doppelpunkte)', headsOp.length === 1 && !!headsOp[0].op);
+
+  // Gleiten: die gemeldete Position wird über das Intervall erreicht, nicht gesprungen.
+  L._test.setVehicles([]);
+  const t0 = Date.now();
+  HG._test.reset([{ line: '4', lat: 49.8700, lon: 8.6600, bearing: 90, vehicleId: 384, category: 1, mode: 'tram', dest: 'X', at: t0 }]);
+  sandbox.DarmstadtLive.render(true);
+  let p0 = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data[0].pos;
+  HG._test.reset([{ line: '4', lat: 49.8750, lon: 8.6650, bearing: 90, vehicleId: 384, category: 1, mode: 'tram', dest: 'X', at: Date.now() }]);
+  sandbox.DarmstadtLive.render(true);
+  await wait(1600);                                        // das Gleiten braucht echte Zeit
+  sandbox.DarmstadtLive.render(true);
+  const pMid = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data[0].pos;
+  check('Betreiberpunkt gleitet zur neuen Meldung (kein Sprung)',
+    pMid[0] > p0[0] && pMid[0] < 8.6650 && pMid[1] > p0[1] && pMid[1] < 49.8750,
+    `${p0[0].toFixed(4)} -> ${pMid[0].toFixed(4)} (Ziel 8.6650)`);
 
   // Außerhalb des geladenen Ausschnitts: gar nicht zeichnen (dazu gäbe es nie Fahrtdaten).
   HG._test.reset([{ line: '9', lat: 50.05, lon: 8.95, bearing: 0, vehicleId: 901, category: 5, mode: 'bus', dest: 'Irgendwo', at: Date.now() }]);

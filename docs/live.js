@@ -46,7 +46,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261014-14';
+  const VERSION = '20261014-15';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -328,34 +328,33 @@
   // Die HEAG meldet echte Koordinaten; der offene Strom liefert nur Ableitungen aus Haltzeiten. Regel:
   // je Fahrzeug genau EIN Punkt. Findet sich ein Zwilling (gleiche Linie, nah dran), ersetzt der
   // Betreiberpunkt ihn und übernimmt dessen Verspätung — echte Position plus echte Verspätung.
-  const OP_TWIN_MAX_M = 2500;      // MIT gleicher Richtung: derselbe Zug, auch ein paar Halte weiter
-  const OP_TWIN_TIGHT_M = 250;     // ohne Richtungsangabe nur bei sehr großer Nähe raten
-  let opLog = { merged: 0, added: 0, skipped: 0, available: 0 };   // für Tests und Diagnose
+  const OP_TWIN_MAX_M = 2000;      // bis hierher wird überhaupt gepaart (gleiche Linie)
+  const OP_SUPPRESS_M = 250;       // ein abgeleiteter Punkt so nah an einem Betreiberpunkt ist dasselbe Fahrzeug
+  const OP_SMOOTH_MS = 15000;      // Betreiberpunkte gleiten zur neuen Meldung, statt alle 30 s zu springen
+  let opLog = { merged: 0, added: 0, suppressed: 0, skipped: 0, available: 0 };
   const opPos = new Map();                               // tripId -> zuletzt gezeichnete Betreiberposition
+  const opSmooth = new Map();                            // tripId -> { from, to, t0 } für das Gleiten
   const metresBetween = (aLat, aLon, bLat, bLon) => {
     const dy = (aLat - bLat) * 111320, dx = (aLon - bLon) * 111320 * Math.cos(aLat * Math.PI / 180);
     return Math.sqrt(dx * dx + dy * dy);
   };
   const flat = s => String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9ÄÖÜß]/g, '');
-  // Zielangaben vergleichen: die HEAG nennt das Ziel, unser Abschnitt kennt Kopfschild und Endhalt.
-  // Gleiche Richtung ist das, was zwei Fahrzeuge derselben Linie auseinanderhält (Gegenrichtung!).
+  // Zielangaben sind nur ein BONUS, kein Ausschlusskriterium: der offene Strom liefert für viele
+  // Straßenbahnfahrten gar kein Kopfschild (headsign null) und `dest` ist dort der NÄCHSTE Halt, nicht
+  // der Endhalt der Linie. Ein Vergleich „Betreiberziel gegen nächsten Halt" schlug deshalb fehl und
+  // dieselbe Bahn stand zweimal auf der Karte. Gepaart wird jetzt über die Nähe, eins zu eins.
   function sameDirection(op, v) {
     const d = flat(op.dest);
-    if (!d || d.length < 3) return false;
-    for (const cand of [v.headsign, v.dest]) {
-      const c = flat(cand);
-      if (c && c.length >= 3 && (c.includes(d) || d.includes(c))) return true;
-    }
-    return false;
+    const h = flat(v.headsign);
+    if (!d || d.length < 3 || !h || h.length < 3) return false;
+    return h.includes(d) || d.includes(h);
   }
 
-  function withOperator(cur) {
+  function withOperator(cur, t) {
     const src = (ctx && ctx.heag && ctx.heag.list) ? ctx.heag.list() : null;
-    opLog = { merged: 0, added: 0, skipped: 0, available: src ? src.length : 0 };
+    opLog = { merged: 0, added: 0, suppressed: 0, skipped: 0, available: src ? src.length : 0 };
     opPos.clear();
-    if (!src || !src.length) return cur;
-    // Von der Betreiberflotte nur zeigen, was im geladenen Ausschnitt liegt. Außerhalb könnten wir nie
-    // Fahrtdaten dazu haben — ein Punkt, dessen Karte nichts weiß, verwirrt mehr, als er nützt.
+    if (!src || !src.length) { opSmooth.clear(); return cur; }
     const inBox = (lat, lon) => {
       if (!viewBox) return true;
       const padLat = (viewBox.n - viewBox.s) * 0.1, padLon = (viewBox.e - viewBox.w) * 0.1;
@@ -363,40 +362,72 @@
              lon >= viewBox.w - padLon && lon <= viewBox.e + padLon;
     };
     const out = cur.slice();
-    for (const o of src) {
+    // 1. Alle möglichen Paare sammeln (gleiche Linie, in Reichweite) und gierig vergeben: der nächste
+    //    Abstand gewinnt zuerst, jede Seite nur einmal — so bekommt kein Zwilling zwei Partnern.
+    const pairs = [];
+    const relevant = [];
+    src.forEach((o, oi) => {
       const key = normLine(o.line);
-      let twin = -1, best = Infinity;
-      for (let i = 0; i < out.length; i++) {
-        const c = out[i];
-        if (c.op || !key || normLine(c.v.lineName) !== key) continue;
+      if (!key || !inBox(o.lat, o.lon)) { opLog.skipped++; return; }
+      relevant.push(oi);
+      for (let ci = 0; ci < out.length; ci++) {
+        const c = out[ci];
+        if (c.op || normLine(c.v.lineName) !== key) continue;
         const d = metresBetween(o.lat, o.lon, c.pos[1], c.pos[0]);
-        if (d < best) { best = d; twin = i; }
+        if (d <= OP_TWIN_MAX_M) pairs.push({ oi, ci, d, dir: sameDirection(o, c.v) ? 1 : 0 });
       }
-      const near = twin >= 0 ? out[twin] : null;
-      let ok = false;
-      if (near) {
-        // Beide Seiten nennen ein Ziel -> es muss passen. Zwei Fahrzeuge derselben Linie in
-        // Gegenrichtung stehen oft am selben Halt; ohne diese Prüfung hinge unsere Verspätung am
-        // falschen Fahrzeug, nur weil es 50 m entfernt war.
-        const ours = near.v.headsign || near.v.dest;
-        if (String(o.dest || '').trim().length >= 3 && String(ours || '').trim().length >= 3) {
-          ok = sameDirection(o, near.v) && best <= OP_TWIN_MAX_M;
-        } else {
-          ok = best <= OP_TWIN_TIGHT_M;                  // eine Seite ohne Ziel: nur bei großer Nähe
-        }
+    });
+    pairs.sort((a, b) => (b.dir - a.dir) || (a.d - b.d));
+    const claimedPair = new Map(), claimedCar = new Set();
+    for (const p of pairs) {
+      if (claimedPair.has(p.oi) || claimedCar.has(p.ci)) continue;
+      claimedPair.set(p.oi, p.ci);
+      claimedCar.add(p.ci);
+    }
+    // 2. Abgeleitete Punkte entfernen, die einem gemeldeten Fahrzeug derselben Linie zu nah stehen.
+    //    Das ist das Sicherheitsnetz gegen „zwei Punkte für dieselbe Bahn", unabhängig vom Paaren.
+    const drops = new Set();
+    for (const oi of relevant) {
+      const o = src[oi];
+      out.forEach((c, ci) => {
+        if (c.op || drops.has(ci)) return;
+        if (normLine(c.v.lineName) !== normLine(o.line)) return;
+        if (metresBetween(o.lat, o.lon, c.pos[1], c.pos[0]) <= OP_SUPPRESS_M) drops.add(ci);
+      });
+    }
+    // 3. Aufbauen: die gemeldeten Fahrzeuge (mit dem jeweiligen Zwilling als Datenbasis), danach der Rest.
+    const keep = [];
+    out.forEach((c, ci) => {
+      if (drops.has(ci)) { if (!claimedCar.has(ci)) opLog.suppressed++; return; }
+      keep.push(c);
+    });
+    // smooth: Position zwischen letzter und neuer Meldung gleiten lassen (die HEAG-Karte bewegt sich auch)
+    const smoothPos = (trip, lon, lat, now) => {
+      let st = opSmooth.get(trip);
+      if (!st || st.to[0] !== lon || st.to[1] !== lat) {
+        const from = st ? [st.cur[0], st.cur[1]] : [lon, lat];
+        st = { from, to: [lon, lat], t0: now, cur: [lon, lat] };
+        opSmooth.set(trip, st);
       }
-      if (!ok) twin = -1;                                  // nicht raten, wenn Richtung und Nähe fehlen
-      const base = ok ? out[twin].v : null;
-      if (!base && !inBox(o.lat, o.lon)) { opLog.skipped++; continue; }
-      if (ok) out.splice(twin, 1);                         // Zwilling raus: eine Quelle je Fahrzeug
+      const k = Math.min(1, Math.max(0, (now - st.t0) / OP_SMOOTH_MS));
+      st.cur = [st.from[0] + (st.to[0] - st.from[0]) * k, st.from[1] + (st.to[1] - st.from[1]) * k];
+      return st.cur;
+    };
+    const now = Number.isFinite(t) ? t : Date.now();
+    const seenSmooth = new Set();
+    for (const oi of relevant) {
+      const o = src[oi];
+      const base = claimedPair.has(oi) ? out[claimedPair.get(oi)].v : null;
       const mode = (base && base.mode) || o.mode || 'bus';
       const trip = base ? base.tripId
                         : 'heag:' + (o.vehicleId == null ? o.line + ':' + o.lat : o.vehicleId);
-      opPos.set(trip, [o.lon, o.lat]);
-      out.push({
+      seenSmooth.add(trip);
+      const pos = smoothPos(trip, o.lon, o.lat, now);
+      opPos.set(trip, pos);
+      if (base) opLog.merged++; else opLog.added++;
+      keep.push({
         op: true, bearing: o.bearing,
-        pos: [o.lon, o.lat],
-        rest: [],
+        pos, rest: [],
         v: base ? Object.assign({}, base, { op: true, opId: o.vehicleId, opAt: o.at })
                 : {
                     tripId: trip,
@@ -407,9 +438,9 @@
                     lineIdx: matchLine(o.line, mode),
                   },
       });
-      if (base) opLog.merged++; else opLog.added++;
     }
-    return out;
+    for (const k of [...opSmooth.keys()]) if (!seenSmooth.has(k)) opSmooth.delete(k);
+    return keep;
   }
 
   function render(force) {
@@ -423,7 +454,7 @@
     if (!followTrip && ctx.map.isMoving && ctx.map.isMoving()) return;
     const t = Date.now();
     const sel = ctx.state.selLine;
-    const cur = withOperator(vehiclesAt(t));
+    const cur = withOperator(vehiclesAt(t), t);
     // Angeklicktes Fahrzeug dauerhaft markieren, damit der Punkt auch nach dem Kamera-Follow zu finden ist
     const focusTrip = popupVehicle ? popupVehicle.tripId : null;
     const focus = focusTrip ? cur.find(c => c.v.tripId === focusTrip) : null;
@@ -1245,7 +1276,7 @@
       };
     },
     _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell,
-             dedupeStops,
+             dedupeStops, opInfo: () => opLog, sameDirection, metresBetween,
              goToStop, nextStops, stops: () => stops, popupStopList: () => popupStopList,
              setRelaxAt(t) { ctx.state.selAt = t; }, relaxAt: () => ctx.state.selAt, RELAX_MS,
              following: () => !!followTrip, resetFollow() { followTrip = null; followUntil = 0; },

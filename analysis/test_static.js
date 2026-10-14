@@ -208,16 +208,20 @@ function run(check, log = console.log) {
     /REFRESH_MS = 30000/.test(heagSrc) && /catch \(e\)/.test(heagSrc) &&
     /heag\.js\?v=\d{8}-\d+/.test(html));
   check('one source per vehicle: the operator dot replaces the derived one, never both',
-    /OP_TWIN_MAX_M = 2500/.test(liveSrc) && /OP_TWIN_TIGHT_M = 250/.test(liveSrc) &&
-    /out\.splice\(twin, 1\)/.test(liveSrc) && /opOnly/.test(liveSrc));
-  // Zwei Fahrzeuge derselben Linie in Gegenrichtung dürfen nicht verwechselt werden: ohne passende
-  // Richtung wird nur bei sehr großer Nähe gepaart, sonst gar nicht.
-  check('operator pairing is direction-aware (same line, opposite direction is not merged)',
+    /OP_TWIN_MAX_M = 2000/.test(liveSrc) && /OP_SUPPRESS_M = 250/.test(liveSrc) &&
+    /claimedCar\.add\(p\.ci\)/.test(liveSrc) && /opLog\.suppressed\+\+/.test(liveSrc) &&
+    /opOnly/.test(liveSrc));
+  // Die Zielangabe ist nur ein Bonus: der offene Strom liefert für Bahnen kein Kopfschild, und `dest`
+  // ist der NÄCHSTE Halt — danach zu filtern ließ dieselbe Bahn zweimal auf der Karte stehen.
+  check('pairing no longer hinges on a destination that our feed does not provide',
     /function sameDirection\(op, v\)/.test(liveSrc) &&
-    /ok = sameDirection\(o, near\.v\) && best <= OP_TWIN_MAX_M/.test(liveSrc) &&
-    /ok = best <= OP_TWIN_TIGHT_M;/.test(liveSrc));
+    /const h = flat\(v\.headsign\);/.test(liveSrc) &&
+    !/sameDirection\(o, near\.v\) && best <= OP_TWIN_MAX_M/.test(liveSrc));
+  check('operator dots glide between reports instead of jumping every 30 s',
+    /OP_SMOOTH_MS = 15000/.test(liveSrc) && /function withOperator\(cur, t\)/.test(liveSrc) &&
+    /st\.from\[0\] \+ \(st\.to\[0\] - st\.from\[0\]\) \* k/.test(liveSrc));
   check('dots we could never describe are not drawn (operator fleet is network-wide, we are not)',
-    /const inBox = \(lat, lon\) => \{/.test(liveSrc) && /opLog\.skipped\+\+; continue;/.test(liveSrc));
+    /const inBox = \(lat, lon\) => \{/.test(liveSrc) && /opLog\.skipped\+\+; return;/.test(liveSrc));
   check('the credits name the operator feed and the mixed provenance',
     /attributionOperator: '/.test(i18nSrc) && /attributionPosition: '/.test(i18nSrc) &&
     /<p data-i18n="attributionOperator">/.test(html));
@@ -232,7 +236,7 @@ function run(check, log = console.log) {
     /getLineColor: \[255, 209, 102, 240\], getLineWidth: 2/.test(liveSrc) &&
     !/autoHighlight: true, highlightColor: \[255, 255, 255, 130\]/.test(liveSrc));
   check('camera follow uses the drawn operator position (no drift off the dot)',
-    /const op = opPos\.get\(followTrip\)/.test(liveSrc) && /opPos\.set\(trip, \[o\.lon, o\.lat\]\)/.test(liveSrc));
+    /const op = opPos\.get\(followTrip\)/.test(liveSrc) && /opPos\.set\(trip, pos\)/.test(liveSrc));
   // Eine Suche von außerhalb des Ausschnitts muss trotzdem Abfahrten zeigen: der Halt wird über den
   // Namen nachgeschlagen, statt auf die Halte des aktuellen Ausschnitts zu hoffen ("mal ja, mal nein").
   check('a stop outside the current view is looked up by name (departures are no longer hit-and-miss)',
