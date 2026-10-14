@@ -81,13 +81,22 @@ Established by direct measurement; every claim is reproducible with the scripts 
   `scheduledDeparture`/`scheduledArrival`, `realTime`, `polyline` (the hop's geometry),
   `trips[0].tripId`, `routeShortName`. The polyline starts exactly at `from` and ends exactly at
   `to` (0–3 m deviation, measured) — it carries **no** position.
-* **No coordinates anywhere in the feed.** A brute-force scan of the 50 MB national DELFI realtime
-  protobuf finds **zero** plausible float32/double latitude/longitude pairs
-  (scan script `brute_coords.py` — **not included in this repository**, so this particular claim
-  cannot currently be re-run from the repo; `where_is_vehicle.py` independently shows that the map
-  API's polyline is hop geometry, not a vehicle position). The content is stop-level SIRI-ET prognoses (stop ids, times).
-  German-language sources confirm this: every DELFI realtime offering is *SIRI ET*; there is no
-  open *SIRI VM* vehicle-position feed for Darmstadt.
+* **No coordinates anywhere in the feed** — not even inside its `VehiclePosition` messages.
+  Measured on the national DELFI GTFS-RT feed (53.9 MB, 2026-10-14): 237,062 entities, every one of
+  them a `FeedEntity.vehicle`, and **0** of them carrying a `Position` (latitude/longitude). An
+  independent brute-force scan of the same bytes finds **0** plausible float32 or double lat/lon
+  pairs anywhere in the file. What the entities actually carry are stop ids (`de:06411:…`) and times.
+  All three checks are reproducible from this repository:
+
+  ```bash
+  curl -A 'darmstadt-live-map/1.0' -o /tmp/gtfsrt.pb https://germany.motis-project.org/gtfsrt
+  python3 analysis/scan_vehiclepositions.py /tmp/gtfsrt.pb  # 237062 vehicle entries, 0 with coordinates
+  python3 analysis/brute_coords.py          /tmp/gtfsrt.pb  # 0 plausible coordinate pairs (float32/double)
+  python3 analysis/diag_feed.py             /tmp/gtfsrt.pb  # raw entity fields: stop ids and times only
+  ```
+
+  This matches the feed's SIRI-ET nature: stop-level prognoses, no vehicle positions. German-language
+  sources confirm there is no open SIRI-VM vehicle-position feed for Darmstadt.
 * **Position is therefore derived:** progress `u = (now − departure) / (arrival − departure)`,
   the point at `u` along the hop's real geometry. Because `departure`/`arrival` are the *actual*
   times where `realTime: true`, the vehicle moves at its real (delayed) pace. Vehicles without
@@ -124,7 +133,11 @@ node analysis/test_static.js      # CSS for phones/scrollbars, status-pill contr
 python3 analysis/where_is_vehicle.py   # proves: polyline == hop geometry, no position field
 python3 analysis/hop_structure.py      # hop/vehicle structure, payload per time window
 python3 analysis/poll_shape.py         # payload vs. time window and bbox limits
-# brute_coords.py / diag_feed.py were used during development but are not in the repository.
+# the three feed scans need the national raw feed first (53.9 MB):
+curl -A 'darmstadt-live-map/1.0' -o /tmp/gtfsrt.pb https://germany.motis-project.org/gtfsrt
+python3 analysis/scan_vehiclepositions.py /tmp/gtfsrt.pb   # vehicle messages: 0 of them carry coordinates
+python3 analysis/brute_coords.py          /tmp/gtfsrt.pb   # independent brute-force coordinate scan
+python3 analysis/diag_feed.py             /tmp/gtfsrt.pb   # raw entity fields (stop ids, times)
 ```
 
 The Node tests stub the DOM/deck.gl and run headless. A pixel-level check in a real browser is
