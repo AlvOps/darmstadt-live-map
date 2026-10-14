@@ -1,0 +1,48 @@
+# Tests. The three offline suites run on every push and pull request; the suites that talk to the
+# live Transitous/MOTIS API are time-of-day dependent and run on a schedule instead, non-blocking
+# (a vehicle-free 4 a.m. feed is a measurement, not a broken build).
+name: tests
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    name: "offline suites (deterministic)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: "CSS / assets / source facts"
+        run: node analysis/test_static.js
+      - name: "EN/DE coverage and hardcoded-string scan"
+        run: node analysis/test_i18n.js
+      - name: "behaviour of the fixed defects (fixtures, no network)"
+        run: node analysis/test_behaviour.js
+
+  live:
+    name: "live API (scheduled, non-blocking)"
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: "real feed: vehicles, positions, layers"
+        run: node analysis/test_live.js
+      - name: "real feed: integration suite (popup, races, XSS)"
+        run: node analysis/test_ui.js
+      - name: "basemap tile ceiling still matches index.html"
+        run: node analysis/check_tile_ceiling.js

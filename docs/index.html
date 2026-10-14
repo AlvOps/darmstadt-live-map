@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261014-20"></script>
+<script src="i18n.js?v=20261015-01"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -134,6 +134,13 @@
     background: rgba(46,196,182,.16); color: #2ec4b6; border: 1px solid rgba(46,196,182,.35); vertical-align: 2px; }
   .badge-live i { width: 7px; height: 7px; border-radius: 50%; background: #2ec4b6; animation: bpulse 1.6s infinite; }
   @keyframes bpulse { 0%,100% { opacity: 1 } 50% { opacity: .2 } }
+  /* Frischezustand der Daten — gesetzt von live.js (updateStat). Ein Ausfall darf nicht weiter
+     pulsieren, als käme gerade etwas an: alt/überholt wird grau bzw. rot und steht still. */
+  .badge-live[data-state="waiting"], .badge-live[data-state="stale"] {
+    background: rgba(255,255,255,.08); color: var(--muted); border-color: var(--line); }
+  .badge-live[data-state="waiting"] i, .badge-live[data-state="stale"] i { background: var(--muted); animation: none; }
+  .badge-live[data-state="expired"] { background: rgba(255,90,80,.16); color: #ff9b93; border-color: rgba(255,90,80,.4); }
+  .badge-live[data-state="expired"] i { background: #ff9b93; animation: none; }
   /* --- Sprachumschalter (oben rechts) --- */
   #lang { top: 16px; right: 16px; padding: 6px; z-index: 4; top: calc(16px + env(safe-area-inset-top)); }
   #lang .seg button { padding: 7px 11px; font-size: 12.5px; font-weight: 600; min-width: 40px; }
@@ -178,6 +185,12 @@
   .pop-stops .st-dly.ontime { color: #86e0a8; }
   .pop-stops .st-dly.early { color: #8ecbff; }
   .pop-stops .st-dly.unknown { color: var(--muted); }
+  /* Abgesagte Abfahrt und reine Fahrplanzeit: sichtbar anders als eine normale Echtzeitabfahrt. */
+  .pop-stops .st-dly.cancelled { color: #ff9b93; }
+  .pop-stops li.st-cancel .st-name { text-decoration: line-through; opacity: .75; }
+  .pop-stops .st-tag { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 5px;
+    font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--muted); border: 1px solid var(--line); }
   .pop-note { color: var(--muted); font-size: 11px; margin-top: 10px; line-height: 1.4; }
   /* Herkunftshinweis (Position abgeleitet, kein GPS): gelb und fett — er ordnet die Genauigkeit ein
      und soll deshalb auffallen, nicht im Kleingedruckten verschwinden. Steht nach .pop-note,
@@ -212,6 +225,9 @@
     background: var(--accent); color: #1d7a3d; font-family: inherit; font-size: 8px; font-weight: 800; line-height: 1;
     border: 1.2px solid #1d7a3d; box-shadow: 0 1px 3px rgba(0, 0, 0, .45);
     pointer-events: auto; cursor: pointer; }
+  /* Haltestelle: 13 px Punkt, aber 33 px Tippfläche. WCAG 2.2 verlangt mindestens 24 px; der
+     sichtbare Punkt bleibt klein, das Ziel für den Daumen wird über ::before größer. */
+  .stopmk::before { content: ''; position: absolute; inset: -10px; border-radius: 50%; }
   .stopmk.focus { border-color: var(--accent); }
   .map-moving #markers { opacity: .9; }
 
@@ -318,7 +334,7 @@
 </div>
 
 <div id="head" class="panel">
-  <h1><span data-i18n="appTitle">Darmstadt Live Map</span><span class="badge-live" id="livebadge"><i></i><span id="livebadgetxt" data-i18n="modeLive">Realtime</span></span>
+  <h1><span data-i18n="appTitle">Darmstadt Live Map</span><span class="badge-live" id="livebadge" data-state="waiting"><i></i><span id="livebadgetxt" data-i18n="modeLive">Realtime prognoses</span></span>
     <button id="panelclose" class="panel-x" data-i18n-aria="closePanel" aria-label="Close panel">✕</button></h1>
 
   <!-- Umschalter: immer nur ein Bereich sichtbar -> das Panel passt ohne Scrollbalken.
@@ -388,9 +404,9 @@
         <p data-i18n="attributionLive">Realtime: DELFI e.V. (CC BY-SA 4.0) via Transitous/MOTIS</p>
         <p data-i18n="attributionMap">Base map: © OpenStreetMap contributors (ODbL) · CARTO</p>
         <!-- Was die Punkte sind (und was nicht): gelb und fett, in beiden Sprachen, direkt in der
-             Quellenangabe — damit die Einordnung dort steht, wo man die Herkunft nachliest. Die Karte
-             mischt jetzt zwei Quellen, deshalb nennt der Hinweis beide. -->
-        <p class="note-warn" data-i18n="attributionPosition">Positions: HEAG reported live by the operator · all other vehicles derived from realtime stop prognoses (the open feed carries no GPS).</p>
+             Quellenangabe — damit die Einordnung dort steht, wo man die Herkunft nachliest. Es gibt
+             genau EINE Quelle (DELFI via Transitous): keine Betreiberpositionen. -->
+        <p class="note-warn" data-i18n="attributionPosition">Positions are derived from realtime stop prognoses — the open feed carries no GPS. Data older than 45 s is marked stale, older than 2 min is dropped.</p>
       </div>
     </div>
   </div>
@@ -400,8 +416,8 @@
 <div id="banner" hidden></div>
 <div id="popup" class="panel" role="dialog" data-i18n-aria="popup.dialog" aria-label="Vehicle details"></div>
 
-<script src="search.js?v=20261014-20"></script>
-<script src="live.js?v=20261014-20"></script>
+<script src="search.js?v=20261015-01"></script>
+<script src="live.js?v=20261015-01"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -461,6 +477,18 @@ map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bott
 
 const tip = document.getElementById('tip');
 
+// Fahrzeug- und Haltemarken in den Karten-Container hängen. Als Geschwister von #map lagen sie
+// NEBEN der Karte, und MapLibre hört auf Gesten (Ziehen, Zoomen, Touch) nur innerhalb seines
+// Containers: ein Wischen oder Zoomen, das auf einem Punkt begann, kam dort nie an — genau in der
+// dichten Mitte der Karte war sie damit nicht bedienbar. MapLibre hängt seine eigenen Marker aus
+// demselben Grund dort ein; die Koordinaten aus map.project() passen unverändert, weil der
+// Container selbst nicht verschoben wird.
+{
+  const host = document.getElementById('markers');
+  const canvasBox = map.getCanvasContainer();
+  if (host && canvasBox && canvasBox.appendChild) canvasBox.appendChild(host);
+}
+
 // Stationsnamen kürzen: "Darmstadt-Eberstadt Frankenstein" -> "Eberstadt Frankenstein"
 const shortStop = n => String(n == null ? '' : n).replace(/^Darmstadt[- ]/, '');
 const lineEnds = l => l.ends.map(shortStop).join(' ↔ ');
@@ -475,6 +503,11 @@ const lineEnds = l => l.ends.map(shortStop).join(' ↔ ');
 function selectLine(li) {
   state.selLine = state.selLine === li ? null : li;
   state.selAt = Date.now();        // Ruheuhr: 10 s nach der Auswahl kommen die Haltestellen zurück
+  // Eine Linienwahl ersetzt die Fahrzeugauswahl: sonst bleibt die Karte, die Verbindungslinie und
+  // der Zug der vorher angetippten Fahrt stehen, während die Linie hervorgehoben wird.
+  if (state.selLine !== null && window.DarmstadtLive && window.DarmstadtLive.clearVehicle) {
+    window.DarmstadtLive.clearVehicle();
+  }
   document.querySelectorAll('.chip').forEach(c => c.classList.toggle('sel', +c.dataset.line === state.selLine));
   const info = document.getElementById('selinfo');
   window.DarmstadtLive.render(true);
@@ -551,7 +584,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261014-20';
+  const APP_V = '20261015-01';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {

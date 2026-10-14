@@ -25,8 +25,10 @@ The map answers the question "where is *my* bus?" instead of drowning it in dots
 | **a line** (chip in the panel) | **only that line**, camera swings to it | hidden — after **10 s without any interaction** they come back, so the stripped view is never a dead end |
 | **a vehicle** (clicked on the map, or a stop in its card) | that vehicle highlighted, the rest faded | **only that vehicle's own next stops** |
 
-Any tap on the map, a drag or Escape clears the selection and restores the full view. The 10 s quiet
-timer lives in `state.selAt` and is shared by `index.html` and `live.js`.
+Any **tap on the map** or Escape clears the selection and restores the full view; a **drag** only
+restarts the quiet timer (`state.selAt`, shared by `index.html` and `live.js`), so a highlight is never
+lost just because the map moved. Picking a **line** replaces a vehicle selection: the card, the
+connector and the drawn run disappear before the line is highlighted.
 
 In realtime mode positions are **interpolated locally** between polls, so a 30 s poll interval
 still yields smooth movement.
@@ -45,18 +47,22 @@ still yields smooth movement.
   accent colour, in both languages, that positions are **derived from realtime stop prognoses** — the
   open feed carries no GPS. The credits are where a reader checks the source, so the note lives there
   too, not only in the card.
-- **Labelled vehicle markers, always on.** Every vehicle is a **white rounded pill** carrying a mode
-  pictogram (bus / tram / rail as inline SVG) and its line number in dark text — the pictogram tells you
-  what it is, so the colour is free for readability on the dark map. In the overview the pills shrink
-  slightly so they do not pile up. They are DOM elements positioned over the map, which is also why a
-  tap on a vehicle **always opens that vehicle**: the marker gets the tap before the map underneath, so
-  the stop behind it can no longer win, and a tap clears any line selection (you asked for the vehicle,
-  not the line).
+- **Labelled vehicle markers, always on.** Every vehicle is a rounded pill carrying a mode pictogram
+  (bus / tram / rail as inline SVG) and its line number in dark text. The pill takes the **colour of
+  its mode** — tram red, bus turquoise, rail purple, the same colours as the switches in the panel —
+  not the line's own colour: `meta.json` only carries three colours for 72 lines, so per-mode colour is
+  the honest description and keeps the map readable on a dark basemap. In the overview the pills shrink
+  slightly so they do not pile up. They are DOM elements positioned over the map, and they live **inside
+  the MapLibre canvas container**: that way a tap on a vehicle still opens that vehicle first, while a
+  pan, pinch or wheel gesture *starting on* a marker reaches MapLibre and still moves the map (as
+  siblings of `#map` they used to swallow every gesture that began on a marker).
 - **Stops are circled letters,** like the sign on the street: **H** in German (*Haltestelle*), **S** in
-  English (*station*) — one per stop, never per platform.
+  English (*station*) — one per stop, never per platform. The visible circle is 13 px; its tap target is
+  33 px (WCAG 2.2 asks for 24 px).
 - **Click a vehicle: the whole run of its line.** Besides the card, the map draws every stop of that
-  trip in order — the stretches already covered included — in the line's own colour, and removes it
-  again when the card closes.
+  trip in order — the stretches already covered included — using the trip's own **street geometry**
+  (`legGeometry`, decoded at 1e7), and removes it again when the card closes. Straight stop-to-stop
+  segments remain only as a fallback for trips that carry no geometry.
 - **One source, honestly labelled.** The map draws the open feed only. An operator feed with real
   coordinates exists (HEAG mobilo's app backend) but merging it produced duplicate markers for one
   vehicle, so it was removed again — the measurements and the clean rule for a retry are recorded in
@@ -71,8 +77,9 @@ still yields smooth movement.
   geometry from `/trip` at 1e7 — so the factor is passed at each call site and asserted in the tests.
 - **Realtime only.** Only vehicles that actually carry realtime data are drawn. Vehicles without
   realtime are dropped — a position derived solely from the timetable would be invented, not observed.
-- **Vehicle popup.** Tap a vehicle: line badge in its line colour, delay status
-  (`on time` / `+N min late` / `−N min early`), operator, and the **next 3 stops** with their
+- **Vehicle popup.** Tap a vehicle: line badge in its mode colour, delay status
+  (`on time` / `+N min late` / `−N min early`; **no scheduled time means “delay unknown”**, never a
+  claimed “on time”), operator, and the **next 3 stops** with their
   clock times and per-stop delay (fetched on demand from `/api/v1/trip`). The card opens next to
   the dot, follows the vehicle as it moves and stays inside the viewport.
 - **Connector line.** A thin dashed line runs from the card's bottom-left corner to the exact dot it
@@ -83,8 +90,10 @@ still yields smooth movement.
   no dragging there.
 - **Stations on the map.** Live mode draws the stops the feed publishes for the current view
   (`/api/v1/map/stops`) — real stop coordinates and stop ids, not our timetable dump. Tapping one
-  moves the camera onto it and opens a card with the **next departures**: line badge in the line
-  colour, destination, clock time, relative arrival and delay (from `/api/v1/stoptimes`). Tapping a
+  moves the camera onto it and opens a card with the **next departures**: line badge in the mode
+  colour, destination, clock time, relative arrival and delay (from `/api/v1/stoptimes`). A departure
+  that the operator reports as **cancelled** is struck through and labelled, and a row without realtime
+  data is tagged *scheduled* instead of pretending to be a live prediction. Tapping a
   stop inside a vehicle card jumps **instantly** (no camera animation) to that station and opens it.
 - **Short camera follow (desktop only).** On a computer, tapping a vehicle zooms onto it and follows
   it for 2 s, then releases; a wheel, drag, tap or Escape releases it immediately. On a phone there
@@ -103,11 +112,17 @@ still yields smooth movement.
   always sits in the same place (top-left, directly above the panel) and says what it does:
   `☰ Lines` opens, `✕ Close panel` closes. Tapping a vehicle *or picking a line* slides the panel
   away, so the map shows what you just chose. The header switches between *Lines* and
-  *Status & filters* so both fit without scrollbars, the card becomes a bottom sheet, all touch
-  targets are ≥40 px, safe-area insets are respected and hover-only tooltips are disabled on touch
-  devices.
+  *Status & filters* so both fit without scrollbars, the card becomes a bottom sheet, every **button**
+  is at least 40 px tall (stop dots are 13 px on screen with a 33 px tap target), safe-area insets are
+  respected and hover-only tooltips are disabled on touch devices.
 - **Honest labelling.** The popup states that positions are derived from realtime stop prognoses,
-  because the open feed contains no GPS.
+  because the open feed contains no GPS. The header badge and the status line say how old the data
+  really is: **fresh** (< 45 s, pulsing), **stale** (45 s – 2 min, grey and *not* pulsing) or
+  **out of date** (> 2 min, red, no pulse) — an outage can no longer look like a live feed. The status
+  line reports the **fetch** time (“fetched N s ago”), not the age of the data upstream, and a hop that
+  ended more than 90 s ago is dropped from the map instead of being drawn as if it were current.
+  The thresholds live in `live.js` (`STALE_MS`, `EXPIRED_MS`, `LEG_GRACE_MS`) and are named in the
+  credits box.
 - **Bounded map.** The map is not the world: it is bounded to the region the project actually
   covers — Darmstadt with Frankfurt/Wiesbaden/Mainz to the north and west, Aschaffenburg/Miltenberg
   to the east and Weinheim/Heidelberg to the south (`maxBounds [[7.85, 49.15], [9.45, 50.35]]`,
@@ -214,12 +229,18 @@ No build step; MapLibre and deck.gl come from jsDelivr.
 ## Verify
 
 ```bash
-node analysis/test_live.js        # loads docs/live.js, fetches real data, checks vehicles/positions/layers
-node analysis/test_ui.js          # realtime-only filtering, popup (races, timers, failures), XSS escaping,
-                                  # malformed API records, polling stop, + test_i18n + test_static
-node analysis/test_i18n.js        # EN/DE key coverage + hardcoded-string scan (offline)
-node analysis/test_static.js      # CSS for phones/scrollbars/legend sizing, status-pill contrast, assets,
-                                  # icons, basemap zoom cap (offline)
+node analysis/test_behaviour.js   # OFFLINE, deterministic: one end-to-end check per fixed defect
+                                  # (street geometry reaches the map, a late /trip draws no line,
+                                  # a dwelling vehicle survives the poll, departing rows tell the truth,
+                                  # camera swing on real positions, stop cache follows the vehicle,
+                                  # a refresh during a refresh is not dropped, version tokens in sync)
+node analysis/test_static.js      # OFFLINE: CSS for phones/scrollbars/legend sizing, status-pill contrast,
+                                  # assets, icons, basemap zoom cap
+node analysis/test_i18n.js        # OFFLINE: EN/DE key coverage + hardcoded-string scan
+node analysis/test_live.js        # ONLINE: loads docs/live.js, fetches real data, checks vehicles/positions/layers
+node analysis/test_ui.js          # ONLINE (real API): realtime-only filtering, popup (races, timers,
+                                  # failures), XSS escaping, malformed API records, polling stop,
+                                  # + test_i18n + test_static
 node analysis/check_tile_ceiling.js    # ONLINE: measures the basemap's real tile ceiling and fails if the
                                        # cap baked into index.html no longer matches
 node analysis/check_stations.js       # ONLINE: compares our station coordinates with the positions the

@@ -41,12 +41,16 @@
   const POPUP_REFRESH_MS = 30000;
   const WINDOW_MIN = 1;            // Zeitfenster je Anfrage (Nutzlast-Minimum)
   const MAX_SPAN = 0.28;           // max. bbox-Kantenlänge in Grad (verhindert 422)
-  const STALE_MS = 45000;          // ab wann Daten als veraltet gelten
+  const STALE_MS = 45000;          // ab wann Daten als veraltet gelten (Badge, Statuszeile)
+  const EXPIRED_MS = 120000;       // ab wann sie als überholt gelten (Badge, Banner)
+  const HOLD_MS = 150000;          // so lange bleibt ein Fahrzeug an seinem Halt stehen, wenn die
+                                   // Abfahrt des nächsten Abschnitts noch aussteht (Abschnittslücke)
+  const REQUEST_TIMEOUT_MS = 12000; // Frist je Abruf: ein hängender Abruf darf nicht alles blockieren
   const NEXT_STOPS = 3;            // das Popup zeigt die nächsten drei Halte (Wunsch des Betreibers)
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261014-20';
+  const VERSION = '20261015-01';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -66,7 +70,7 @@
   let ctx = null;
   let vehicles = [];
   let lastOk = 0, lastErr = null, failures = 0, lastPaint = 0;
-  let pollTimer = null, refreshTimer = null, refreshInFlight = false;
+  let pollTimer = null, refreshTimer = null, refreshInFlight = false, pendingRefresh = false;
   let lineIndex = null, viewBox = null;
   let stops = [];                        // Haltestellen aus dem Feed (echte Koordinaten, mit stopId)
   let popupVehicle = null, popupLeg = null, popupTimer = null, popupSeq = 0;
@@ -76,7 +80,7 @@
   let dragOff = null;                    // vom Nutzer verschobene Karte: Versatz zur Auto-Position
   let stopCache = null, stopCacheKey = '';   // zuletzt gezeichnete Haltestellen (nicht jeden Frame neu bauen)
   let lastSel = null;                    // nur für den Kamera-Schwenk bei neuer Linienwahl
-  // Die Ruheuhr liegt in ctx.state.selAt: Fahrplan- und Echtzeitmodus brauchen dieselbe Regel
+  // Die Ruheuhr liegt in ctx.state.selAt: Linienwahl und Kartenbewegung brauchen dieselbe Regel
   // ("gewählte Linie -> nur sie; nach 10 s ohne Interaktion kommen die Haltestellen zurück").
   let active = false, lastFrame = 0;
 
@@ -178,8 +182,20 @@
     return `min=${s.toFixed(4)},${w.toFixed(4)}&max=${n.toFixed(4)},${e.toFixed(4)}&zoom=${zoom}`;
   }
 
+  // Jede Anfrage bekommt eine Frist. Ohne sie blockierte ein einziger hängender Abruf mit
+  // refreshInFlight=true jeden weiteren Abruf (und damit die ganze Karte) bis zum Neuladen.
+  async function timedFetch(url, opts) {
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS) : null;
+    try {
+      return await fetch(url, ctrl ? Object.assign({}, opts, { signal: ctrl.signal }) : opts);
+    } finally { clearTimeout(timer); }
+  }
+
   async function refresh() {
-    if (refreshInFlight || !ctx || !active) return;   // nach dem Ausschalten kein Abruf mehr
+    if (!ctx) return;
+    if (refreshInFlight) { pendingRefresh = true; return; }   // Bewegung während des Abrufs nicht verwerfen
+    if (!active) return;                                       // nach dem Ausschalten kein Abruf mehr
     refreshInFlight = true;
     const now = Date.now();
     const t0 = new Date(now).toISOString().replace(/\.\d+Z$/, 'Z');
@@ -187,8 +203,8 @@
     try {
       const bb = bboxParams();
       const [res, stopsRes] = await Promise.all([
-        fetch(`${API}?${bb}&startTime=${t0}&endTime=${t1}`, { cache: 'no-store' }),
-        fetch(`${API_STOPS}?${bb}`, { cache: 'no-store' }).catch(() => null),
+        timedFetch(`${API}?${bb}&startTime=${t0}&endTime=${t1}`, { cache: 'no-store' }),
+        timedFetch(`${API_STOPS}?${bb}`, { cache: 'no-store' }).catch(() => null),
       ]);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const json = await res.json();
@@ -218,6 +234,7 @@
     } finally {
       refreshInFlight = false;
       updateStat();
+      if (pendingRefresh) { pendingRefresh = false; scheduleRefresh(0); }   // nachgeholter Abruf
     }
   }
 
@@ -238,7 +255,16 @@
       const tid = tr.tripId || (t.from && t.from.stopId) + '|' + t.departure;
       const prev = byTrip.get(tid);
       const running = dep <= nowMs;
-      if (prev && !(running && !prev.running)) continue;      // pro Fahrt genau ein Abschnitt
+      // Zwischen zwei Abschnitten (Fahrzeug steht am Halt, Abfahrt des nächsten Abschnitts noch
+      // offen) lieferte der Feed keinen laufenden Abschnitt — der Punkt verschwand bei jedem Abruf
+      // und eine offene Karte schloss sich. Der nächste Abschnitt steht schon in der Nutzlast:
+      // solange er bald beginnt, bleibt das Fahrzeug an seinem Halt stehen (u=0).
+      const holding = !running && dep - nowMs <= HOLD_MS;
+      if (!running && !holding) continue;
+      if (prev) {
+        if (prev.running && !running) continue;              // der laufende Abschnitt hat Vorrang
+        if (prev.running === running) continue;              // sonst gewinnt der erste Eintrag dieser Art
+      }
       // Faktor 1e5: so kodiert /map/trips seine Abschnitte. Falscher Faktor -> alle Positionen liegen
       // weit außerhalb des Ausschnitts und die Karte bleibt leer.
       const path = decodePolyline(t.polyline, 1e5);
@@ -252,10 +278,11 @@
         if (p[1] < viewBox.s - padLat || p[1] > viewBox.n + padLat ||
             p[0] < viewBox.w - padLon || p[0] > viewBox.e + padLon) continue;
       }
-      const sched = t.scheduledDeparture ? num(t.scheduledDeparture) : dep;
+      // Ohne Soll-Zeit gibt es keine Verspätung — sie darf nie als "Pünktlich" (0) erscheinen.
+      const sched = t.scheduledDeparture ? num(t.scheduledDeparture) : NaN;
       const delayMin = Number.isFinite(sched) ? Math.round((dep - sched) / 60000) : null;  // null = unbekannt
       byTrip.set(tid, {
-        tripId: tid, mode, running,
+        tripId: tid, mode, running, holding,
         lineName: String(tr.routeShortName || '?'),
         headsign: String(tr.headsign || ''),
         dest: String((t.to && t.to.name) || ''),
@@ -265,7 +292,7 @@
         lineIdx: matchLine(tr.routeShortName, mode),
       });
     }
-    return Array.from(byTrip.values()).filter(v => v.running);   // nur fahrende Fahrzeuge
+    return Array.from(byTrip.values()).filter(v => v.running || v.holding);   // fahrend oder am Halt wartend
   }
 
   // Der Feed liefert je Bahnsteig/Kante einen Eintrag. Am Hauptbahnhof waren das 16 Einträge für
@@ -322,14 +349,6 @@
   }
 
   // ---------- Darstellung
-  function delayColor(d) {
-    if (d === null) return [150, 155, 170];
-    if (d >= 5) return [255, 90, 80];
-    if (d >= 1) return [255, 209, 102];
-    if (d <= -1) return [120, 220, 160];
-    return [230, 235, 245];
-  }
-
   // ---------- Fahrzeugmarken und Haltestellen als DOM-Elemente ----------
   // Warum nicht als deck.gl-Textlayer: dessen Hintergrund ist ein Rechteck ohne Rundung, und deck.gl
   // kennt keine eigenen Sinnbilder — die Marken waren deshalb eckig und ohne Verkehrsart. Als
@@ -481,7 +500,10 @@
     // Bei gewähltem Fahrzeug nur dessen eigene Halte zeigen (nicht das ganze Netz)
     // Nur neu berechnen, wenn sich wirklich etwas geändert hat: sonst schiebt deck.gl die
     // Haltestellen-Ebene 30-mal pro Sekunde neu hoch, obwohl sie still steht (spürbare Last).
-    const stopKey = `${focusTrip || ''}|${sel}|${relaxed ? 1 : 0}|${(popupStopList || []).length}|${stops.length}`;
+    // Der Schlüssel muss die Haltestellen selbst abbilden: mit der Anzahl allein (vorher
+    // popupStopList.length) blieb eine Karte mit gleich vielen, aber anderen Halten stehen.
+    const stopKey = `${focusTrip || ''}|${sel}|${relaxed ? 1 : 0}|${
+      (popupStopList || []).map(s => s.stopId || s.full || s.name || '').join(',')}|${stops.length}`;
     if (stopKey !== stopCacheKey) {
       stopCacheKey = stopKey;
       stopCache = focusTrip
@@ -511,7 +533,6 @@
     // Marken und Halte zuletzt: als DOM-Elemente liegen sie über der Karte und bekommen den Tipp
     // zuerst — deshalb öffnet ein Tipp auf ein Fahrzeug immer das Fahrzeug, nie den Halt dahinter.
     renderMarkers(vis, shownStops, focusTrip);
-    ctx.overlay.setProps({ layers, onHover: hover, onClick: click, getCursor: cursor });
     ctx.overlay.setProps({ layers, onHover: hover, onClick: click, getCursor: cursor });
     if (force || Date.now() - lastPaint > 1000) {     // Statistik nur ~1x je Sekunde neu zeichnen
       lastPaint = Date.now();
@@ -643,14 +664,15 @@
       .filter(s => s.time && num(s.time) >= now - 45000)
       .slice(0, NEXT_STOPS)
       .map(s => {
-        const tm = num(s.time), sc = s.sched ? num(s.sched) : tm;
+        const tm = num(s.time), sc = s.sched ? num(s.sched) : NaN;
         return {
           name: ss(s.name), time: tm, full: s.name,       // vollständiger Name für den Sprung zum Halt
           // Die Halte der Fahrt bringen Koordinaten und ihre Kennung mit -> direkt dorthin springen
           lat: s.stop && Number.isFinite(s.stop.lat) ? s.stop.lat : null,
           lon: s.stop && Number.isFinite(s.stop.lon) ? s.stop.lon : null,
           stopId: (s.stop && s.stop.stopId) || null,
-          delay: Number.isFinite(sc) ? Math.round((tm - sc) / 60000) : null,
+          // Keine Soll-Zeit -> Verspätung unbekannt; sie darf nicht als 0 ("pünktlich") erscheinen.
+          delay: Number.isFinite(sc) && Number.isFinite(tm) ? Math.round((tm - sc) / 60000) : null,
           inMin: Math.round((tm - now) / 60000),
           cancelled: !!s.cancelled,
         };
@@ -668,6 +690,9 @@
       startTime: leg.startTime, endTime: leg.endTime,
       scheduledStartTime: leg.scheduledStartTime, scheduledEndTime: leg.scheduledEndTime,
       intermediateStops: Array.isArray(leg.intermediateStops) ? leg.intermediateStops : [],
+      // Die Straßengeometrie MUSS mit: ohne sie fällt tripChain auf gerade Linien zwischen den
+      // Halten zurück und die "straßenfolgende" Linie war nie zu sehen (das war der Fehler).
+      legGeometry: leg.legGeometry || null,
     };
   }
 
@@ -849,8 +874,12 @@
 
   // Zur gewählten Linie schwenken: sonst muss man den Bus zwischen allen Punkten suchen
   function focusLine(idx, list) {
-    if (!ctx.map.fitBounds || !window.maplibregl) return;
-    const pts = (list || vehiclesAt(Date.now())).filter(d => d.v.lineIdx === idx).map(d => [d.v.lon, d.v.lat]);
+    if (!ctx || !ctx.map.fitBounds || !window.maplibregl) return;
+    // Die berechneten Punkte tragen ihre Position als [lon, lat] in `pos` — vorher stand hier
+    // d.v.lon/d.v.lat, Felder, die es nie gab: der Schwenk brach mit NaN ab und wurde verschluckt.
+    const pts = (list || vehiclesAt(Date.now()))
+      .filter(d => d.v.lineIdx === idx && d.pos && Number.isFinite(d.pos[0]) && Number.isFinite(d.pos[1]))
+      .map(d => d.pos);
     if (!pts.length) return;
     try {
       const b = new window.maplibregl.LngLatBounds(pts[0], pts[0]);
@@ -890,18 +919,29 @@
 
   // ---------- Haltestellenkarte: Kamera zum Halt, nächste Abfahrten aus demselben Feed
   function departureRow(e) {
-    const dep = Date.parse(e.place.departure);
-    const sched = e.place.scheduledDeparture ? Date.parse(e.place.scheduledDeparture) : dep;
-    const delay = Number.isFinite(sched) ? Math.round((dep - sched) / 60000) : null;
+    const place = e.place || {};
+    const dep = Date.parse(place.departure);
+    const sched = place.scheduledDeparture ? Date.parse(place.scheduledDeparture) : NaN;
+    // Ohne Soll-Zeit ist die Verspätung unbekannt — sie darf nicht als 0 ("pünktlich") erscheinen.
+    const delay = Number.isFinite(sched) && Number.isFinite(dep) ? Math.round((dep - sched) / 60000) : null;
     const inMin = Math.round((dep - Date.now()) / 60000);
     const line = String(e.routeShortName || '?').replace(/\s*\(.*?\)/, '');
     const col = /^[0-9a-fA-F]{6}$/.test(String(e.routeColor || '')) ? '#' + e.routeColor : '#8a90a0';
-    const rel = inMin >= 0 && inMin <= 90 ? (inMin <= 0 ? T('popup.stopNow') : T('popup.inMin', { n: inMin })) : '';
-    return `<li><span class="st-line" style="background:${esc(col)}">${esc(line)}</span>` +
-      `<span class="st-name">${esc(ss(e.headsign || ''))}</span>` +
+    // Ausfall: der Halt oder die ganze Fahrt ist abgesagt. Vorher stand so eine Abfahrt wie jede
+    // andere da — die Liste behauptete eine Fahrt, die nicht stattfindet.
+    const cancelled = !!(place.cancelled || place.tripCancelled || e.tripCancelled);
+    // realTime=false heißt: es gibt nur die Fahrplanzeit, keine Echtzeitprognose. Kennzeichnen.
+    const scheduledOnly = place.realTime === false || e.realTime === false;
+    const rel = cancelled ? T('station.cancelled')
+      : inMin >= 0 && inMin <= 90 ? (inMin <= 0 ? T('popup.stopNow') : T('popup.inMin', { n: inMin })) : '';
+    const tag = scheduledOnly ? `<span class="st-tag">${esc(T('popup.scheduled'))}</span>` : '';
+    const dly = cancelled ? '⚠' : delay === null ? '–' : delay === 0 ? '·' : delay > 0 ? '+' + delay : String(delay);
+    return `<li${cancelled ? ' class="st-cancel"' : ''}>` +
+      `<span class="st-line" style="background:${esc(col)}">${esc(line)}</span>` +
+      `<span class="st-name">${esc(ss(e.headsign || ''))}${tag}</span>` +
       `${rel ? `<span class="st-rel">${esc(rel)}</span>` : ''}` +
       `<span class="st-clock">${clock(dep)}</span>` +
-      `<span class="st-dly ${delay === null ? 'unknown' : delayClass(delay)}">${delay === null || delay === 0 ? '·' : delay > 0 ? '+' + delay : delay}</span></li>`;
+      `<span class="st-dly ${cancelled ? 'cancelled' : delay === null ? 'unknown' : delayClass(delay)}">${dly}</span></li>`;
   }
 
   // Stationsebene ("…:16017") oder Steig ("…:16017:2:3")? Der Stationshalt liefert das ganze
@@ -966,7 +1006,7 @@
     if (geoCache.has(key)) return geoCache.get(key);
     let hit = null;
     try {
-      const res = await fetch(`${API_GEOCODE}?text=${encodeURIComponent(name)}&type=STOP`, { cache: 'no-store' });
+      const res = await timedFetch(`${API_GEOCODE}?text=${encodeURIComponent(name)}&type=STOP`, { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         const arr = Array.isArray(data) ? data : (data.results || []);
@@ -1011,7 +1051,7 @@
       return;
     }
     try {
-      const res = await fetch(`${API_STOPTIMES}?stopId=${encodeURIComponent(stop.stopId)}&n=4`, { cache: 'no-store' });
+      const res = await timedFetch(`${API_STOPTIMES}?stopId=${encodeURIComponent(stop.stopId)}&n=4`, { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const json = await res.json();
       if (seq !== popupSeq || !popupStation) return;
@@ -1066,24 +1106,31 @@
     if (v.opOnly) {
       leg = { operator: true };            // nur der Betreiberpunkt: der offene Strom kennt keine Fahrt
     } else try {
-      const res = await fetch(`${API_TRIP}?tripId=${encodeURIComponent(v.tripId)}`, { cache: 'no-store' });
+      const res = await timedFetch(`${API_TRIP}?tripId=${encodeURIComponent(v.tripId)}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       leg = pickLeg(await res.json(), v) || { error: 'noLegs' };
     } catch (err) {
       leg = { error: (err && err.message) || 'error' };
     }
-    // Volle Länge der Linie: alle Halte dieser Fahrt in Reihenfolge, auch die schon durchfahrenen.
-    popupChain = tripChain(leg);
-    chainCache = popupChain ? [popupChain] : [];
+    // Achtung: eine verspätete Antwort darf die Linie NICHT zeichnen. Vorher wurden popupChain und
+    // chainCache vor der Prüfung auf popupSeq gesetzt — eine Antwort für eine schon geschlossene
+    // oder ersetzte Karte hinterließ einen Geisterzug auf der Karte.
     if (v.opOnly) {                          // Betreiberpunkt: kein Fahrtabruf, kein Auffrisch-Timer
       if (seq !== popupSeq || !popupVehicle) return;
       popupLeg = leg;
+      popupChain = null; chainCache = [];
       paintPopup(false);
       popupTimer = setTimeout(popupTick, POPUP_REFRESH_MS);
       return;
     }
     if (seq !== popupSeq || !popupVehicle) return;     // veraltet: Popup zu oder anderes Fahrzeug
-    if (!(refreshing && leg.error && popupLeg && !popupLeg.error)) popupLeg = leg;  // Aussetzer: alte Liste behalten
+    // Volle Länge der Linie: alle Halte dieser Fahrt in Reihenfolge, auch die schon durchfahrenen.
+    // Nur bei brauchbarer Antwort neu setzen — ein Aussetzer behält Liste und Linie.
+    if (!(refreshing && leg.error && popupLeg && !popupLeg.error)) {
+      popupLeg = leg;
+      popupChain = tripChain(leg);
+      chainCache = popupChain ? [popupChain] : [];
+    }
     paintPopup(false);
     popupTimer = setTimeout(popupTick, POPUP_REFRESH_MS);
   }
@@ -1168,13 +1215,26 @@
     c.fillText(T('delayHistogram'), Math.max(4, w - 260), 10);
   }
 
+  // Frischezustand der Daten: frisch / veraltet / überholt. Er steuert das Badge und die Statuszeile
+  // und ist die einzige Stelle, an der "Echtzeit" ehrlich werden kann. Reine Rechnung (testbar).
+  function freshness(age) {
+    if (age === null) return 'waiting';
+    if (age > EXPIRED_MS) return 'expired';
+    if (age > STALE_MS) return 'stale';
+    return 'fresh';
+  }
+
   function updateStat() {
     const el = document.getElementById('livestat2');
-    if (!el) return;
     const age = lastOk ? Math.round((Date.now() - lastOk) / 1000) : null;
-    const stale = lastOk && Date.now() - lastOk > STALE_MS;
+    // Ein Fehlversuch zählt sofort als "nicht frisch" — sonst leuchtete das Badge während eines
+    // Ausfalls weiter, als käme gerade etwas an.
+    const state = failures ? (age !== null && age * 1000 > STALE_MS ? 'expired' : 'stale') : freshness(age !== null ? age * 1000 : null);
+    const badge = document.getElementById('livebadge');
+    if (badge && badge.dataset) badge.dataset.state = state;
+    if (!el) return;
     el.textContent = age === null ? T('waiting')
-      : T('updatedAgo', { s: age }) + (stale ? ' · ' + T('stale') : '') +
+      : T('fetchedAgo', { s: age }) + (state === 'expired' ? ' · ' + T('expired') : state === 'stale' ? ' · ' + T('stale') : '') +
         (failures ? ' · ' + T('failedAttempts', { n: failures }) : '');
   }
 
@@ -1235,6 +1295,9 @@
     },
     refresh,
     setOn(on) { on ? start() : stop(); },
+    // Eine Linienwahl ersetzt die Fahrzeugauswahl: sonst blieben Karte, Verbindungslinie und
+    // Zug der vorher angeklickten Fahrt stehen, während die Linie hervorgehoben wird.
+    clearVehicle() { stopFollow(); closePopup(); },
     setLang() {                             // nach Sprachwechsel: Statistik, Histogramm, Popup neu beschriften
       if (ctx) render(true);
       if (popupVehicle) paintPopup(false);  // aus dem Zwischenspeicher, kein neuer Abruf
@@ -1259,6 +1322,7 @@
       };
     },
     _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell,
+             departureRow, stationShell, freshness, focusLine,
              dedupeStops, markers: () => markerLog, markerNode: () => markerBox, markerHtml,
              syncMarkers: () => syncMarkerPositions(), decodePolyline,
              tapVehicle, tapStop,
