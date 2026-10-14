@@ -70,6 +70,14 @@ still yields smooth movement.
   devices.
 - **Honest labelling.** The popup states that positions are derived from realtime stop prognoses,
   because the open feed contains no GPS.
+- **Bounded map.** The map is not the world: it is bounded to the region the project actually
+  covers — Darmstadt with Frankfurt/Wiesbaden/Mainz to the north and west, Aschaffenburg/Miltenberg
+  to the east and Weinheim/Heidelberg to the south (`maxBounds [[7.85, 49.15], [9.45, 50.35]]`,
+  `minZoom: 9`, `renderWorldCopies: false`). Panning was unbounded before, so you could drag north
+  forever. The numbers come from measurement, not taste: `analysis/measure_extent.js` scans the feed
+  over a grid wider than the expected data space and reports where the lines we draw really end.
+  Note that the feed returns *whole trips*, so a through-running train brings hop geometry from far
+  away — another reason to bound the view (our own metadata spans lat 49.29–50.23, lon 8.24–9.28).
 
 ## Files
 
@@ -172,6 +180,8 @@ node analysis/check_tile_ceiling.js    # ONLINE: measures the basemap's real til
                                        # cap baked into index.html no longer matches
 node analysis/check_stations.js       # ONLINE: compares our station coordinates with the positions the
                                       # feed publishes for the same stops (median deviation 10 m)
+node analysis/measure_extent.js       # ONLINE: scans the feed over a wide grid and reports how far the
+                                      # lines we draw actually reach (source of the map's maxBounds)
 python3 analysis/where_is_vehicle.py   # proves: polyline == hop geometry, no position field
 python3 analysis/hop_structure.py      # hop/vehicle structure, payload per time window
 python3 analysis/poll_shape.py         # payload vs. time window and bbox limits

@@ -179,6 +179,16 @@ function run(check, log = console.log) {
   check('attribution credits only sources we actually use (no stale pfaedle shapes)',
     !/pfaedle/.test(i18nSrc) && /attributionLive/.test(i18nSrc) && /CARTO/.test(i18nSrc));
   check('attribution toggle is thumb-sized on phones', /#attribbtn \{[^}]*width: 34px/.test(mob));
+  // Der Kartenraum ist begrenzt: vorher ließ sich die Karte endlos (auch nach oben) schieben.
+  {
+    const mb = (html.match(/maxBounds: \[\[([-\d.]+), ([-\d.]+)\], \[([-\d.]+), ([-\d.]+)\]\]/) || []).slice(1).map(Number);
+    const [w, s, e, n] = mb;
+    console.log(`  maxBounds: west ${w} süd ${s} ost ${e} nord ${n}`);
+    check('map bounds are set (no endless panning)',
+      mb.length === 4 && s < n && w < e && (n - s) > 0.5 && (n - s) < 3 && (e - w) > 0.5 && (e - w) < 3);
+    check('map bounds cover Darmstadt', s < 49.872 && n > 49.872 && w < 8.652 && e > 8.652);
+    check('zoom-out is limited and the world is not repeated', /minZoom: [1-9]\d*/.test(html) && /renderWorldCopies: false/.test(html));
+  }
   check('chosen line swings the camera to its vehicles',
     /function focusLine\(/.test(liveSrc) && /fitBounds\(b, \{ padding: 72, maxZoom: 14\.5/.test(liveSrc));
 
