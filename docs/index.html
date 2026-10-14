@@ -25,7 +25,7 @@
   #map { position: absolute; inset: 0; }
   .panel { position: absolute; z-index: 2; background: var(--panel); backdrop-filter: blur(10px);
     border: 1px solid var(--line); border-radius: 14px; }
-  #head { top: 11px; left: 14px; padding: 12px 15px; max-width: 320px; }
+  #head { top: 6px; left: 12px; padding: 10px 13px; max-width: 300px; }
   #head h1 { margin: 0 0 2px; font-size: 17px; font-weight: 650; letter-spacing: .01em; }
   #head p { margin: 0; color: var(--muted); font-size: 12.5px; }
   .sec { margin-top: 14px; }
@@ -47,7 +47,13 @@
   #legend-sec { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   /* Eigene Scrollfläche der Linienliste. Ohne flex/min-height schrumpft sie im Panel auf wenige
      Pixel — der Balken wird dann ein kaum greifbarer Splitter und die Linien sind nicht wählbar. */
-  #legend { flex: 1 1 auto; min-height: 150px; overflow-y: auto; margin-right: -8px; padding-right: 10px; scrollbar-gutter: stable; }
+  #legend { flex: 1 1 auto; min-height: 190px; max-height: 46vh; overflow-y: auto; margin-right: -8px; padding-right: 10px; scrollbar-gutter: stable; }
+  /* Darstellungsebene (Status, Filter, Statistik): eingeklappt, damit die Linienliste oben bleibt */
+  #presentation > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; padding: 6px 0; }
+  #presentation > summary::-webkit-details-marker { display: none; }
+  #presentation > summary::before { content: "▸"; color: var(--muted); font-size: 10px; width: 10px; transition: transform .15s; }
+  #presentation[open] > summary::before { transform: rotate(90deg); }
+  #presentation > summary.lbl { margin-bottom: 0; }
   #legend details { border-top: 1px solid var(--line); }
   #legend summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
     padding: 9px 0; font-size: 12.5px; user-select: none; }
@@ -99,7 +105,7 @@
   #lang .seg button { padding: 7px 11px; font-size: 12.5px; font-weight: 600; min-width: 40px; }
 
   /* --- Fahrzeug-Popup: sitzt am angeklickten Fahrzeug (Position setzt live.js), Telefon: Bottom-Sheet --- */
-  #popup { display: none; z-index: 6; padding: 9px 11px 10px; width: 238px; max-width: 238px;
+  #popup { display: none; z-index: 6; padding: 10px 12px 11px; width: 304px; max-width: 304px;
     left: -9999px; top: 0; scrollbar-gutter: stable; }
   #popup.on { display: block; }
   .pop-head { display: flex; align-items: center; gap: 8px; }
@@ -118,6 +124,8 @@
   .pop-stops .st-line { font-size: 10px; font-weight: 700; color: #111; padding: 1px 6px; border-radius: 5px;
     flex: none; min-width: 26px; text-align: center; }
   .pop-stops .st-time { font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
+  .pop-stops .st-clock { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 650; flex: none; }
+  .pop-stops .st-rel { color: var(--muted); font-size: 11.5px; flex: none; }
   .pop-stops .st-dly { font-variant-numeric: tabular-nums; font-weight: 600; flex: none; min-width: 34px; text-align: right; }
   .pop-stops .st-dly.late { color: #ff9b93; }
   .pop-stops .st-dly.ontime { color: #86e0a8; }
@@ -164,29 +172,39 @@
   /* Fahrplan-Modus: keine Echtzeit-Statistik stehen lassen (wäre eingefrorener Live-Stand) */
   body:not(.live) #livestat, body:not(.live) #livestat2 { display: none; }
 
-  /* --- Telefon: kompakte Karte oben, Bottom-Sheet unten, große Ziele --- */
+  /* --- Telefon: Linienliste zuerst, eine einzige Scrollfläche, große Ziele --- */
   @media (max-width: 700px) {
-    #head { top: calc(10px + env(safe-area-inset-top)); left: 10px; right: 74px; padding: 11px 13px; max-width: none; overflow-y: auto; }
+    /* Ein Scrollbereich für den ganzen Kopf. Vorher hatte die Linienliste einen eigenen, winzigen
+       Scrollbalken und war auf dem Telefon zusätzlich komplett ausgeblendet. */
+    #head { top: calc(6px + env(safe-area-inset-top)); left: 8px; right: 72px; padding: 9px 11px 10px;
+      max-width: none; max-height: 62vh; overflow-y: auto; overscroll-behavior: contain; }
     #head h1 { font-size: 15px; }
     #head p { font-size: 11.5px; }
-    #legend-sec { display: none; }
-    #toggles { gap: 4px; }
+    #legend { overflow: visible; max-height: none; min-height: 0; margin-right: 0; padding-right: 0; scrollbar-gutter: auto; }
+    #legend summary { padding: 12px 0; font-size: 14px; min-height: 44px; }
+    #legend .chips { gap: 6px; padding: 0 0 12px 0; }
+    .chip { font-size: 13.5px; padding: 9px 13px; min-height: 40px; border-radius: 8px; }
+    #legend summary .n { font-size: 12px; }
+    #presentation > summary { padding: 10px 0; min-height: 40px; }
+    #toggles { gap: 6px; }
     .tog { padding: 6px 9px; font-size: 12px; min-height: 40px; }
     .pop-close { min-width: 40px; min-height: 40px; font-size: 14px; }
     #counts { gap: 14px; }
     .cnt b { font-size: 19px; }
     .cnt span { font-size: 10.5px; }
-    #lang { top: calc(10px + env(safe-area-inset-top)); right: 10px; padding: 4px; }
+    #lang { top: calc(6px + env(safe-area-inset-top)); right: 8px; padding: 4px; }
     #lang .seg button { padding: 9px 10px; min-width: 42px; }
-    #bar { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); padding: 10px 12px 11px; }
+    #bar { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); padding: 9px 12px 10px; }
     #row { gap: 8px; }
-    #clock { font-size: 24px; min-width: 72px; }
+    #clock { font-size: 22px; min-width: 64px; }
     .seg button { padding: 9px 11px; min-height: 40px; }
-    #timeline { height: 40px; }
+    #timeline { height: 36px; }
     #popup { left: 8px; right: 8px; top: auto; width: auto; max-width: none; bottom: calc(var(--bar-h, 104px) + 16px + env(safe-area-inset-bottom)); max-height: 46vh; overflow-y: auto; }
     .pop-stops { max-height: none; }
     #banner { top: calc(70px + env(safe-area-inset-top)); font-size: 12px; }
     #tip { display: none !important; }        /* auf Touch gibt es nur das Popup */
+    /* Im Echtzeitmodus braucht das Telefon keine Fahrplan-Regler — die Leiste bleibt schmal */
+    body.live #daywrap, body.live #speedwrap, body.live #play { display: none; }
   }
   @media (min-width: 701px) {
     #popup { max-height: 44vh; overflow-y: auto; }   /* Position und Breite kommen aus live.js/CSS-Basis */
@@ -205,37 +223,43 @@
 
 <div id="head" class="panel">
   <h1><span data-i18n="appTitle">Darmstadt Live Map</span><span class="badge-live" id="livebadge"><i></i><span id="livebadgetxt" data-i18n="modeLive">Realtime</span></span></h1>
-  <p data-i18n="subtitle">Tram, bus and regional rail — from the open realtime feed</p>
-  <div class="sec">
-    <div class="lbl" data-i18n="dataSource">Data</div>
-    <div class="seg" id="mode">
-      <button data-live="1" class="on" data-i18n="modeLive">Realtime</button><button data-live="0" data-i18n="modeSchedule">Timetable</button>
-    </div>
-    <div id="livestat2" data-i18n="waiting">waiting for first data …</div>
-    <div id="routenote" class="pop-note"></div>
-  </div>
-  <div class="sec">
-    <div class="lbl" data-i18n="heading">On the road now</div>
-    <div id="counts">
-      <div class="cnt" data-mode="tram"><b id="n-tram">0</b><span><i style="background:var(--tram)"></i><span data-i18n="trams">Trams</span></span></div>
-      <div class="cnt" data-mode="bus"><b id="n-bus">0</b><span><i style="background:var(--bus)"></i><span data-i18n="buses">Buses</span></span></div>
-      <div class="cnt" data-mode="rail"><b id="n-rail">0</b><span><i style="background:var(--rail)"></i><span data-i18n="trains">Trains</span></span></div>
-    </div>
-    <div class="livestat" id="livestat"></div>
-  </div>
-  <div class="sec">
-    <div class="lbl" data-i18n="showOnMap">Show on map</div>
-    <div id="toggles">
-      <button class="tog" data-mode="tram" aria-pressed="true"><span class="box"></span><i style="background:var(--tram)"></i><span data-i18n="togTram">Tram</span></button>
-      <button class="tog" data-mode="bus" aria-pressed="true"><span class="box"></span><i style="background:var(--bus)"></i><span data-i18n="togBus">Bus</span></button>
-      <button class="tog" data-mode="rail" aria-pressed="true"><span class="box"></span><i style="background:var(--rail)"></i><span data-i18n="togRail">Regional rail</span></button>
-    </div>
-  </div>
+
+  <!-- Linienliste steht bewusst ganz oben: sie ist das wichtigste Bedienelement, nicht die Statistik -->
   <div class="sec" id="legend-sec">
-    <div class="lbl" data-i18n="highlightLine">Highlight line</div>
+    <div class="lbl" data-i18n="legendTitle">Lines</div>
     <div id="selinfo"><span id="selname"></span><button id="selclear" data-i18n-title="clear" data-i18n-aria="clear" aria-label="Clear highlight">✕</button></div>
     <div id="legend"></div>
   </div>
+
+  <!-- Darstellungsebene: auf dem Telefon standardmäßig eingeklappt (siehe index.html-Skript) -->
+  <details class="sec" id="presentation" open>
+    <summary class="lbl" data-i18n="presentation">Status &amp; filters</summary>
+    <p data-i18n="subtitle">Tram, bus and regional rail — from the open realtime feed</p>
+    <div class="sec">
+      <div class="seg" id="mode">
+        <button data-live="1" class="on" data-i18n="modeLive">Realtime</button><button data-live="0" data-i18n="modeSchedule">Timetable</button>
+      </div>
+      <div id="livestat2" data-i18n="waiting">waiting for first data …</div>
+      <div id="routenote" class="pop-note"></div>
+    </div>
+    <div class="sec">
+      <div class="lbl" data-i18n="showOnMap">Show on map</div>
+      <div id="toggles">
+        <button class="tog" data-mode="tram" aria-pressed="true"><span class="box"></span><i style="background:var(--tram)"></i><span data-i18n="togTram">Tram</span></button>
+        <button class="tog" data-mode="bus" aria-pressed="true"><span class="box"></span><i style="background:var(--bus)"></i><span data-i18n="togBus">Bus</span></button>
+        <button class="tog" data-mode="rail" aria-pressed="true"><span class="box"></span><i style="background:var(--rail)"></i><span data-i18n="togRail">Regional rail</span></button>
+      </div>
+    </div>
+    <div class="sec">
+      <div class="lbl" data-i18n="heading">On the road now</div>
+      <div id="counts">
+        <div class="cnt" data-mode="tram"><b id="n-tram">0</b><span><i style="background:var(--tram)"></i><span data-i18n="trams">Trams</span></span></div>
+        <div class="cnt" data-mode="bus"><b id="n-bus">0</b><span><i style="background:var(--bus)"></i><span data-i18n="buses">Buses</span></span></div>
+        <div class="cnt" data-mode="rail"><b id="n-rail">0</b><span><i style="background:var(--rail)"></i><span data-i18n="trains">Trains</span></span></div>
+      </div>
+      <div class="livestat" id="livestat"></div>
+    </div>
+  </details>
 </div>
 
 <div id="bar" class="panel">
@@ -667,6 +691,11 @@ function setLive(on) {
   for (const id of ['head', 'bar', 'popup']) {
     const n = document.getElementById(id);
     if (n) n.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
+  }
+  // Auf dem Telefon ist die Darstellungsebene eingeklappt: die Linienliste gehört nach oben.
+  if (window.innerWidth <= 700) {
+    const pres = document.getElementById('presentation');
+    if (pres) pres.open = false;
   }
   document.querySelectorAll('#lang button').forEach(b => b.onclick = () => window.I18N.set(b.dataset.lang));
   setAttribution();

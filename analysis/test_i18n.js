@@ -178,6 +178,15 @@ function run(check, log = console.log) {
   const emptyVals = [...en.keys()].filter(k => !sb.I18N.t(k)).concat();
   check('no empty strings', emptyVals.length === 0, emptyVals.join(', '));
 
+  // A template placeholder must never reach the UI: rendering a key without values has to come back
+  // clean (this is what produced a visible "{n} lines" in the legend).
+  const leaked = [];
+  for (const [k] of en) {
+    const out = sb.I18N.t(k);
+    if (typeof out === 'string' && /\{[a-z]+\}/i.test(out)) leaked.push(`${k} -> ${out}`);
+  }
+  check('no key renders a literal placeholder when called without values', leaked.length === 0, leaked.slice(0, 5).join('; '));
+
   // used keys
   const used = new Map();
   const add = (k, where) => { if (!used.has(k)) used.set(k, new Set()); used.get(k).add(where); };
@@ -198,7 +207,14 @@ function run(check, log = console.log) {
   for (const lang of ['en', 'de']) {          // rendered value must never be the raw key
     sb.I18N.set(lang);
     const lookup = k => k.split('.').reduce((o, p) => o && o[p], S[lang]);
-    const raw = [...used.keys()].filter(k => typeof lookup(k) !== 'string' || sb.I18N.t(k) !== lookup(k));
+    const raw = [...used.keys()].filter(k => {
+      const val = lookup(k);
+      if (typeof val !== 'string') return true;                        // fehlt oder kein String
+      // Schlüssel mit Platzhalter werden hier ohne Werte aufgerufen: dann darf nur kein offener
+      // Platzhalter übrig bleiben (das Sicherheitsnetz entfernt ihn), sonst muss alles passen.
+      if (/\{[a-z]+\}/i.test(val)) return sb.I18N.t(k).includes('{');
+      return sb.I18N.t(k) !== val;
+    });
     check(`[${lang}] every referenced key resolves to its own ${lang} string (no raw key, no fallback)`, raw.length === 0, raw.join(', '));
   }
   sb.I18N.set('en');

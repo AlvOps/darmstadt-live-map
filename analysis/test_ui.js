@@ -147,7 +147,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     const rows = (p.innerHTML.match(/class="st-name"/g) || []).length;
     console.log(`  Haltezeilen im Popup: ${rows}`);
     check('Popup zeigt höchstens die nächsten drei Halte', rows >= 1 && rows <= 3);
-    check('Popup nennt die Uhrzeiten der Halte', /class="st-time"/.test(p.innerHTML));
+    check('Popup nennt die Uhrzeiten der Halte', /class="st-clock"/.test(p.innerHTML));
     check('Popup nennt Status und Verspätung als Wort', /On time|Delayed|Early/.test(p.innerHTML));
 
     console.log('\n=== Kamera folgt dem Fahrzeug, gibt nach 2 s frei ===');
@@ -212,7 +212,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     const sh = el('popup').innerHTML;
     check('Karte nennt Halt, Abfahrtsüberschrift und Linienbadge',
       /class="st-line"/.test(sh) && sh.includes(sandbox.I18N.t('station.departures')));
-    check('Karte nennt Uhrzeiten der Abfahrten', /class="st-time"/.test(sh));
+    check('Karte nennt Uhrzeiten der Abfahrten', /class="st-clock"/.test(sh));
     check('Karte weist die Quelle der Positionen aus', sh.includes(sandbox.I18N.t('station.mapNote')));
     // Für die folgende Sprachprüfung eine Fahrzeugkarte geöffnet lassen (dort steht "Nächste Halte")
     await sandbox.DarmstadtLive.openPopup(heads.map(d => d.v)[0]);

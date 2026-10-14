@@ -82,6 +82,26 @@ function run(check, log = console.log) {
   check('map canvas has no scrollbar styling', !/#map[^{]*::-webkit-scrollbar/.test(css));
   check('schedule mode hides the frozen realtime stats', /body:not\(\.live\) #livestat, body:not\(\.live\) #livestat2 \{ display: none; \}/.test(css));
 
+  // The line browser is the primary control: it must sit above the presentation layer, be visible on
+  // phones too (it used to be display:none there) and be reachable with a thumb.
+  const legendIdx = html.indexOf('id="legend-sec"'), presIdx = html.indexOf('id="presentation"');
+  log(`  markup order: legend-sec@${legendIdx} presentation@${presIdx}`);
+  check('line browser comes before the presentation block in the markup', legendIdx > 0 && legendIdx < presIdx);
+  check('presentation layer is a collapsible block', /<details class="sec" id="presentation" open>/.test(html));
+  check('panel sits at the very top', /#head \{ top:\s*[0-8]px;/.test(css));
+  check('phones keep the line browser visible (no display:none)', !/#legend-sec\s*\{\s*display:\s*none/.test(mob));
+  check('phones get one scroll area, not a nested mini-scrollbar', /#legend \{[^}]*overflow:\s*visible/.test(mob));
+  const chipMob = parseFloat((prop(rule('.chip', mob), 'min-height') || '0').replace('px', ''));
+  check(`phone line chips are thumb-sized (${chipMob}px >= 40px)`, chipMob >= 40);
+  const sumMob = parseFloat((prop(rule('#legend summary', mob), 'min-height') || '0').replace('px', ''));
+  check(`phone group headers are thumb-sized (${sumMob}px >= 40px)`, sumMob >= 40);
+  check('phones collapse the timetable-only bar controls in realtime mode',
+    /body\.live #daywrap, body\.live #speedwrap, body\.live #play \{ display: none; \}/.test(mob));
+  check('phone panel is height-limited so the map stays visible', /#head \{[^}]*max-height:\s*6\dvh/.test(mob));
+  const popupW = parseFloat((rule('#popup').match(/width:\s*([\d.]+)px/) || [])[1] || '0');
+  check(`vehicle card is wide enough for line + destination + time (${popupW}px >= 280px)`, popupW >= 280);
+  check('departure/stop clock time has its own prominent style', /\.pop-stops \.st-clock \{/.test(css));
+
   // The line list must be usable: a real scroll area, a grabbable bar and hittable chips.
   const legend = rule('#legend') || '', legendSec = rule('#legend-sec') || '';
   const legendMin = parseFloat((legend.match(/min-height:\s*([\d.]+)px/) || [])[1] || '0');

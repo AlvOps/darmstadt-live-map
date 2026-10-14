@@ -95,6 +95,7 @@
       lineOne: '1 line',
       lineMany: '{n} lines',
       legendTitle: 'Lines',
+      presentation: 'Status & filters',
       tempoReal: 'as in real time',
       tempoHour: '1 h in {n} {u}',
       minUnit: 'min',
@@ -188,6 +189,7 @@
       lineOne: '1 Linie',
       lineMany: '{n} Linien',
       legendTitle: 'Linien',
+      presentation: 'Status & Filter',
       tempoReal: 'wie in echt',
       tempoHour: '1 Std. in {n} {u}',
       minUnit: 'Min.',
@@ -216,11 +218,14 @@
       for (const p of parts) val = val && val[p];
     }
     if (typeof val !== 'string') return key;
-    return val.replace(/\{(-?)(\w+)\}/g, (m, sign, name) => {
+    const filled = val.replace(/\{(-?)(\w+)\}/g, (m, sign, name) => {
       const raw = vars && vars[name] !== undefined ? vars[name] : m;
       if (typeof raw !== 'number') return raw;
       return String(sign ? -raw : raw);
     });
+    // Sicherheitsnetz: ein Platzhalter ohne Wert darf nie sichtbar werden (z. B. "{n} lines").
+    // Lieber den Rest der Zeile zeigen als eine kaputte Vorlage.
+    return filled.replace(/\s*\{-?\w+\}/g, '').trim();
   }
 
   function apply(root) {

@@ -427,11 +427,11 @@
     const stops = leg && !leg.error ? nextStops(leg) : null;
     const rows = stops ? stops.map(s => {
       const rel = s.inMin >= 0 && s.inMin <= 60
-        ? `<span class="st-time">${esc(s.inMin <= 0 ? T('popup.stopNow') : T('popup.inMin', { n: s.inMin }))}</span>` : '';
+        ? `<span class="st-rel">${esc(s.inMin <= 0 ? T('popup.stopNow') : T('popup.inMin', { n: s.inMin }))}</span>` : '';
       const d = s.delay;
       const dl = d === null ? '–' : d > 0 ? '+' + d : d < 0 ? '−' + Math.abs(d) : '·';
       return `<li><span class="st-name">${esc(s.name)}${s.cancelled ? ' ⚠' : ''}</span>${rel}` +
-        `<span class="st-time">${clock(s.time)}</span>` +
+        `<span class="st-clock">${clock(s.time)}</span>` +
         `<span class="st-dly ${delayClass(d)}">${dl}</span></li>`;
     }).join('') : '';
     const failMsg = leg && leg.error
@@ -529,8 +529,8 @@
     const rel = inMin >= 0 && inMin <= 90 ? (inMin <= 0 ? T('popup.stopNow') : T('popup.inMin', { n: inMin })) : '';
     return `<li><span class="st-line" style="background:${esc(col)}">${esc(line)}</span>` +
       `<span class="st-name">${esc(ss(e.headsign || ''))}</span>` +
-      `${rel ? `<span class="st-time">${esc(rel)}</span>` : ''}` +
-      `<span class="st-time">${clock(dep)}</span>` +
+      `${rel ? `<span class="st-rel">${esc(rel)}</span>` : ''}` +
+      `<span class="st-clock">${clock(dep)}</span>` +
       `<span class="st-dly ${delay === null ? 'unknown' : delayClass(delay)}">${delay === null || delay === 0 ? '·' : delay > 0 ? '+' + delay : delay}</span></li>`;
   }
 
