@@ -43,6 +43,9 @@
   const STALE_MS = 45000;          // ab wann Daten als veraltet gelten
   const NEXT_STOPS = 3;            // das Popup zeigt die nächsten drei Halte (Wunsch des Betreibers)
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
+  // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
+  // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
+  const VERSION = '20261014-4';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 200;            // Live-Animation ~5 Bilder/s: spart Akku/GC auf Telefonen
@@ -550,6 +553,20 @@
 
   function startFollow(v) {
     if (!v) return;
+    // Auf dem Telefon wird NICHT mitgefahren (Wunsch des Betreibers): dort schiebt sich die Karte
+    // sonst unter dem Finger weg. Ein Klick zentriert einmal, danach gehört die Karte dem Nutzer.
+    if (!finePointer()) {
+      const q = vehiclePosAt(v, Date.now());
+      if (q) {
+        // Der Balken/das Sheet liegt unten: den Punkt etwas über die Mitte legen, sonst verschwindet
+        // genau der Bus, den er sehen will, hinter dem Sheet.
+        const box = ctx.map.getContainer ? ctx.map.getContainer() : null;
+        const ch = box && box.clientHeight ? box.clientHeight : 0;
+        ctx.map.easeTo({ center: q, zoom: Math.max(ctx.map.getZoom(), FOLLOW_ZOOM), duration: 650,
+                         offset: [0, ch ? -Math.round(ch * 0.22) : 0] });
+      }
+      return;
+    }
     followTrip = v.tripId;
     followUntil = Date.now() + FOLLOW_MS;
     const p = vehiclePosAt(v, Date.now());
@@ -942,6 +959,7 @@
   }
 
   window.DarmstadtLive = {
+    VERSION,
     attach(context) {
       ctx = context;
       lineIndex = null;
@@ -987,6 +1005,7 @@
     _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell,
              goToStop, nextStops, stops: () => stops, popupStopList: () => popupStopList,
              setRelaxAt(t) { ctx.state.selAt = t; }, relaxAt: () => ctx.state.selAt, RELAX_MS,
+             following: () => !!followTrip, resetFollow() { followTrip = null; followUntil = 0; },
              placePopup, dragOff: () => dragOff, setDrag(d) { dragOff = d; }, leaderD: leaderD, layoutPopup },
   };
 })();

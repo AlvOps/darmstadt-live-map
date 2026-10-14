@@ -186,7 +186,24 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     const pt = el('popup');
     check('auf Touch bleibt das Popup im Bottom-Sheet (keine Inline-Position)',
       !pt.style.left && !pt.style.top, `${pt.style.left || '-'}/${pt.style.top || '-'}`);
-    sandbox.matchMedia = () => ({ matches: true });     // Popup bleibt für die Sprachprüfung offen
+    // Auf dem Telefon wird nicht mitgefahren (Wunsch des Betreibers), am Rechner schon
+    sandbox.DarmstadtLive._test.resetFollow();
+    cap.onClick({ object: { v: pv } });
+    const phoneFollow = sandbox.DarmstadtLive._test.following();
+    const phoneEase = easeCalls[easeCalls.length - 1];
+    sandbox.matchMedia = () => ({ matches: true });
+    sandbox.DarmstadtLive._test.resetFollow();
+    cap.onClick({ object: { v: pv } });
+    const pcFollow = sandbox.DarmstadtLive._test.following();
+    console.log(`  Begleiten: Telefon ${phoneFollow} (Versatz ${JSON.stringify(phoneEase && phoneEase.offset)}) | Rechner ${pcFollow}`);
+    check('auf dem Telefon wird das Fahrzeug NICHT begleitet', phoneFollow === false);
+    check('am Rechner wird es weiterhin begleitet', pcFollow === true);
+    check('auf dem Telefon wird der Bus beim Klick einmal gezeigt — und zwar über dem Sheet',
+      !!phoneEase && phoneEase.center && phoneEase.offset && phoneEase.offset[1] < 0,
+      `offset ${JSON.stringify(phoneEase && phoneEase.offset)}`);
+    sandbox.DarmstadtLive._test.resetFollow();
+    sandbox.DarmstadtLive.closePopup();                 // sonst erbt der Haltestellen-Test nur dessen Halte
+    sandbox.matchMedia = () => ({ matches: true });     // Popup wird später erneut geöffnet (Sprachprüfung)
   }
 
   console.log('\n=== Haltestellen aus dem Feed (echte Positionen, Klick bewegt die Kamera) ===');

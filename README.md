@@ -46,9 +46,11 @@ still yields smooth movement.
   moves the camera onto it and opens a card with the **next departures**: line badge in the line
   colour, destination, clock time, relative arrival and delay (from `/api/v1/stoptimes`). Tapping a
   stop inside a vehicle card jumps **instantly** (no camera animation) to that station and opens it.
-- **Short camera follow.** Tapping a vehicle zooms onto it and follows it for 2 s, then releases;
-  a wheel, drag, tap or Escape releases it immediately. Picking a line swings the camera to the
-  vehicles of that line.
+- **Short camera follow (desktop only).** On a computer, tapping a vehicle zooms onto it and follows
+  it for 2 s, then releases; a wheel, drag, tap or Escape releases it immediately. On a phone there
+  is **no sticky follow** — a tap centres the vehicle once, **above the bottom sheet** so the bus you
+  picked is actually visible, and the map then belongs to you. Picking a line swings the camera to
+  the vehicles of that line.
 - **Delay histogram.** The bar under the map shows the live clock and the current spread of delays
   across the vehicles in view (`#tl`, drawn by `live.js`).
 - **EN/DE toggle** in the top-right corner. English is the default (also for German browsers);
@@ -56,11 +58,12 @@ still yields smooth movement.
   banner, histogram caption, `aria-label`s, document title and the map attribution.
   `analysis/test_i18n.js` fails if a key is missing in one language or if markup/JS contains
   hardcoded human-readable text.
-- **Phone-first UI.** The panel is a **drawer**: it opens with the line list, slides away when you
-  tap the map, and comes back through the ☰ *Lines* button (closed again with ✕ inside it). The
-  header switches between *Lines* and *Status & filters* so both fit without scrollbars, the card
-  becomes a bottom sheet, all touch targets are ≥40 px, safe-area insets are respected and
-  hover-only tooltips are disabled on touch devices.
+- **Phone-first UI.** The panel is a **drawer** with a handle that always sits in the same place
+  (top-left, directly above the panel) and says what it does: `☰ Lines` opens, `✕ Close panel`
+  closes. Tapping the map also slides the panel away. The header switches between *Lines* and
+  *Status & filters* so both fit without scrollbars, the card becomes a bottom sheet, all touch
+  targets are ≥40 px, safe-area insets are respected and hover-only tooltips are disabled on touch
+  devices.
 - **Honest labelling.** The popup states that positions are derived from realtime stop prognoses,
   because the open feed contains no GPS.
 
@@ -78,7 +81,10 @@ analysis/            scripts that established and verify the API's data model
 ```
 
 Scripts and styles carry a `?v=…` cache buster so a push reaches phones immediately instead of
-being served from the 10-minute asset cache.
+being served from the 10-minute asset cache. GitHub Pages caches the **HTML** the same way, and a
+cached page paired with a fresh `live.js` is exactly how a shipped feature can look missing — so
+`index.html` compares its own version constant with `DarmstadtLive.VERSION` (loaded fresh) and, on a
+mismatch, moves itself to a versioned URL that cannot be cached.
 
 ### Icon
 

@@ -137,6 +137,20 @@ function run(check, log = console.log) {
     /#paneltoggle, #panelclose \{ display: none; \}/.test(css));
   check('tapping the map closes the phone drawer',
     /hidePanel: \(\) => \{ if \(window\.innerWidth <= 700\) setPanel\(false\)/.test(html));
+  check('phone: the drawer toggle stays in one place (top-left, panel starts below it)',
+    /#paneltoggle \{[^}]*top: calc\(6px \+ env\(safe-area-inset-top\)\)/.test(mob) &&
+    /#head \{ top: calc\(56px \+ env\(safe-area-inset-top\)\)/.test(mob) &&
+    !/body:not\(\.panel-closed\) #paneltoggle \{ display: none; \}/.test(mob));
+  check('phone: the toggle says what it does (icon + label switch with the state)',
+    /ico\.textContent = open \? '✕' : '☰'/.test(html) &&
+    /lbl\.dataset\.i18n = open \? 'closePanel' : 'openPanel'/.test(html));
+  check('phone: no camera follow of a vehicle (that is desktop-only)',
+    /if \(!finePointer\(\)\) \{[\s\S]*?return;[\s\S]*?\}\s*followTrip = v\.tripId;/.test(liveSrc) &&
+    /following: \(\) => !!followTrip/.test(liveSrc));
+  check('stale HTML heals itself (version compared against the freshly loaded live.js)',
+    /const APP_V = '\d{8}-\d+'/.test(html) && /DarmstadtLive\.VERSION/.test(html) &&
+    /location\.replace\(location\.pathname \+ '\?v='/.test(html) &&
+    /sessionStorage/.test(html));
   check('chosen line swings the camera to its vehicles',
     /function focusLine\(/.test(liveSrc) && /fitBounds\(b, \{ padding: 72, maxZoom: 14\.5/.test(liveSrc));
 
