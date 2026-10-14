@@ -167,6 +167,18 @@ function run(check, log = console.log) {
     /if \(popupVehicle \|\| popupStation\) placePopup\(false\);/.test(liveSrc));
   check('per-frame vehicle maths is O(log n) and does not re-slice the path every frame',
     /function lowerBound\(/.test(liveSrc) && !/cd\.findIndex\(/.test(liveSrc) && /v\._restIdx !== idx/.test(liveSrc));
+  // Quellenangabe: nicht mehr das MapLibre-Bedienelement (stand aufgeklappt), sondern ein ⓘ im Balken
+  const i18nSrc = fs.readFileSync(path.join(DOCS, 'i18n.js'), 'utf8');
+  check('attribution is collapsed by default and opens on tap',
+    /<div id="attribbox" hidden>/.test(html) &&
+    /attribBtn\.onclick = e => \{ e\.stopPropagation\(\); setAttribOpen\(attribBox\.hidden\); \}/.test(html) &&
+    /#attribbox\[hidden\] \{ display: none; \}/.test(css));
+  check('no MapLibre attribution control left (it was open by default)',
+    !/new maplibregl\.AttributionControl/.test(html) && !/maplibregl-ctrl-attrib/.test(liveSrc) &&
+    /attributionControl: false/.test(html));
+  check('attribution credits only sources we actually use (no stale pfaedle shapes)',
+    !/pfaedle/.test(i18nSrc) && /attributionLive/.test(i18nSrc) && /CARTO/.test(i18nSrc));
+  check('attribution toggle is thumb-sized on phones', /#attribbtn \{[^}]*width: 34px/.test(mob));
   check('chosen line swings the camera to its vehicles',
     /function focusLine\(/.test(liveSrc) && /fitBounds\(b, \{ padding: 72, maxZoom: 14\.5/.test(liveSrc));
 
