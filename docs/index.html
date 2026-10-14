@@ -75,6 +75,23 @@
   .maplibregl-ctrl-attrib { background: rgba(0,0,0,.5) !important; font-size: 10px; }
   .maplibregl-ctrl-attrib a { color: #aaa !important; }
 
+  /* --- Echtzeit --- */
+  .livestat { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .livestat b { color: var(--text); }
+  #livestat2 { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+  .badge-live { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600;
+    letter-spacing: .07em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; margin-left: 8px;
+    background: rgba(46,196,182,.16); color: #2ec4b6; border: 1px solid rgba(46,196,182,.35); vertical-align: 2px; }
+  .badge-live i { width: 7px; height: 7px; border-radius: 50%; background: #2ec4b6; animation: bpulse 1.6s infinite; }
+  @keyframes bpulse { 0%,100% { opacity: 1 } 50% { opacity: .2 } }
+  .badge-live.off { background: rgba(255,255,255,.06); color: var(--muted); border-color: var(--line); }
+  .badge-live.off i { background: var(--muted); animation: none; }
+  #banner { position: absolute; z-index: 3; top: 16px; left: 50%; transform: translateX(-50%);
+    max-width: min(560px, 90vw); padding: 9px 14px; font-size: 12.5px; background: rgba(255,90,80,.14);
+    border: 1px solid rgba(255,90,80,.4); border-radius: 10px; color: #ffd9d6; backdrop-filter: blur(8px); }
+  body.live #play, body.live #daywrap, body.live #speedwrap { display: none; }
+  body.live #hint { display: none; }
+
   @media (max-width: 640px) {
     #head { right: 16px; max-width: none; }
     #legend-sec { display: none; }
@@ -86,11 +103,18 @@
 </head>
 <body>
 <div id="map"></div>
-<div id="loading">Lade Fahrplandaten …</div>
+<div id="loading">Lade Daten …</div>
 
 <div id="head" class="panel">
-  <h1>Darmstadt in Bewegung</h1>
-  <p>Straßenbahn, Bus und S-/Regionalbahn nach Soll-Fahrplan</p>
+  <h1>Darmstadt in Bewegung<span class="badge-live" id="livebadge"><i></i>Live</span></h1>
+  <p>Straßenbahn, Bus und S-/Regionalbahn – Echtzeit aus dem DELFI-Datenstrom</p>
+  <div class="sec">
+    <div class="lbl">Datenquelle</div>
+    <div class="seg" id="mode">
+      <button data-live="1" class="on">Echtzeit</button><button data-live="0">Fahrplan</button>
+    </div>
+    <div id="livestat2">warte auf erste Daten …</div>
+  </div>
   <div class="sec">
     <div class="lbl">Gerade unterwegs</div>
     <div id="counts">
@@ -98,6 +122,7 @@
       <div class="cnt" data-mode="bus"><b id="n-bus">0</b><span><i style="background:var(--bus)"></i>Busse</span></div>
       <div class="cnt" data-mode="rail"><b id="n-rail">0</b><span><i style="background:var(--rail)"></i>Züge</span></div>
     </div>
+    <div class="livestat" id="livestat"></div>
   </div>
   <div class="sec">
     <div class="lbl">Auf der Karte zeigen</div>
@@ -118,13 +143,13 @@
   <div id="row">
     <div id="clock">04:00</div>
     <button id="play" title="Abspielen/Pause (Leertaste)">❚❚</button>
-    <div class="ctl">
+    <div class="ctl" id="daywrap">
       <div class="lbl">Fahrplan für</div>
       <div class="seg" id="days">
         <button data-day="werktag" class="on">Werktag</button><button data-day="samstag">Samstag</button><button data-day="sonntag">Sonntag</button>
       </div>
     </div>
-    <div class="ctl">
+    <div class="ctl" id="speedwrap">
       <div class="lbl">Abspieltempo · <span id="tempo-cap"></span></div>
       <div class="seg" id="speed">
         <button data-speed="1" title="Aktuelle Uhrzeit, Fahrzeuge fahren in echter Geschwindigkeit">Live</button><button data-speed="60">Langsam</button><button data-speed="240" class="on">Mittel</button><button data-speed="960">Schnell</button>
@@ -135,7 +160,9 @@
   <div id="timeline"><canvas id="tl"></canvas></div>
 </div>
 <div id="tip"></div>
+<div id="banner" hidden></div>
 
+<script src="live.js"></script>
 <script>
 const T0 = 3.5 * 3600, T1 = 27 * 3600;        // Betriebstag 03:30 – 03:00 (+1)
 const TRAIL = 90;                              // Schweiflänge in Sekunden Fahrplanzeit
@@ -143,7 +170,7 @@ const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] }
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
 const fmt = s => { s = ((s % 86400) + 86400) % 86400; return String(Math.floor(s/3600)).padStart(2,'0') + ':' + String(Math.floor(s%3600/60)).padStart(2,'0'); };
 
-const state = { t: 5 * 3600, playing: true, speed: 240, day: 'werktag',
+const state = { t: 5 * 3600, playing: true, speed: 240, day: 'werktag', liveOn: true,
   modes: { tram: true, bus: true, rail: true }, selLine: null };
 let META, SHAPES, SHAPE_CD, TRIPS = [], HIST = null;
 const cache = {};
@@ -224,6 +251,8 @@ map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bott
 
 const tip = document.getElementById('tip');
 function render() {
+  // Im Echtzeit-Modus zeichnet das Live-Modul (live.js)
+  if (state.liveOn && window.DarmstadtLive) { window.DarmstadtLive.render(true); return; }
   const t = state.t, sel = state.selLine;
   const vis = [], heads = [], counts = { tram: 0, bus: 0, rail: 0 };
   for (const tr of TRIPS) {
@@ -318,6 +347,7 @@ function buildLegend() {
 const tl = document.getElementById('tl'), tctx = tl.getContext('2d');
 let tlImage = null;
 function drawTimeline() {
+  if (!HIST) return;                       // im Echtzeit-Modus liegen keine Fahrplan-Histogrammdaten vor
   const dpr = devicePixelRatio || 1, w = tl.clientWidth, h = tl.clientHeight;
   tl.width = w * dpr; tl.height = h * dpr; tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   tctx.clearRect(0, 0, w, h);
@@ -406,6 +436,11 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
 let last = performance.now();
 function tick(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (state.liveOn) {                    // Echtzeit: kein Fahrplan-Zeitsprung, Positionen kommen aus den Ist-Zeiten
+    window.DarmstadtLive.tick();
+    requestAnimationFrame(tick);
+    return;
+  }
   if (state.playing) {
     if (state.live) {                           // Echtzeit: direkt an die Systemuhr gekoppelt
       const now = liveNow();
@@ -417,15 +452,49 @@ function tick(now) {
   requestAnimationFrame(tick);
 }
 
+// ---------- Steuerung: Echtzeit- und Fahrplan-Modus
+let scheduleReady = false;
+
+async function ensureSchedule() {
+  // Fahrplan-Simulation lädt shapes + Tagesfahrten erst bei Bedarf
+  if (scheduleReady) return;
+  if (!SHAPES) {
+    SHAPES = await fetch('data/shapes.json').then(r => r.json());
+    SHAPE_CD = SHAPES.map(cumdist);
+  }
+  await loadDay(state.day);
+  scheduleReady = true;
+}
+
+function setLive(on) {
+  state.liveOn = on;
+  document.body.classList.toggle('live', on);
+  document.querySelectorAll('#mode button').forEach(b => b.classList.toggle('on', (+b.dataset.live === 1) === on));
+  const badge = document.getElementById('livebadge');
+  badge.classList.toggle('off', !on);
+  badge.lastChild.textContent = on ? 'Live' : 'Fahrplan';
+  document.getElementById('hint').textContent = on
+    ? 'Fahrzeug anklicken, um seine Linie hervorzuheben · Echtzeit: DELFI (CC BY-SA)'
+    : 'Fahrzeug anklicken, um seine Linie hervorzuheben · Leertaste: Pause';
+  window.DarmstadtLive.setOn(on);
+  if (on) {
+    window.DarmstadtLive.render(true);
+  } else {
+    ensureSchedule().then(() => { setSpeed(state.speed); drawTimeline(); render(); });
+  }
+}
+
 (async () => {
-  [META, SHAPES] = await Promise.all([fetch('data/meta.json').then(r => r.json()), fetch('data/shapes.json').then(r => r.json())]);
-  SHAPE_CD = SHAPES.map(cumdist);
+  // meta.json liefert Linien, Farben, Haltestellen, Tram-Gleise – das reicht dem Echtzeit-Modus.
+  META = await fetch('data/meta.json').then(r => r.json());
   buildLegend();
   document.getElementById('selclear').onclick = () => selectLine(state.selLine);
-  await loadDay(state.day);
+  window.DarmstadtLive.attach({ map, overlay, deck, META, state, hex, fmt, shortStop, MODE_RGB, selectLine });
+  document.querySelectorAll('#mode button').forEach(b => b.onclick = () => setLive(+b.dataset.live === 1));
   document.getElementById('loading').remove();
-  map.on('load', render);
+  map.on('load', () => render());
   if (map.loaded()) render();
+  setLive(true);
   requestAnimationFrame(tick);
 })();
 </script>
