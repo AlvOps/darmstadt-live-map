@@ -31,6 +31,18 @@ still yields smooth movement.
 
 ## Features
 
+- **Stop search.** The field beside the pane switcher searches the stops we ship plus the live stops
+  of the current view: umlaut- and case-folded, ranked name-start > word-start > mid-name, duplicates
+  dropped, capped at 7. Picking a hit jumps the camera to that stop instantly and opens its card (the
+  stop is resolved against the feed, so departures work too). On a phone the panel steps aside for the
+  jump; on a computer it stays where it is.
+- **Favourites.** A third pane holds saved stops (star on a stop card) and saved lines (star in the
+  selected-line row), both removable, both one tap away again. Stored in `localStorage` — this is a
+  static page with no server that could receive a cookie (`docs/search.js`, key `darmstadt-live-favs`).
+- **Proof of provenance, twice.** Every vehicle card and the credits box (`ⓘ`) state in bold and in the
+  accent colour, in both languages, that positions are **derived from realtime stop prognoses** — the
+  open feed carries no GPS. The credits are where a reader checks the source, so the note lives there
+  too, not only in the card.
 - **Realtime only.** Only vehicles that actually carry realtime data are drawn. Vehicles without
   realtime are dropped — a position derived solely from the timetable would be invented, not observed.
 - **Vehicle popup.** Tap a vehicle: line badge in its line colour, delay status
@@ -116,6 +128,10 @@ relative so they work under the GitHub Pages subpath.
 
 **Attribution is required** (CC BY / CC BY-SA); the UI names the sources in the map attribution
 and the header panel. Redistributing the data requires the same terms (share-alike).
+
+A known-but-unused source of **true HEAG vehicle positions** (keyless, CORS-open, no delay, HEAG's own
+fleet only, licence unclear) is recorded in [`PARKED.md`](PARKED.md) together with its measurements and
+the three rules for a later integration.
 
 ## How the realtime API works — and what it does not provide
 
