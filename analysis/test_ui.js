@@ -11,18 +11,40 @@ const DOCS = path.join(__dirname, '..', 'docs');
 const META = JSON.parse(fs.readFileSync(path.join(DOCS, 'data', 'meta.json'), 'utf8'));
 
 const cap = { layers: null };
+let newEls = 0;
 const els = {};
 function el(id) {
   if (els[id]) return els[id];
-  return (els[id] = {
+  const o = {
     id, textContent: '', innerHTML: '', hidden: false, style: {}, dataset: {},
     clientWidth: 900, clientHeight: 46, width: 0, height: 0,
-    classList: { _s: new Set(), toggle(c, on) { on ? this._s.add(c) : this._s.delete(c); }, add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); }, contains(c) { return this._s.has(c); } },
+    children: [],
+    appendChild(c) {
+      if (c.parentNode && c.parentNode.children) {          // wie im DOM: verschieben, nicht duplizieren
+        const i = c.parentNode.children.indexOf(c);
+        if (i >= 0) c.parentNode.children.splice(i, 1);
+      }
+      c.parentNode = o; o.children.push(c); return c;
+    },
+    remove() { const p = o.parentNode; if (p) { const i = p.children.indexOf(o); if (i >= 0) p.children.splice(i, 1); } o.removed = true; },
+    classList: { _s: new Set(),
+      toggle(c, on) { on ? this._s.add(c) : this._s.delete(c); },
+      add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); },
+      contains(c) { return this._s.has(c); } },
     querySelector(sel) { return el(id + sel); },
     querySelectorAll() { return []; },        // live.js verdrahtet Klick-Ziele in den Popup-Zeilen
     getContext() { return { setTransform() {}, clearRect() {}, fillRect() {}, fillText() {}, set fillStyle(v) {}, set font(v) {} }; },
+  };
+  // className und classList hängen zusammen — genau wie im echten DOM, sonst prüfen Tests ins Leere.
+  let cn = '';
+  Object.defineProperty(o, 'className', {
+    get: () => Array.from(o.classList._s).join(' ') || cn,
+    set: v => { cn = String(v == null ? '' : v); o.classList._s = new Set(cn.split(/\s+/).filter(Boolean)); },
   });
+  els[id] = o;
+  return o;
 }
+
 
 const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
 const fmt = s => { s = ((s % 86400) + 86400) % 86400; return String(Math.floor(s / 3600)).padStart(2, '0') + ':' + String(Math.floor(s % 3600 / 60)).padStart(2, '0'); };
@@ -50,7 +72,7 @@ const sandbox = {
   },
   document: {
     getElementById: el, addEventListener() {}, hidden: false, documentElement: { lang: '' }, title: '',
-    querySelectorAll: () => [], createElement: () => el('tmp'),
+    querySelectorAll: () => [], createElement: tag => el('new-' + tag + '-' + (++newEls)),
   },
   deck: { PathLayer: Layer, ScatterplotLayer: Layer, TextLayer: Layer },
 };
@@ -91,6 +113,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 
 (async () => {
   let fails = 0;
+  const L = sandbox.DarmstadtLive, X = L._test;
   const check = (name, cond, extra) => { console.log(`  ${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? ' — ' + extra : ''}`); if (!cond) fails++; };
 
   sandbox.DarmstadtLive.setOn(true);
@@ -102,7 +125,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('Fahrzeuge vorhanden', info.count > 0);
 
   sandbox.DarmstadtLive.render(true);
-  const heads = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
+  const heads = L._test.markers();
   console.log(`  Ebenen: ${cap.layers.map(l => l.id).join(' + ')} | Punkte: ${heads.length}`);
   check('jedes Fahrzeug hat realTime', heads.every(d => d.v.realTime === true));
   check('keine ungültigen Koordinaten', heads.every(d => isFinite(d.pos[0]) && isFinite(d.pos[1])));
@@ -152,16 +175,15 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     check('Popup zeigt höchstens die nächsten drei Halte', rows >= 1 && rows <= 3);
     check('Popup nennt die Uhrzeiten der Halte', /class="st-clock"/.test(p.innerHTML));
     check('Popup nennt Status und Verspätung als Wort', /On time|Delayed|Early/.test(p.innerHTML));
-    sandbox.DarmstadtLive.render(true);          // Ebenen neu bauen, damit der Ring entsteht
-    const focusLayer = cap.layers.find(l => l.id === 'live-focus');
-    const focusR = focusLayer && focusLayer.data.length === 1
-      ? (typeof focusLayer.getRadius === 'function' ? focusLayer.getRadius(focusLayer.data[0]) : focusLayer.getRadius) : 0;
-    check('angeklicktes Fahrzeug bekommt einen deutlich sichtbaren Ring (pulsierend, >= 13px)',
-      !!focusLayer && focusLayer.data.length === 1 && focusR >= 13, `radius ${focusR}px`);
+    sandbox.DarmstadtLive.render(true);          // Marken neu aufbauen, damit die Hervorhebung sitzt
+    const focusEl = ((L._test.markerNode() || { children: [] }).children || [])
+      .find(n => n.classList.contains('mk') && n.classList.contains('focus'));
+    check('das angetippte Fahrzeug ist an seiner Marke hervorgehoben (Akzentrand)',
+      !!focusEl, focusEl ? 'Marke hervorgehoben' : 'keine Marke hervorgehoben');
 
     console.log('\n=== Kamera folgt dem Fahrzeug, gibt nach 2 s frei ===');
     easeCalls.length = 0;
-    cap.onClick({ object: { v: pv } });
+    L._test.tapVehicle(pv);
     const zoom = easeCalls.length ? Math.max(...easeCalls.map(c => c.zoom || 0)) : 0;
     console.log(`  easeTo beim Klick: ${easeCalls.length} Aufruf(e), Zoom ${zoom}`);
     check('Klick zoomt auf das Fahrzeug', easeCalls.length > 0 && zoom >= 14.8);
@@ -174,7 +196,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     const after = easeCalls.length;
     sandbox.DarmstadtLive.render(true);
     check('nach 2 s ist die Kamera wieder frei', easeCalls.length === after, `${easeCalls.length - after} Nachläufer`);
-    cap.onClick({ object: { v: pv } });
+    L._test.tapVehicle(pv);
     const nb = easeCalls.length;
     (containerListeners.wheel || []).forEach(f => f({}));
     sandbox.DarmstadtLive.render(true);
@@ -188,12 +210,12 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       !pt.style.left && !pt.style.top, `${pt.style.left || '-'}/${pt.style.top || '-'}`);
     // Auf dem Telefon wird nicht mitgefahren (Wunsch des Betreibers), am Rechner schon
     sandbox.DarmstadtLive._test.resetFollow();
-    cap.onClick({ object: { v: pv } });
+    L._test.tapVehicle(pv);
     const phoneFollow = sandbox.DarmstadtLive._test.following();
     const phoneEase = easeCalls[easeCalls.length - 1];
     sandbox.matchMedia = () => ({ matches: true });
     sandbox.DarmstadtLive._test.resetFollow();
-    cap.onClick({ object: { v: pv } });
+    L._test.tapVehicle(pv);
     const pcFollow = sandbox.DarmstadtLive._test.following();
     console.log(`  Begleiten: Telefon ${phoneFollow} (Versatz ${JSON.stringify(phoneEase && phoneEase.offset)}) | Rechner ${pcFollow}`);
     check('auf dem Telefon wird das Fahrzeug NICHT begleitet', phoneFollow === false);
@@ -209,19 +231,19 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   console.log('\n=== Haltestellen aus dem Feed (echte Positionen, Klick bewegt die Kamera) ===');
   {
     sandbox.DarmstadtLive.render(true);
-    const layer = cap.layers.find(l => l.id === 'live-stations');
-    const sts = (layer && layer.data) || [];
+    const sts = L._test.stops();
     console.log(`  Halte im Ausschnitt: ${sts.length} (Modul meldet ${sandbox.DarmstadtLive.info().stops})`);
-    check('Haltestellen-Ebene existiert und ist befüllt', !!layer && sts.length > 0);
+    check('Haltestellen liegen als Daten vor und haben Marken im DOM',
+      sts.length > 0 && ((L._test.markerNode() || { children: [] }).children || [])
+        .some(n => n.classList.contains('stopmk')));
     check('Halte haben echte Koordinaten und eine stopId',
       sts.length > 0 && sts.every(s => Number.isFinite(s.lat) && Number.isFinite(s.lon) && !!s.stopId));
     check('Halte liegen im Darmstadt-Ausschnitt (keine Fantasiekoordinaten)',
       sts.length > 0 && sts.every(s => s.lat > 49.6 && s.lat < 50.2 && s.lon > 8.3 && s.lon < 9.0));
-    const hit = cap.layers.find(l => l.id === 'live-stations-hit');
-    const hitR = hit ? (typeof hit.getRadius === 'function' ? hit.getRadius(sts[0]) : hit.getRadius) : 0;
-    check('Halte haben eine großzügige Trefferfläche zum Tippen',
-      !!hit && hit.data.length === sts.length && hitR >= 8 && hit.pickable === true,
-      hit ? `radius ${hitR}px` : 'fehlt');
+    const stopEls = ((L._test.markerNode() || { children: [] }).children || []).filter(n => n.classList.contains('stopmk'));
+    check('Halte sind als Marken antippbar (Kreis mit Buchstabe)',
+      stopEls.length > 0 && stopEls.every(n => n.type === 'button' && String(n.textContent).length === 1),
+      `${stopEls.length} Marken`);
 
     let found = null, deps = null;
     for (const cand of sts.slice(0, 6)) {                 // erster Halt mit gemeldeten Abfahrten
@@ -270,6 +292,11 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     await sandbox.DarmstadtLive.openPopup(heads.map(d => d.v)[0]);   // für die Sprachprüfung offen lassen
   }
 
+  // Gezeichnete Halte = Haltemarken im DOM (die Karte selbst zeichnet nur Linien).
+  const shownStopsNow = () => ((L._test.markerNode() || { children: [] }).children || [])
+    .filter(n => n.classList.contains('stopmk'))
+    .map(n => ({ name: n.textContent, focus: n.classList.contains('focus') }));
+
   console.log('\n=== Linie wählen -> nur diese Linie auf der Karte ===');
   {
     const byLine = new Map();
@@ -281,30 +308,30 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       state.selLine = lineIdx; state.selAt = Date.now();   // wie ein Klick auf den Chip im Panel
       sandbox.DarmstadtLive.closePopup();
       sandbox.DarmstadtLive.render(true);
-      const shown = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
-      const st = (cap.layers.find(l => l.id === 'live-stations') || { data: [] }).data;
+      const shown = L._test.markers();
+      const st = shownStopsNow();
       console.log(`  Linie ${META.lines[lineIdx].name}: ${before} Fahrzeuge vorher, ${shown.length} gezeichnet, Halte ${st.length}`);
       check('nur Fahrzeuge der gewählten Linie werden gezeichnet', shown.length > 0 && shown.every(d => d.v.lineIdx === lineIdx));
       check('und keine Haltestellen (kein Rauschen)', st.length === 0);
 
       await sandbox.DarmstadtLive.openPopup(shown[0].v);
       sandbox.DarmstadtLive.render(true);
-      const st2 = (cap.layers.find(l => l.id === 'live-stations') || { data: [] }).data;
+      const st2 = shownStopsNow();
       console.log(`  Fahrzeug markiert: nur dessen Halte (${st2.length}), alle als Fokus: ${st2.every(s => s.focus === true)}`);
       check('markiertes Fahrzeug zeigt nur seine eigenen Halte', st2.length > 0 && st2.every(s => s.focus === true));
 
       sandbox.DarmstadtLive.closePopup(); state.selLine = null;
       sandbox.DarmstadtLive.render(true);
-      const st3 = (cap.layers.find(l => l.id === 'live-stations') || { data: [] }).data;
+      const st3 = shownStopsNow();
       check('ohne Auswahl erscheinen wieder alle Halte', st3.length > 0 && !st3.some(s => s.focus));
 
       // Nach 10 s ohne Interaktion dürfen die Halte zurückkommen (Ruheuhr in state.selAt)
       state.selLine = lineIdx; state.selAt = Date.now();
       sandbox.DarmstadtLive.render(true);
-      const stHidden = (cap.layers.find(l => l.id === 'live-stations') || { data: [] }).data.length;
+      const stHidden = shownStopsNow().length;
       sandbox.DarmstadtLive._test.setRelaxAt(Date.now() - sandbox.DarmstadtLive._test.RELAX_MS - 1000);
       sandbox.DarmstadtLive.render(true);
-      const stBack = (cap.layers.find(l => l.id === 'live-stations') || { data: [] }).data.length;
+      const stBack = shownStopsNow().length;
       console.log(`  Ruheuhr: Halte sofort ${stHidden} -> nach 10 s ${stBack}`);
       check('sofort nach der Linienwahl keine Halte', stHidden === 0);
       check('nach 10 s ohne Interaktion kommen die Halte zurück', stBack > 0);
@@ -384,7 +411,6 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('Popup-Timer nach dem Schließen gestoppt', sandbox.DarmstadtLive.info().popupTimer === false);
   sandbox.I18N.set('en');
 
-  const L = sandbox.DarmstadtLive, X = L._test;
   const iso = ms => new Date(Date.now() + ms).toISOString();
   const enc = pts => {                      // Google-Polyline-Kodierung (lat, lon)
     let out = '', pl = 0, pn = 0;
@@ -420,9 +446,9 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('keine NaN-Positionen aus fehlerhaften Datensätzen', at.length > 0 && at.every(c => isFinite(c.pos[0]) && isFinite(c.pos[1])), `${at.length} Positionen`);
   const bc = built.find(v => v.tripId === 'badcolor');
   sandbox.DarmstadtLive.render(true);
-  const headsLayer = cap.layers.find(l => l.id === 'live-heads');
-  const fills = headsLayer.data.map(d => headsLayer.getFillColor(d));
-  check('ungültige routeColor ergibt keine NaN-Farbe', !!bc && fills.every(c => c.every(Number.isFinite)));
+  const mks = L._test.markers();
+  check('ungültige routeColor ergibt keine kaputte Marke (weißes Pill, Position endlich)',
+    !!bc && mks.length > 0 && mks.every(d => isFinite(d.pos[0]) && isFinite(d.pos[1])));
   const ns = built.find(v => v.tripId === 'nostops');
   check('fehlende from/to-Halte: leere Namen statt "undefined"', ns && ns.fromName === '' && ns.dest === '');
   check('Statistik zählt unbekannte Verspätung nicht als pünktlich', !/NaN/.test(el('livestat').innerHTML));
@@ -595,190 +621,76 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   if (typeof starEl.onclick === 'function') starEl.onclick();
   check('Tippen auf den Stern meldet den Halt an die Favoritenlogik', tapped.length === 1 && /Hauptbahnhof/.test(tapped[0]));
 
-  console.log('\n=== Betreiber-Positionen (HEAG) ===');
-  vm.runInContext(fs.readFileSync(path.join(DOCS, 'heag.js'), 'utf8'), sandbox);
-  const HG = sandbox.DarmstadtHeag;
-  check('Modul wird bereitgestellt', !!HG && typeof HG.start === 'function' && typeof HG.list === 'function');
-  const nowIso = new Date().toISOString();
-  const parsed = HG._test.parse({ vehicles: [
-    { latitude: 'x', longitude: 8.65 },                                     // Müll raus
-    { latitude: 49.87, longitude: 8.65, offline: true },                    // abgemeldet raus
-    { latitude: 49.87, longitude: 8.65, line: '4', category: 1, date: new Date(Date.now() - 10 * 60 * 1000).toISOString() },  // zu alt raus
-    { latitude: 49.871, longitude: 8.651, line: '4', category: 1, vehicleId: 381, direction: 'Kranichstein', date: nowIso },
-    { latitude: 49.872, longitude: 8.652, line: 'F', category: 5, vehicleId: 402, direction: 'Hauptbahnhof', date: nowIso },
-  ] });
-  check('nur brauchbare, nicht abgemeldete und frische Positionen bleiben', parsed.length === 2, `${parsed.length}`);
-  check('Kategorie wird zur Verkehrsart (1 = Straßenbahn, 5 = Bus)',
-    parsed.find(x => x.line === '4').mode === 'tram' && parsed.find(x => x.line === 'F').mode === 'bus');
-
-  // Abgeleitetes Fahrzeug, das denselben Zug beschreibt: muss ersetzt werden, nicht doppelt erscheinen.
-  const mPerLon = 111320 * Math.cos(49.87 * Math.PI / 180);
-  const nowMs = Date.now();
-  const derived = { tripId: 'T1', mode: 'tram', running: true, lineName: '4', headsign: 'Kranichstein',
-    dest: 'Kranichstein', fromName: 'Hauptbahnhof', dep: nowMs - 60000, arr: nowMs + 600000,
-    delayMin: 2, realTime: true, routeColor: '', path: [[8.6600, 49.8700], [8.6700, 49.8700]],
-    cd: [0, 0.01 * mPerLon], total: 0.01 * mPerLon, lineIdx: 0 };
-  L._test.setVehicles([derived]);
-  HG._test.reset([{ line: '4', lat: 49.87005, lon: 8.6602, bearing: 90, vehicleId: 381, category: 1, mode: 'tram', dest: 'Kranichstein', at: nowMs }]);
-  sandbox.DarmstadtLive.attach({ map, overlay, deck: sandbox.deck, META, state, hex, fmt, shortStop, MODE_RGB,
-    selectLine: () => {}, hidePanel: () => { hideCalls++; }, heag: HG });
-  sandbox.DarmstadtLive.render(true);
-  let headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
-  const opDots = headsOp.filter(d => d.op);
-  console.log(`  Punkte: ${headsOp.length}, davon Betreiber: ${opDots.length}`);
-  check('ein Fahrzeug, ein Punkt: der Betreiberpunkt ersetzt den Zwilling', headsOp.length === 1 && opDots.length === 1);
-  check('Betreiberpunkt übernimmt unsere Verspätung (echte Position + echte Verspätung)',
-    opDots[0] && opDots[0].v.delayMin === 2 && opDots[0].v.op === true);
-  check('Betreiberpunkt sitzt an der gemeldeten Koordinate, nicht an der abgeleiteten',
-    Math.abs(opDots[0].pos[0] - 8.6602) < 1e-6 && Math.abs(opDots[0].pos[1] - 49.87005) < 1e-6);
-
-  const callsBefore = net.calls.filter(u => u.includes('/api/v1/trip?')).length;
-  await sandbox.DarmstadtLive.openPopup(opDots[0].v);
-  const opCard = el('popup').innerHTML;
-  check('Fahrzeugkarte weist die Betreiberposition aus (gelb, fett, beide Sprachen)',
-    opCard.includes(sandbox.I18N.t('popup.positionOperator')));
-  check('… und nicht mehr die Ableitung', !opCard.includes(sandbox.I18N.t('popup.positionNote')));
-  check('Zwilling hat weiterhin Fahrtdaten (Halte + Verspätung)', net.calls.filter(u => u.includes('/api/v1/trip?')).length > callsBefore);
-
-  // Fahrzeug ohne Zwilling: eigener Punkt, aber ohne Fahrtdaten vom offenen Strom.
-  HG._test.reset([{ line: '9', lat: 49.87, lon: 8.665, bearing: 0, vehicleId: 900, category: 5, mode: 'bus', dest: 'Irgendwo', at: Date.now() }]);
-  L._test.setVehicles([derived]);
-  if (mapHandlers.moveend) mapHandlers.moveend();          // Ausschnitt setzen (sonst gibt es keine Box)
-  sandbox.DarmstadtLive.render(true);
-  headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
-  const alone = headsOp.filter(d => d.op && d.v.opOnly);
-  check('ohne Zwilling entsteht ein eigener Punkt (Linie allein aus Betreiberdaten)', alone.length === 1);
-  const tripBefore = net.calls.filter(u => u.includes('/api/v1/trip?')).length;
-  await sandbox.DarmstadtLive.openPopup(alone[0].v);
-  check('für den eigenen Punkt wird keine Fahrt abgerufen (die gibt es dort nicht)', net.calls.filter(u => u.includes('/api/v1/trip?')).length === tripBefore);
-  check('Karte sagt, dass Verspätung und Halte unbekannt sind', el('popup').innerHTML.includes(sandbox.I18N.t('popup.operatorOnly')));
-  check('Karte nennt trotzdem Ziel und Alter der Meldung',
-    el('popup').innerHTML.includes('Irgendwo') && /aktualisiert vor|updated/.test(el('popup').innerHTML));
-
-  // Zwei Fahrzeuge derselben Linie: egal wie die Zielangaben lauten, darf dieselbe Bahn NICHT zweimal
-  // auf der Karte stehen — der Betreiberpunkt gewinnt, der abgeleitete verschwindet.
-  const opp = { tripId: 'T2', mode: 'tram', running: true, lineName: '4', headsign: '',
-    dest: 'Darmstadt Luisenplatz', fromName: 'Kranichstein', dep: nowMs - 60000, arr: nowMs + 600000,
-    delayMin: 0, realTime: true, routeColor: '', path: [[8.6600, 49.8700], [8.6700, 49.8700]],
-    cd: [0, 0.01 * mPerLon], total: 0.01 * mPerLon, lineIdx: 0 };
-  L._test.setVehicles([derived, opp]);
-  HG._test.reset([
-    { line: '4', lat: 49.87005, lon: 8.6602, bearing: 90, vehicleId: 381, category: 1, mode: 'tram', dest: 'Kranichstein', at: Date.now() },
-    { line: '4', lat: 49.87010, lon: 8.6604, bearing: 270, vehicleId: 382, category: 1, mode: 'tram', dest: 'Hauptbahnhof', at: Date.now() },
-  ]);
-  sandbox.DarmstadtLive.render(true);
-  headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
-  console.log(`  Linie 4: 2 Betreiberpunkte, 2 abgeleitete -> ${headsOp.length} Punkte`);
-  check('keine Doppelpunkte: zwei gemeldete Fahrzeuge, genau zwei Punkte', headsOp.length === 2 && headsOp.every(d => d.op));
-  check('Betreiberpunkte übernehmen die Daten ihres Zwillings (Verspätung bleibt)',
-    headsOp.every(d => d.v.delayMin !== null));
-  check('das Kopfschild wird nicht gebraucht (unser Feed liefert für Bahnen keins)',
-    headsOp.every(d => !!d.op));
-
-  // Ein abgeleiteter Punkt, der einem gemeldeten Fahrzeug zu nah steht, wird nicht zusätzlich gezeichnet.
-  const far = Object.assign({}, derived, { tripId: 'T3', lineName: '4', path: [[8.6600, 49.8700], [8.6700, 49.8700]] });
-  L._test.setVehicles([far]);
-  HG._test.reset([{ line: '4', lat: 49.8702, lon: 8.6609, bearing: 90, vehicleId: 383, category: 1, mode: 'tram', dest: 'Kranichstein', at: Date.now() }]);
-  sandbox.DarmstadtLive.render(true);
-  headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
-  check('zu naher Zwilling verschwindet (Sicherheitsnetz gegen Doppelpunkte)', headsOp.length === 1 && !!headsOp[0].op);
-
-  // Gleiten: die gemeldete Position wird über das Intervall erreicht, nicht gesprungen.
-  L._test.setVehicles([]);
-  const t0 = Date.now();
-  HG._test.reset([{ line: '4', lat: 49.8700, lon: 8.6600, bearing: 90, vehicleId: 384, category: 1, mode: 'tram', dest: 'X', at: t0 }]);
-  sandbox.DarmstadtLive.render(true);
-  let p0 = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data[0].pos;
-  HG._test.reset([{ line: '4', lat: 49.8750, lon: 8.6650, bearing: 90, vehicleId: 384, category: 1, mode: 'tram', dest: 'X', at: Date.now() }]);
-  sandbox.DarmstadtLive.render(true);
-  await wait(1600);                                        // das Gleiten braucht echte Zeit
-  sandbox.DarmstadtLive.render(true);
-  const pMid = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data[0].pos;
-  check('Betreiberpunkt gleitet zur neuen Meldung (kein Sprung)',
-    pMid[0] > p0[0] && pMid[0] < 8.6650 && pMid[1] > p0[1] && pMid[1] < 49.8750,
-    `${p0[0].toFixed(4)} -> ${pMid[0].toFixed(4)} (Ziel 8.6650)`);
-
-  // Außerhalb des geladenen Ausschnitts: gar nicht zeichnen (dazu gäbe es nie Fahrtdaten).
-  HG._test.reset([{ line: '9', lat: 50.05, lon: 8.95, bearing: 0, vehicleId: 901, category: 5, mode: 'bus', dest: 'Irgendwo', at: Date.now() }]);
-  L._test.setVehicles([derived]);
-  sandbox.DarmstadtLive.render(true);
-  headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
-  check('Betreiberpunkte außerhalb unseres Ausschnitts werden nicht gezeichnet',
-    headsOp.every(d => !d.v.opOnly));
-
-  // Ausfall der Quelle: Karte fällt still auf die Ableitung zurück.
-  HG._test.reset([], 'HTTP 500');
-  L._test.setVehicles([derived]);
-  sandbox.DarmstadtLive.render(true);
-  headsOp = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
-  check('Quelle weg: die Karte läuft mit den abgeleiteten Positionen weiter',
-    headsOp.length === 1 && !headsOp[0].op);
-
-  console.log('\n=== Telefon: Panel schließt beim Auswählen ===');
+  console.log('\n=== Telefon: Panel schließt beim Auswählen, Fahrzeug statt Linie ===');
   // live.js bittet bei jeder Auswahl um das Schließen; ob es passiert, entscheidet index.html anhand
   // der Layout-Abfrage. Der Haken hier spiegelt genau diese Entscheidung.
   const DRAWER = '(max-width: 700px), (hover: none) and (pointer: coarse)';
   const touchNow = () => !!sandbox.matchMedia(DRAWER).matches;
-  sandbox.DarmstadtLive.attach({ map, overlay, deck: sandbox.deck, META, state, hex, fmt, shortStop, MODE_RGB,
-    selectLine: () => {}, heag: HG, hidePanel: () => { if (touchNow()) hideCalls++; } });
+  const lineCalls = [];
+  L.attach({ map, overlay, deck: sandbox.deck, META, state, hex, fmt, shortStop, MODE_RGB,
+    selectLine: li => lineCalls.push(li), hidePanel: () => { if (touchNow()) hideCalls++; } });
   sandbox.matchMedia = q => ({ matches: q === DRAWER });         // Telefon
-  hideCalls = 0;
-  sandbox.DarmstadtLive.render(true);
-  const opClick = cap.onClick;
-  if (typeof opClick === 'function') opClick({ object: { v: derived }, x: 10, y: 10 });
+  hideCalls = 0; lineCalls.length = 0;
+  state.selLine = 1;                                             // eine Linie ist gerade gewählt
+  L._test.tapVehicle({ tripId: 'Z1', lineName: '3', mode: 'tram' });
   check('Fahrzeug antippen schließt auf dem Telefon das Panel', hideCalls === 1, `${hideCalls}`);
-  hideCalls = 0;
-  if (typeof opClick === 'function') opClick({ object: null, x: 10, y: 10 });
-  check('Tipp auf die Karte schließt es ebenfalls', hideCalls === 1, `${hideCalls}`);
+  check('Fahrzeug antippen hebt die Linienauswahl auf (nicht die Linie fokussieren)',
+    lineCalls.length === 1 && lineCalls[0] === null, JSON.stringify(lineCalls));
+  state.selLine = null;
   sandbox.matchMedia = () => ({ matches: false });                // Rechner
   hideCalls = 0;
-  if (typeof opClick === 'function') opClick({ object: { v: derived }, x: 10, y: 10 });
+  L._test.tapVehicle({ tripId: 'Z2', lineName: '3', mode: 'tram' });
   check('auf dem Rechner bleibt das Panel stehen', hideCalls === 0, `${hideCalls}`);
-  sandbox.DarmstadtLive.closePopup();
+  L.closePopup();
 
-  console.log('\n=== Beschriftete Marken (Liniennummer + Sinnbild) ===');
-  L._test.setVehicles([
-    Object.assign({}, derived, { tripId: 'A1', lineName: '3', mode: 'tram', lineIdx: 0 }),
-    Object.assign({}, derived, { tripId: 'A2', lineName: 'F', mode: 'bus', lineIdx: 1 }),
-    Object.assign({}, derived, { tripId: 'A3', lineName: 'S6', mode: 'rail', lineIdx: 2 }),
-  ]);
-  HG._test.reset([], null);
-  const zoomBackup = map.getZoom;
-  map.getZoom = () => 14;                                  // Straßenebene
+  console.log('\n=== Marken: rund, weiß, mit Sinnbild ===');
+  L.setOn(false);
   L.render(true);
-  let labels = cap.layers.find(l => l.id === 'live-labels');
-  let headLayer = cap.layers.find(l => l.id === 'live-heads');
-  check('beschriftete Marke und Punkt liegen beide an (Marke trägt die Liniennummer)',
-    !!labels && labels.data.length === 3 && headLayer.data.length === 3);
-  const txt = labels ? labels.data.map(d => labels.getText(d)) : [];
-  console.log(`  Marken: ${txt.join(' | ')}`);
-  check('jede Marke nennt Verkehrsart und Linie',
-    txt.some(t => /🚋\s*3/.test(t)) && txt.some(t => /🚌\s*F/.test(t)) && txt.some(t => /🚆\s*S6/.test(t)));
-  check('Marke trägt die Linienfarbe und dunkle Schrift (dunkle Karte)',
-    typeof labels.getBackgroundColor === 'function' &&
-    labels.getBackgroundColor(labels.data[0]).length === 4 &&
-    JSON.stringify(labels.getColor(labels.data[0]).slice(0, 3)) === '[17,17,17]');
-  check('Marke ist antippbar (größeres Ziel als ein Punkt)',
-    labels.pickable === true && labels.background === true &&
-    Array.isArray(labels.backgroundPadding));
-  check('Marken brauchen keine Zoomstufe (immer sichtbar)',
-    (map.getZoom = () => 11, L.render(true), !!cap.layers.find(l => l.id === 'live-labels')));
-  map.getZoom = zoomBackup;
-  L.render(true);
+  const host = L._test.markerNode();
+  const allNodes = host ? host.children : [];
+  const nodes = allNodes.filter(n => n.classList.contains('mk'));
+  const drawn = L._test.markers();
+  console.log(`  Marken im DOM: ${nodes.length}, gezeichnete Fahrzeuge: ${drawn.length} (${allNodes.length} Knoten inkl. Halte)`);
+  check('für jedes gezeichnete Fahrzeug gibt es genau eine Marke', nodes.length === drawn.length && drawn.length > 0);
+  const markHtml = nodes.map(n => n.innerHTML || '').join(' | ');
+  const wantedLines = drawn.map(d => String(d.v.lineName));
+  // Markentext aus der API wird escaped (hier steht noch der XSS-Datensatz aus dem Test darüber).
+  const escHtml = x => String(x == null ? '' : x).replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  console.log(`  Linien der Marken: ${JSON.stringify(wantedLines)}`);
+  check('Marken tragen ein SVG-Sinnbild und die Liniennummer (Text aus der API wird escaped)',
+    nodes.every(n => /<svg/.test(n.innerHTML) && /<span>/.test(n.innerHTML)) &&
+    wantedLines.every(l => markHtml.includes('<span>' + escHtml(l) + '</span>')) &&
+    !/<b onmouseover/.test(markHtml));
+  // Die drei Verkehrsarten haben drei verschiedene Sinnbilder (direkt am Bauer geprüft, ohne Daten).
+  const t = L._test.markerHtml('tram', '3'), b = L._test.markerHtml('bus', 'F'), r = L._test.markerHtml('rail', 'S6');
+  const icons = [t, b, r].map(h => (h.match(/<svg[\s\S]*?<\/svg>/) || [''])[0]);
+  console.log(`  Sinnbilder: ${icons.map(i => i.length).join(' / ')} Zeichen`);
+  check('jede Verkehrsart hat ihr eigenes Sinnbild',
+    new Set(icons).size === 3 && icons.every(i => /^<svg/.test(i)) &&
+    /<span>3<\/span>/.test(t) && /<span>F<\/span>/.test(b) && /<span>S6<\/span>/.test(r));
+  check('Marken sind Schaltflächen mit Klasse .mk (rund und weiß per CSS)',
+    nodes.every(n => n.classList.contains('mk') && n.type === 'button'));
 
-  console.log('\n=== Haltestelle als Kreis mit Buchstabe (H/S) und volle Linienlänge ===');
-  HG._test.reset([], null);
-  L._test.setVehicles([Object.assign({}, derived, { tripId: 'B1', lineName: '3', mode: 'tram', lineIdx: 0 })]);
+  console.log('\n=== Haltestellen: Kreis mit H/S, Sprachwechsel ohne Neuladen, Linienlänge ===');
+  const mPerLon3 = 111320 * Math.cos(49.87 * Math.PI / 180), n3 = Date.now();
+  L._test.setVehicles([{ tripId: 'B1', mode: 'tram', running: true, lineName: '3', headsign: 'X',
+    dest: 'Darmstadt X', fromName: 'Y', dep: n3 - 60000, arr: n3 + 600000, delayMin: 0,
+    realTime: true, routeColor: '', path: [[8.6600, 49.8700], [8.6700, 49.8700]],
+    cd: [0, 0.01 * mPerLon3], total: 0.01 * mPerLon3, lineIdx: 0 }]);
   if (mapHandlers.moveend) mapHandlers.moveend();
-  sandbox.DarmstadtLive.render(true);
-  const markLayer = cap.layers.find(l => l.id === 'live-station-marks');
-  check('Haltestellen tragen einen Buchstaben im Kreis', !!markLayer && markLayer.data.length > 0);
+  L.render(true);
+  const stops = host.children.filter(n => n.classList.contains('stopmk'));
+  check('Haltestellen sind Kreise mit einem Buchstaben', stops.length > 0);
+  const stopTexts = () => host.children.filter(n => n.classList.contains('stopmk')).map(n => n.textContent);
   sandbox.I18N.set('en');
-  check('englisch: „S" im Kreis', markLayer.getText() === 'S' && sandbox.I18N.t('stopMark') === 'S');
+  check('englisch: „S" im Kreis', stopTexts().every(t => t === 'S'));
   sandbox.I18N.set('de');
-  check('deutsch: „H" im Kreis', markLayer.getText() === 'H' && sandbox.I18N.t('stopMark') === 'H');
+  L.setLang();                                            // Sprachwechsel im laufenden Betrieb
+  check('deutsch: „H" im Kreis — ohne Neuladen', stopTexts().every(t => t === 'H'));
   sandbox.I18N.set('en');
-  // Volle Länge der Linie: alle Halte der Fahrt, in der Linienfarbe.
+  L.setLang();
+  check('zurück auf englisch: wieder „S"', stopTexts().every(t => t === 'S'));
   check('Linienlänge = alle Halte der Fahrt (auch die schon durchfahrenen)',
     JSON.stringify(L._test.tripChain({ from: { lat: 1, lon: 1 }, intermediateStops: [{ lat: 2, lon: 2 }, { lat: 3, lon: 3 }], to: { lat: 4, lon: 4 } })) ===
     JSON.stringify([[1, 1], [2, 2], [3, 3], [4, 4]]));
@@ -786,24 +698,24 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     L._test.tripChain({ from: { name: 'x' }, to: { name: 'y' } }) === null &&
     L._test.tripChain({ error: 'noLegs' }) === null && L._test.tripChain({ operator: true }) === null);
   L.setOn(true);
-  await sandbox.DarmstadtLive.refresh();                    // echte Fahrten für den Linien-Test
+  await L.refresh();
   await wait(600);
-  sandbox.DarmstadtLive.render(true);
-  const chainV = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data[0].v;
-  await sandbox.DarmstadtLive.openPopup(chainV);             // echte Fahrt -> Halte mit Koordinaten
+  L.render(true);
+  const chainV = L._test.markers()[0].v;
+  await L.openPopup(chainV);                               // echte Fahrt -> Halte mit Koordinaten
   await wait(400);
   const chain = L._test.chain();
+  if (!chain.length) console.log(`  (kein Linienverlauf; Karte: ${(el('popup').innerHTML || '').replace(/<[^>]+>/g, ' ').slice(0, 120)})`);
   check('Klick auf eine Marke zeichnet die Linie in ihrer Länge', chain.length === 1 && chain[0].length >= 2,
     chain.length ? `${chain[0].length} Stützpunkte` : 'keine Linie');
-  sandbox.DarmstadtLive.render(true);                       // Ebenenliste neu aufbauen
+  L.render(true);
   check('Linie liegt als eigene Ebene in der Linienfarbe',
     !!cap.layers.find(l => l.id === 'live-line-chain') &&
     typeof cap.layers.find(l => l.id === 'live-line-chain').getColor === 'function' &&
     cap.layers.find(l => l.id === 'live-line-chain').getColor().length === 4);
-  sandbox.DarmstadtLive.closePopup();
+  L.closePopup();
   check('nach dem Schließen ist die Linie wieder weg',
-    (sandbox.DarmstadtLive.render(true), !cap.layers.some(l => l.id === 'live-line-chain')));
-  map.getZoom = zoomBackup;
+    (L.render(true), !cap.layers.some(l => l.id === 'live-line-chain')));
 
   console.log('\n=== Haltestellenpunkte am Knotenpunkt ===');
   const hbfRaw = [];

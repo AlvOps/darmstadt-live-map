@@ -13,18 +13,38 @@ const elements = {};
 
 function el(id) {
   if (elements[id]) return elements[id];
-  return (elements[id] = {
+  const o = {
     id, textContent: '', innerHTML: '', hidden: false, style: {}, dataset: {},
     clientWidth: 900, clientHeight: 46, width: 0, height: 0,
-    classList: { toggle() {}, add() {}, remove() {} },
+    classList: { _s: new Set(), toggle(c, on) { on ? this._s.add(c) : this._s.delete(c); },
+                 add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); },
+                 contains(c) { return this._s.has(c); } },
+    children: [],
+    appendChild(c) {
+      if (c.parentNode && c.parentNode.children) {          // wie im DOM: verschieben, nicht duplizieren
+        const i = c.parentNode.children.indexOf(c);
+        if (i >= 0) c.parentNode.children.splice(i, 1);
+      }
+      c.parentNode = o; o.children.push(c); return c;
+    },
+    remove() { const p = o.parentNode; if (p) { const i = p.children.indexOf(o); if (i >= 0) p.children.splice(i, 1); } o.removed = true; },
+    querySelector() { return null; },
     getContext() {
       return {
         setTransform() {}, clearRect() {}, fillRect() { captured.canvasCalls++; },
         fillText() { captured.canvasCalls++; }, set fillStyle(v) {}, set font(v) {},
       };
     },
+  };
+  let cn = '';
+  Object.defineProperty(o, 'className', {
+    get: () => Array.from(o.classList._s).join(' ') || cn,
+    set: v => { cn = String(v == null ? '' : v); o.classList._s = new Set(cn.split(/\s+/).filter(Boolean)); },
   });
+  elements[id] = o;
+  return o;
 }
+
 
 const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
 const fmt = s => { s = ((s % 86400) + 86400) % 86400; return String(Math.floor(s / 3600)).padStart(2, '0') + ':' + String(Math.floor(s % 3600 / 60)).padStart(2, '0'); };
@@ -38,7 +58,8 @@ const sandbox = {
   setTimeout, clearTimeout, setInterval, clearInterval, Promise, Float64Array, Error, Uint16Array,
   // Die API verlangt einen eigenen User-Agent; im Browser erledigt das der Browser selbst.
   fetch: (url, opts) => fetch(url, { ...(opts || {}), headers: { ...((opts && opts.headers) || {}), 'User-Agent': 'hermes-darmstadt-live-test/1.0' } }),
-  document: { getElementById: el, addEventListener() {}, hidden: false },
+  document: { getElementById: el, addEventListener() {}, hidden: false,
+    createElement: tag => el('new-' + tag), querySelectorAll: () => [] },
   deck: { PathLayer: Layer, ScatterplotLayer: Layer },
 };
 sandbox.window = sandbox;
@@ -86,10 +107,12 @@ sandbox.window.DarmstadtLive.attach({
     process.exit(1);
   }
 
-  sandbox.window.DarmstadtLive.render(true);
-  // Ebenen nach id suchen, nicht nach Position — die Haltestellen-Ebene kam später dazu
+  const L = sandbox.window.DarmstadtLive;
+  L.render(true);
+  // Fahrzeugmarken und Halte sind jetzt DOM-Elemente, die Karte zeichnet nur noch Linien — die Daten
+  // kommen deshalb aus der Modul-API, die Ebenen sind Verlauf und (nach Klick) die Linienlänge.
   const byId = id => captured.layers.find(l => l.id === id) || { data: [] };
-  const trails = byId('live-trails'), heads = byId('live-heads'), stations = byId('live-stations');
+  const trails = byId('live-trails'), heads = { data: L._test.markers() }, stations = { data: L._test.stops() };
   console.log('\n=== Ebenen ===');
   console.log('  Ebenen gesetzt:', captured.layers.map(l => l.id).join(', '));
   console.log('  Trails:', trails.data.length, '| Heads:', heads.data.length,

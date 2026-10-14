@@ -43,24 +43,25 @@ still yields smooth movement.
   accent colour, in both languages, that positions are **derived from realtime stop prognoses** — the
   open feed carries no GPS. The credits are where a reader checks the source, so the note lives there
   too, not only in the card.
-- **Labelled vehicle markers, always on.** Each vehicle is a rounded pill carrying the mode pictogram
-  (🚋 tram / 🚌 bus / 🚆 rail) and its line number, on the line's own colour with dark text — the way
-  the operator's own map does it, adapted to the dark theme. In the overview the pills shrink slightly
-  so they do not pile up. A pill is a much larger tap target than a dot.
+- **Labelled vehicle markers, always on.** Every vehicle is a **white rounded pill** carrying a mode
+  pictogram (bus / tram / rail as inline SVG) and its line number in dark text — the pictogram tells you
+  what it is, so the colour is free for readability on the dark map. In the overview the pills shrink
+  slightly so they do not pile up. They are DOM elements positioned over the map, which is also why a
+  tap on a vehicle **always opens that vehicle**: the marker gets the tap before the map underneath, so
+  the stop behind it can no longer win, and a tap clears any line selection (you asked for the vehicle,
+  not the line).
 - **Stops are circled letters,** like the sign on the street: **H** in German (*Haltestelle*), **S** in
   English (*station*) — one per stop, never per platform.
 - **Click a vehicle: the whole run of its line.** Besides the card, the map draws every stop of that
   trip in order — the stretches already covered included — in the line's own colour, and removes it
   again when the card closes.
-- **Real positions where they exist (HEAG).** HEAG mobilo reports actual coordinates through its own app
-  backend (IVANTO SRS, keyless, CORS-open). Where a reported position matches one of our trips
-  (same line, proximity-matched), that dot **replaces** the derived one and keeps our delay and stop list — one
-  dot per vehicle, never two. Each card names its own source: *"reported live by the operator"* vs
-  *"derived from realtime stop prognoses"*. If that backend fails, nothing breaks: the map falls back
-  to the derived positions. Details, measurements and caveats: [`HEAG-POSITIONS.md`](HEAG-POSITIONS.md).
-- **Big, tappable dots.** Vehicle markers are ~2× the previous radius (8 px bus / 10 px tram & rail,
-  15 px while focused) and the picking radius grew with them, so a thumb hits the right vehicle
-  without zooming first.
+- **One source, honestly labelled.** The map draws the open feed only. An operator feed with real
+  coordinates exists (HEAG mobilo's app backend) but merging it produced duplicate markers for one
+  vehicle, so it was removed again — the measurements and the clean rule for a retry are recorded in
+  [`HEAG-POSITIONS.md`](HEAG-POSITIONS.md). Every vehicle card still states, in bold and in the accent
+  colour, that the position is derived from realtime stop prognoses.
+- **Big, tappable markers.** A pill is roughly 30 × 22 px with 12.5 px text, so a thumb hits the right
+  vehicle without zooming first — much easier than the 6.5 px dots this replaced.
 - **Realtime only.** Only vehicles that actually carry realtime data are drawn. Vehicles without
   realtime are dropped — a position derived solely from the timetable would be invented, not observed.
 - **Vehicle popup.** Tap a vehicle: line badge in its line colour, delay status
@@ -142,16 +143,16 @@ relative so they work under the GitHub Pages subpath.
 | Data | Origin | Licence |
 |------|--------|---------|
 | Realtime (prognoses) | DELFI e.V., via `api.transitous.org` (MOTIS) | **CC BY-SA 4.0** |
-| HEAG vehicle positions | HEAG mobilo app backend (IVANTO SRS) | not a published open-data feed |
 | Base map | CARTO dark-matter, © OpenStreetMap contributors | ODbL |
 
 **Attribution is required** (CC BY / CC BY-SA); the UI names the sources in the map attribution
 and the header panel. Redistributing the data requires the same terms (share-alike).
 
 HEAG mobilo's own app backend (IVANTO SRS) additionally serves **true coordinates for HEAG's own fleet**
-— keyless, CORS-open, but no delay and no published licence. It is integrated under three rules
-(one source per vehicle, per-vehicle provenance label, no hard dependency) and documented in
-[`HEAG-POSITIONS.md`](HEAG-POSITIONS.md); the credits box names it as an operator feed, not open data.
+— keyless and CORS-open, but without delays and without a published licence. It is **not** part of this
+map: merging it with the open feed produced two markers for the same vehicle, which is worse than a
+derived position. The measurements and the clean rule for a retry ("one source per line") are recorded
+in [`HEAG-POSITIONS.md`](HEAG-POSITIONS.md).
 
 ## How the realtime API works — and what it does not provide
 

@@ -46,7 +46,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261014-17';
+  const VERSION = '20261014-18';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -325,139 +325,117 @@
     return [230, 235, 245];
   }
 
-  // ---------- Betreiber-Positionen (HEAG) ----------
-  // Die HEAG meldet echte Koordinaten; der offene Strom liefert nur Ableitungen aus Haltzeiten. Regel:
-  // je Fahrzeug genau EIN Punkt. Findet sich ein Zwilling (gleiche Linie, nah dran), ersetzt der
-  // Betreiberpunkt ihn und übernimmt dessen Verspätung — echte Position plus echte Verspätung.
-  const OP_TWIN_MAX_M = 2000;      // bis hierher wird überhaupt gepaart (gleiche Linie)
-  const OP_SUPPRESS_M = 250;       // ein abgeleiteter Punkt so nah an einem Betreiberpunkt ist dasselbe Fahrzeug
-  const OP_SMOOTH_MS = 15000;      // Betreiberpunkte gleiten zur neuen Meldung, statt alle 30 s zu springen
-  let opLog = { merged: 0, added: 0, suppressed: 0, skipped: 0, available: 0 };
-  const opPos = new Map();                               // tripId -> zuletzt gezeichnete Betreiberposition
-  const opSmooth = new Map();                            // tripId -> { from, to, t0 } für das Gleiten
-  const metresBetween = (aLat, aLon, bLat, bLon) => {
-    const dy = (aLat - bLat) * 111320, dx = (aLon - bLon) * 111320 * Math.cos(aLat * Math.PI / 180);
-    return Math.sqrt(dx * dx + dy * dy);
+  // ---------- Fahrzeugmarken und Haltestellen als DOM-Elemente ----------
+  // Warum nicht als deck.gl-Textlayer: dessen Hintergrund ist ein Rechteck ohne Rundung, und deck.gl
+  // kennt keine eigenen Sinnbilder — die Marken waren deshalb eckig und ohne Verkehrsart. Als
+  // DOM-Element ist das Pill wirklich rund, weiß, mit dunkler Schrift und einem SVG-Sinnbild für Bus,
+  // Bahn oder Zug. Und es bekommt den Tipp VOR der Karte — sonst öffnete sich die Haltestelle dahinter.
+  const MODE_SVG = {
+    tram: '<svg viewBox="0 0 24 24" fill-rule="evenodd" aria-hidden="true"><path d="M12 1l4 2.5V5H8V3.5L12 1zM5 7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7zm3 1v4h8V8H8z"/><circle cx="9" cy="19.5" r="1.8"/><circle cx="15" cy="19.5" r="1.8"/></svg>',
+    bus: '<svg viewBox="0 0 24 24" fill-rule="evenodd" aria-hidden="true"><path d="M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm2 3v5h12V6H6z"/><circle cx="7" cy="19.5" r="1.8"/><circle cx="17" cy="19.5" r="1.8"/></svg>',
+    rail: '<svg viewBox="0 0 24 24" fill-rule="evenodd" aria-hidden="true"><path d="M6 2h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-1l2 3v1h-2.4l-1.8-2.5h-5.6L7.4 21H5v-1l2-3H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm1 3v5h10V5H7z"/><circle cx="9" cy="18.6" r="1.7"/><circle cx="15" cy="18.6" r="1.7"/></svg>',
   };
-  const flat = s => String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9ÄÖÜß]/g, '');
-  // Zielangaben sind nur ein BONUS, kein Ausschlusskriterium: der offene Strom liefert für viele
-  // Straßenbahnfahrten gar kein Kopfschild (headsign null) und `dest` ist dort der NÄCHSTE Halt, nicht
-  // der Endhalt der Linie. Ein Vergleich „Betreiberziel gegen nächsten Halt" schlug deshalb fehl und
-  // dieselbe Bahn stand zweimal auf der Karte. Gepaart wird jetzt über die Nähe, eins zu eins.
-  function sameDirection(op, v) {
-    const d = flat(op.dest);
-    const h = flat(v.headsign);
-    if (!d || d.length < 3 || !h || h.length < 3) return false;
-    return h.includes(d) || d.includes(h);
+  const markerPool = new Map();          // tripId -> Element
+  const stopPool = new Map();            // Haltestellenname -> Element
+  let markerBox = null;
+  let markerLog = [];                    // zuletzt gezeichnete Fahrzeuge (Tests/Diagnose)
+
+  // Weiße Marke: SVG-Sinnbild der Verkehrsart + Liniennummer. Eigene Funktion, damit Tests sie ohne
+  // laufende Daten prüfen können.
+  function markerHtml(mode, line) {
+    return (MODE_SVG[mode] || MODE_SVG.bus) + '<span>' + esc(line) + '</span>';
   }
 
-  function withOperator(cur, t) {
-    const src = (ctx && ctx.heag && ctx.heag.list) ? ctx.heag.list() : null;
-    opLog = { merged: 0, added: 0, suppressed: 0, skipped: 0, available: src ? src.length : 0 };
-    opPos.clear();
-    if (!src || !src.length) { opSmooth.clear(); return cur; }
-    const inBox = (lat, lon) => {
-      if (!viewBox) return true;
-      const padLat = (viewBox.n - viewBox.s) * 0.1, padLon = (viewBox.e - viewBox.w) * 0.1;
-      return lat >= viewBox.s - padLat && lat <= viewBox.n + padLat &&
-             lon >= viewBox.w - padLon && lon <= viewBox.e + padLon;
-    };
-    const out = cur.slice();
-    // 1. Alle möglichen Paare sammeln (gleiche Linie, in Reichweite) und gierig vergeben: der nächste
-    //    Abstand gewinnt zuerst, jede Seite nur einmal — so bekommt kein Zwilling zwei Partnern.
-    const pairs = [];
-    const relevant = [];
-    src.forEach((o, oi) => {
-      const key = normLine(o.line);
-      if (!key || !inBox(o.lat, o.lon)) { opLog.skipped++; return; }
-      relevant.push(oi);
-      for (let ci = 0; ci < out.length; ci++) {
-        const c = out[ci];
-        if (c.op || normLine(c.v.lineName) !== key) continue;
-        const d = metresBetween(o.lat, o.lon, c.pos[1], c.pos[0]);
-        if (d <= OP_TWIN_MAX_M) pairs.push({ oi, ci, d, dir: sameDirection(o, c.v) ? 1 : 0 });
-      }
-    });
-    pairs.sort((a, b) => (b.dir - a.dir) || (a.d - b.d));
-    const claimedPair = new Map(), claimedCar = new Set();
-    for (const p of pairs) {
-      if (claimedPair.has(p.oi) || claimedCar.has(p.ci)) continue;
-      claimedPair.set(p.oi, p.ci);
-      claimedCar.add(p.ci);
-    }
-    // 2. Abgeleitete Punkte entfernen, die einem gemeldeten Fahrzeug derselben Linie zu nah stehen.
-    //    Das ist das Sicherheitsnetz gegen „zwei Punkte für dieselbe Bahn", unabhängig vom Paaren.
-    const drops = new Set();
-    for (const oi of relevant) {
-      const o = src[oi];
-      out.forEach((c, ci) => {
-        if (c.op || drops.has(ci)) return;
-        if (normLine(c.v.lineName) !== normLine(o.line)) return;
-        if (metresBetween(o.lat, o.lon, c.pos[1], c.pos[0]) <= OP_SUPPRESS_M) drops.add(ci);
-      });
-    }
-    // 3. Aufbauen: die gemeldeten Fahrzeuge (mit dem jeweiligen Zwilling als Datenbasis), danach der Rest.
-    const keep = [];
-    out.forEach((c, ci) => {
-      if (drops.has(ci)) { if (!claimedCar.has(ci)) opLog.suppressed++; return; }
-      keep.push(c);
-    });
-    // smooth: Position zwischen letzter und neuer Meldung gleiten lassen (die HEAG-Karte bewegt sich auch)
-    const smoothPos = (trip, lon, lat, now) => {
-      let st = opSmooth.get(trip);
-      if (!st || st.to[0] !== lon || st.to[1] !== lat) {
-        const from = st ? [st.cur[0], st.cur[1]] : [lon, lat];
-        st = { from, to: [lon, lat], t0: now, cur: [lon, lat] };
-        opSmooth.set(trip, st);
-      }
-      const k = Math.min(1, Math.max(0, (now - st.t0) / OP_SMOOTH_MS));
-      st.cur = [st.from[0] + (st.to[0] - st.from[0]) * k, st.from[1] + (st.to[1] - st.from[1]) * k];
-      return st.cur;
-    };
-    const now = Number.isFinite(t) ? t : Date.now();
-    const seenSmooth = new Set();
-    for (const oi of relevant) {
-      const o = src[oi];
-      const base = claimedPair.has(oi) ? out[claimedPair.get(oi)].v : null;
-      const mode = (base && base.mode) || o.mode || 'bus';
-      const trip = base ? base.tripId
-                        : 'heag:' + (o.vehicleId == null ? o.line + ':' + o.lat : o.vehicleId);
-      seenSmooth.add(trip);
-      const pos = smoothPos(trip, o.lon, o.lat, now);
-      opPos.set(trip, pos);
-      if (base) opLog.merged++; else opLog.added++;
-      keep.push({
-        op: true, bearing: o.bearing,
-        pos, rest: [],
-        v: base ? Object.assign({}, base, { op: true, opId: o.vehicleId, opAt: o.at })
-                : {
-                    tripId: trip,
-                    op: true, opId: o.vehicleId, opAt: o.at, opOnly: true,
-                    mode, lineName: o.line || '?', headsign: o.dest || '', dest: o.dest || '',
-                    fromName: '', delayMin: null, realTime: true, routeColor: '',
-                    dep: 0, arr: 0, path: null, cd: null, total: 0,
-                    lineIdx: matchLine(o.line, mode),
-                  },
-      });
-    }
-    for (const k of [...opSmooth.keys()]) if (!seenSmooth.has(k)) opSmooth.delete(k);
-    return keep;
+  function markerHost() {
+    if (!markerBox) markerBox = document.getElementById('markers');
+    return markerBox;
   }
 
-  // Beschriftete Fahrzeugmarken wie in der HEAG-Karte: Sinnbild der Verkehrsart, daneben die
-  // Liniennummer, beides in einem abgerundeten Pill. Immer an (nicht erst beim Hineinzoomen). Das Pill
-  // trägt die Linienfarbe mit dunkler Schrift — passt zur dunklen Karte und zur Linienleiste im Panel.
-  const MODE_GLYPH = { tram: '🚋', bus: '🚌', rail: '🚆' };
-  const LABEL_TEXT = [17, 17, 17];          // fast schwarz, wie die Linien-Chips im Panel
-  // Schrift der Marken = Schrift der Seite: keine zweite Typografie im Bild. Über das Dokument
-  // geholt, damit hier kein Schriftnamen-Literal steht.
-  function pageFont() {
-    try {
-      const f = window.getComputedStyle(document.body).fontFamily;
-      if (f && f.length > 2) return f;
-    } catch (_) { /* Testumgebung ohne getComputedStyle */ }
-    return 'sans-serif';
+  // Ein Tipp auf ein Fahrzeug gehört dem Fahrzeug: Linienauswahl aufheben (sonst sieht man die Linie
+  // statt des Fahrzeugs), Panel aus dem Weg, Fahrzeug fokussieren und Karte öffnen.
+  function tapVehicle(v) {
+    if (!v) return;
+    if (ctx.state) {
+      ctx.state.selAt = Date.now();
+      if (ctx.state.selLine !== null && ctx.selectLine) ctx.selectLine(null);
+    }
+    if (ctx.hidePanel) ctx.hidePanel();
+    startFollow(v);
+    openPopup(v);
   }
+
+  function tapStop(stop) {
+    if (!stop) return;
+    if (ctx.state) ctx.state.selAt = Date.now();
+    if (ctx.hidePanel) ctx.hidePanel();
+    openStation(stop, false, true);
+    announceStation(stop);
+  }
+
+  function placeMarker(el, pos) {
+    const p = ctx.map.project([pos[0], pos[1]]);
+    el.style.transform = 'translate(' + Math.round(p.x) + 'px,' + Math.round(p.y) + 'px)translate(-50%,-50%)';
+    el.style.zIndex = String(1000 + Math.round(p.y));
+  }
+
+  function renderMarkers(vis, shownStops, focusTrip) {
+    markerLog = vis.map(c => ({ v: c.v, pos: c.pos, rest: c.rest, u: c.u }));
+    const host = markerHost();
+    if (!host) return;
+    host.classList.toggle('scaled', ctx.map.getZoom() < 12.5);
+    const letter = T('stopMark');                       // H im Deutschen, S im Englischen
+    // Zuerst aufräumen: alles, was nicht mehr dazugehört, verschwindet. Über die Kinder im DOM, damit
+    // auch nach einem Modul-Neustart keine Waisen stehen bleiben (nicht nur über den Pool).
+    const wanted = new Set();
+    for (const c of vis) wanted.add('v:' + c.v.tripId);
+    for (const s of shownStops) wanted.add('s:' + String(s.name || s.stopId || ''));
+    for (const child of Array.from(host.children || [])) {
+      if (!wanted.has(child.dataset && child.dataset.key)) child.remove();
+    }
+    const keepV = new Set();
+    for (const c of vis) {
+      const v = c.v, id = v.tripId;
+      keepV.add(id);
+      let el = markerPool.get(id);
+      if (!el) {
+        el = document.createElement('button');
+        el.type = 'button';
+        el.className = 'mk';
+        el.dataset.key = 'v:' + id;
+        host.appendChild(el);
+        markerPool.set(id, el);
+      }
+      const html = markerHtml(v.mode, v.lineName);
+      if (el.dataset.sig !== html) { el.innerHTML = html; el.dataset.sig = html; }
+      el.classList.toggle('focus', id === focusTrip);
+      el.classList.toggle('dim', !!focusTrip && id !== focusTrip);
+      el.onclick = ev => { ev.stopPropagation(); tapVehicle(v); };
+      if (id === focusTrip) host.appendChild(el);        // der gewählte Punkt liegt oben
+      placeMarker(el, c.pos);
+    }
+    for (const [id, el] of Array.from(markerPool)) if (!keepV.has(id)) { el.remove(); markerPool.delete(id); }
+    const keepS = new Set();
+    for (const s of shownStops) {
+      const key = String(s.name || s.stopId || '');
+      if (!key) continue;
+      keepS.add(key);
+      let el = stopPool.get(key);
+      if (!el) {
+        el = document.createElement('button');
+        el.type = 'button';
+        el.className = 'stopmk';
+        el.dataset.key = 's:' + key;
+        host.appendChild(el);
+        stopPool.set(key, el);
+      }
+      if (el.textContent !== letter) el.textContent = letter;   // Sprachwechsel ohne Neuladen
+      el.classList.toggle('focus', !!s.focus);
+      el.onclick = ev => { ev.stopPropagation(); tapStop(s); };
+      placeMarker(el, [s.lon, s.lat]);
+    }
+    for (const [key, el] of Array.from(stopPool)) if (!keepS.has(key)) { el.remove(); stopPool.delete(key); }
+  }
+
 
   function render(force) {
     if (!ctx) return;
@@ -470,10 +448,9 @@
     if (!followTrip && ctx.map.isMoving && ctx.map.isMoving()) return;
     const t = Date.now();
     const sel = ctx.state.selLine;
-    const cur = withOperator(vehiclesAt(t), t);
+    const cur = vehiclesAt(t);
     // Angeklicktes Fahrzeug dauerhaft markieren, damit der Punkt auch nach dem Kamera-Follow zu finden ist
     const focusTrip = popupVehicle ? popupVehicle.tripId : null;
-    const focus = focusTrip ? cur.find(c => c.v.tripId === focusTrip) : null;
 
     // Die Auswahl bestimmt, was zu sehen ist:
     //   Linie im Panel gewählt -> nur diese Linie, keine Haltestellen (nach 10 s Ruhe kommen sie zurück)
@@ -486,10 +463,6 @@
     }
     const inMode = c => ctx.state.modes[c.v.mode];
     const vis = sel !== null ? cur.filter(c => inMode(c) && c.v.lineIdx === sel) : cur.filter(inMode);
-    const dim = v => (focusTrip ? v.tripId !== focusTrip : false);
-    // Gedämpft statt fast unsichtbar: alpha 45 ließ alle anderen Punkte über der dunklen Karte wie
-    // blasse weiße Geister wirken (auf dem Telefon als „da läuft ein weißer Punkt" gemeldet).
-    const alpha = v => (dim(v) ? 130 : 255);
     // Bei gewähltem Fahrzeug nur dessen eigene Halte zeigen (nicht das ganze Netz)
     // Nur neu berechnen, wenn sich wirklich etwas geändert hat: sonst schiebt deck.gl die
     // Haltestellen-Ebene 30-mal pro Sekunde neu hoch, obwohl sie still steht (spürbare Last).
@@ -505,89 +478,25 @@
     const shownStops = stopCache;
 
     const layers = [
-      // Trefferfläche für Halte: unsichtbar, aber großzügig — die sichtbaren Punkte sind nur ~2 px,
-      // und deck.gl prüft die Geometrie, nicht die Deckkraft. So trifft man den Halt auch mit dem Finger.
-      new ctx.deck.ScatterplotLayer({
-        id: 'live-stations-hit', data: shownStops, getPosition: d => [d.lon, d.lat],
-        getRadius: 11, radiusUnits: 'pixels', radiusMinPixels: 11,
-        getFillColor: [0, 0, 0, 1], pickable: true,
-      }),
-      new ctx.deck.ScatterplotLayer({          // Haltestelle: Kreis wie das H-Schild, Buchstabe darüber
-        id: 'live-stations', data: shownStops, getPosition: d => [d.lon, d.lat],
-        getRadius: d => (d.focus ? 10 : 8), radiusUnits: 'pixels', pickable: false, radiusMinPixels: 7,
-        stroked: true, getLineColor: d => (d.focus ? [255, 209, 102, 240] : [120, 200, 140, 230]),
-        getLineWidth: d => (d.focus ? 2 : 1.4), lineWidthUnits: 'pixels',
-        getFillColor: d => (d.focus ? [46, 40, 18, 240] : [22, 26, 36, 240]),
-        updateTriggers: { getRadius: focusTrip, getFillColor: focusTrip, getLineColor: focusTrip, getLineWidth: focusTrip },
-      }),
-      // Der Buchstabe im Kreis: im Deutschen „H" (Haltestelle), im Englischen „S" (station).
-      ctx.deck.TextLayer ? new ctx.deck.TextLayer({
-        id: 'live-station-marks', data: shownStops, getPosition: d => [d.lon, d.lat],
-        getText: () => T('stopMark'),
-        getSize: d => (d.focus ? 11 : 10), sizeUnits: 'pixels', fontFamily: pageFont(), fontWeight: 800,
-        getColor: d => (d.focus ? [255, 209, 102, 255] : [235, 245, 255, 240]),
-        getTextAnchor: 'middle', getAlignmentBaseline: 'center',
-        pickable: false, billboard: true,
-        updateTriggers: { getSize: focusTrip, getColor: focusTrip, getText: ctx.lang || 'en' },
-      }) : null,
+      // Verlauf: der Rest der Fahrt, dünn in der Linienfarbe (deck.gl zeichnet nur Linien, die
+      // Fahrzeugmarken und Halte sind DOM-Elemente).
       new ctx.deck.PathLayer({
         id: 'live-trails', data: vis, getPath: d => d.rest,
-        getColor: d => { const c = colorFor(d.v); return [...c, dim(d.v) ? 25 : 90]; },
+        getColor: d => { const c = colorFor(d.v); return [...c, 70]; },
         widthUnits: 'pixels', getWidth: 2, capRounded: true, jointRounded: true,
-        updateTriggers: { getPath: t, getColor: sel },
+        updateTriggers: { getPath: t },
       }),
-      // Volle Länge der gewählten Linie: alle Halte der Fahrt, verbunden, in der Linienfarbe des
-      // Betreibers (dieselbe Farbe wie Pill und Fahrzeug).
+      // Volle Länge der gewählten Linie: alle Halte der Fahrt, verbunden, in der Linienfarbe.
       chainCache.length ? new ctx.deck.PathLayer({
         id: 'live-line-chain', data: chainCache, getPath: d => d,
         getColor: () => { const c = popupVehicle ? colorFor(popupVehicle) : [255, 209, 102]; return [...c, 170]; },
         widthUnits: 'pixels', getWidth: 4, capRounded: true, jointRounded: true,
       }) : null,
-      new ctx.deck.ScatterplotLayer({
-        id: 'live-heads', data: vis, getPosition: d => d.pos,
-        // Größe: mit dem Finger trifft man sie so ohne Zoomen (die Trefferfläche von deck.gl folgt
-        // dem Radius). Etwas kleiner als die erste Fassung — sie stand zu dick über der Karte.
-        getRadius: d => (focusTrip && d.v.tripId === focusTrip ? 11 : (d.v.mode === 'bus' ? 6.5 : 7.5)), radiusUnits: 'pixels',
-        getFillColor: d => { const c = colorFor(d.v); return [...c, alpha(d.v)]; },
-        // Der Rand trägt die Verspätungsfarbe. Beim gewählten Fahrzeug stattdessen die Akzentfarbe:
-        // der Rand war vorher fast weiß (delayColor liefert für „pünktlich/unbekannt" 230,235,245) und
-        // ließ den angetippten Punkt auf dem Telefon wie einen weißen Klumpen aussehen.
-        stroked: true,
-        getLineColor: d => (focusTrip && d.v.tripId === focusTrip ? [255, 209, 102, 255]
-                            : [...delayColor(d.v.delayMin), dim(d.v) ? 30 : 235]),
-        getLineWidth: d => (focusTrip && d.v.tripId === focusTrip ? 2.2 : (Math.abs(d.v.delayMin) >= 1 ? 2.2 : 1.4)), lineWidthUnits: 'pixels',
-        pickable: true, radiusMinPixels: 5,
-        updateTriggers: { getPosition: t, getFillColor: sel, getLineColor: [sel, focusTrip], getRadius: focusTrip, getLineWidth: focusTrip },
-      }),
-      focus ? new ctx.deck.ScatterplotLayer({    // Ring um das angeklickte Fahrzeug
-        id: 'live-focus', data: [focus], getPosition: d => d.pos,
-        // Nur etwas größer als die Marke selbst und in der Akzentfarbe statt Weiß: der Ring soll zeigen
-        // „dieses Fahrzeug ist gewählt", nicht wie ein zweiter weißer Punkt daneben aussehen.
-        getRadius: 22 + 4 * Math.abs(Math.sin(t / 430)), radiusUnits: 'pixels', radiusMinPixels: 21,
-        stroked: true, filled: false, getLineColor: [255, 209, 102, 240], getLineWidth: 2, lineWidthUnits: 'pixels',
-        pickable: false,
-        updateTriggers: { getPosition: t, getRadius: t },
-      }) : null,
-      // Beschriftete Marke: Sinnbild der Verkehrsart + Liniennummer auf der Linienfarbe. Immer sichtbar
-      // und antippbar (deck.gl prüft die Fläche) — auf dem Telefon ein viel größeres Ziel als ein Punkt.
-      ctx.deck.TextLayer ? new ctx.deck.TextLayer({
-        id: 'live-labels', data: vis, getPosition: d => d.pos,
-        getText: d => `${MODE_GLYPH[d.v.mode] || ''} ${d.v.lineName}`.trim(),
-        // Immer sichtbar; nur in der Übersicht etwas kleiner, damit sich die Marken nicht überlagern.
-        getSize: d => (focusTrip && d.v.tripId === focusTrip ? 13.5
-          : (ctx.map.getZoom() < 12.5 ? 10.5 : 12)),
-        sizeUnits: 'pixels',
-        fontFamily: pageFont(),
-        fontWeight: 700,
-        getColor: d => [...LABEL_TEXT, dim(d.v) ? 150 : 255],
-        getBackgroundColor: d => [...colorFor(d.v), dim(d.v) ? 130 : 245],
-        background: true, backgroundPadding: [8, 4],
-        getTextAnchor: 'middle', getAlignmentBaseline: 'center',
-        pickable: true, billboard: true,
-        updateTriggers: { getPosition: t, getText: sel, getBackgroundColor: [sel, focusTrip],
-                          getColor: [sel, focusTrip], getSize: focusTrip },
-      }) : null,
     ].filter(Boolean);
+    // Marken und Halte zuletzt: als DOM-Elemente liegen sie über der Karte und bekommen den Tipp
+    // zuerst — deshalb öffnet ein Tipp auf ein Fahrzeug immer das Fahrzeug, nie den Halt dahinter.
+    renderMarkers(vis, shownStops, focusTrip);
+    ctx.overlay.setProps({ layers, onHover: hover, onClick: click, getCursor: cursor });
     ctx.overlay.setProps({ layers, onHover: hover, onClick: click, getCursor: cursor });
     if (force || Date.now() - lastPaint > 1000) {     // Statistik nur ~1x je Sekunde neu zeichnen
       lastPaint = Date.now();
@@ -621,18 +530,13 @@
     tip.style.left = info.x + 14 + 'px'; tip.style.top = info.y + 14 + 'px';
   }
 
+  // Die Fahrzeug- und Haltemarken sind DOM-Elemente und behandeln ihren Tipp selbst (siehe
+  // tapVehicle/tapStop). Hier bleibt nur der Tipp ins Leere: Karte schließen, Auswahl aufheben.
   function click(info) {
-    if (ctx.state) ctx.state.selAt = Date.now();          // Interaktion -> Ruheuhr neu starten
-    if (ctx.hidePanel) ctx.hidePanel();                   // Telefon: Panel aus dem Weg räumen
-    const o = info.object;
-    if (o && o.v) { startFollow(o.v); openPopup(o.v); return; }   // Fahrzeug: Kamera mitnehmen + Karte
-    if (o && o.stopId) {                                          // Haltestelle: Kamera hin + Abfahrten
-      openStation(o);
-      announceStation(o);
-      return;
-    }
-    stopFollow(); closePopup();                                   // Tipp auf die Karte schließt
-    // Auswahl aufheben: erst dann erscheinen wieder alle Haltestellen
+    if (ctx.state) ctx.state.selAt = Date.now();
+    if (ctx.hidePanel) ctx.hidePanel();
+    void info;
+    stopFollow(); closePopup();
     if (ctx.state && ctx.state.selLine !== null && ctx.selectLine) ctx.selectLine(null);
   }
 
@@ -760,17 +664,13 @@
     }).join('') : '';
     const failMsg = leg && leg.error
       ? (leg.error === 'noLegs' ? T('popup.noTrip') : T('popup.failed') + ' (' + leg.error + ')') : '';
-    const body = v.opOnly
-      ? `<div class="pop-sub">${esc(T('popup.operatorOnly'))}</div>` +
-        (v.opAt ? `<div class="pop-sub">${esc(T('updatedAgo', { s: Math.max(0, Math.round((Date.now() - v.opAt) / 1000)) }))}</div>` : '')
-      : leg && leg.error
+    const body = leg && leg.error
       ? `<div class="pop-sub pop-err">${esc(failMsg)}</div>`
       : loading
         ? `<div class="pop-sub">${esc(T('popup.loading'))}</div>`
         : `<ul class="pop-stops">${rows || `<li><span class="st-name">${esc(T('popup.noStops'))}</span></li>`}</ul>`;
-    // Herkunft der Position: vom Betreiber gemeldet oder von uns aus Haltzeiten abgeleitet. Beides
-    // gelb und fett, damit die Einordnung nicht im Kleingedruckten verschwindet.
-    const note = v.op ? T('popup.positionOperator') : T('popup.positionNote');
+    // Herkunft der Position: aus Haltzeiten abgeleitet, der offene Strom hat kein GPS.
+    const note = T('popup.positionNote');
     return `
       <div class="pop-head">
         <span class="pop-line" style="background:${cssColor(v)}">${esc(v.lineName)}</span>
@@ -818,14 +718,6 @@
   function followTick() {
     if (!followTrip) return;
     if (Date.now() > followUntil) { stopFollow(); return; }
-    // Betreiberpunkte liegen nicht auf unserer abgeleiteten Linie: dann der zuletzt GEZEICHNETEN
-    // Position folgen, sonst zieht die Kamera an einer Stelle, an der der Punkt nicht ist.
-    const op = opPos.get(followTrip);
-    if (op) {
-      ctx.map.easeTo({ center: op, zoom: Math.max(ctx.map.getZoom(), FOLLOW_ZOOM),
-                       duration: FRAME_MS, easing: t => t });
-      return;
-    }
     const v = vehicles.find(x => x.tripId === followTrip) || (popupVehicle && popupVehicle.tripId === followTrip ? popupVehicle : null);
     if (!v) { stopFollow(); return; }
     const p = vehiclePosAt(v, Date.now());
@@ -1343,7 +1235,8 @@
       };
     },
     _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell,
-             dedupeStops, opInfo: () => opLog, sameDirection, metresBetween,
+             dedupeStops, markers: () => markerLog, markerNode: () => markerBox, markerHtml,
+             tapVehicle, tapStop,
              tripChain, chain: () => chainCache,
              goToStop, nextStops, stops: () => stops, popupStopList: () => popupStopList,
              setRelaxAt(t) { ctx.state.selAt = t; }, relaxAt: () => ctx.state.selAt, RELAX_MS,

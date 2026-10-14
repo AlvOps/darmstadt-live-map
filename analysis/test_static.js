@@ -201,64 +201,47 @@ function run(check, log = console.log) {
     /\.note-warn \{ color: var\(--accent\); font-weight: 700; \}/.test(css) &&
     /class="pop-note note-warn"/.test(liveSrc) &&
     /<p class="note-warn" data-i18n="attributionPosition">/.test(html));
-  // HEAG-Positionen: eigener Abruf, nur als Ergänzung — und in der Quellenangabe benannt.
-  const heagSrc = fs.readFileSync(path.join(DOCS, 'heag.js'), 'utf8');
-  check('operator positions are fetched from the HEAG backend, politely and without a hard dependency',
-    /service\.ivanto\.de\/srs\/api\/v1\/vehiclelivedata\?tenant=heag/.test(heagSrc) &&
-    /REFRESH_MS = 30000/.test(heagSrc) && /catch \(e\)/.test(heagSrc) &&
-    /heag\.js\?v=\d{8}-\d+/.test(html));
-  check('one source per vehicle: the operator dot replaces the derived one, never both',
-    /OP_TWIN_MAX_M = 2000/.test(liveSrc) && /OP_SUPPRESS_M = 250/.test(liveSrc) &&
-    /claimedCar\.add\(p\.ci\)/.test(liveSrc) && /opLog\.suppressed\+\+/.test(liveSrc) &&
-    /opOnly/.test(liveSrc));
-  // Die Zielangabe ist nur ein Bonus: der offene Strom liefert für Bahnen kein Kopfschild, und `dest`
-  // ist der NÄCHSTE Halt — danach zu filtern ließ dieselbe Bahn zweimal auf der Karte stehen.
-  check('pairing no longer hinges on a destination that our feed does not provide',
-    /function sameDirection\(op, v\)/.test(liveSrc) &&
-    /const h = flat\(v\.headsign\);/.test(liveSrc) &&
-    !/sameDirection\(o, near\.v\) && best <= OP_TWIN_MAX_M/.test(liveSrc));
-  check('operator dots glide between reports instead of jumping every 30 s',
-    /OP_SMOOTH_MS = 15000/.test(liveSrc) && /function withOperator\(cur, t\)/.test(liveSrc) &&
-    /st\.from\[0\] \+ \(st\.to\[0\] - st\.from\[0\]\) \* k/.test(liveSrc));
-  // Marken wie in der HEAG-Karte: Liniennummer auf der Linienfarbe plus Sinnbild der Verkehrsart,
-  // in der dunklen Ansicht also dunkle Schrift; nur auf Straßenebene, sonst bleibt es beim Punkt.
-  check('vehicle markers carry the line number and a mode pictogram (HEAG style, dark theme)',
-    /const MODE_GLYPH = \{ tram: '🚋', bus: '🚌', rail: '🚆' \}/.test(liveSrc) &&
-    /const LABEL_TEXT = \[17, 17, 17\]/.test(liveSrc) &&
-    /id: 'live-labels'/.test(liveSrc) &&
-    /getText: d => `\$\{MODE_GLYPH\[d\.v\.mode\] \|\| ''\} \$\{d\.v\.lineName\}`\.trim\(\)/.test(liveSrc) &&
-    /background: true, backgroundPadding: \[8, 4\]/.test(liveSrc) &&
-    /fontFamily: pageFont\(\)/.test(liveSrc) &&            // keine zweite Typografie im Bild
-    !/LABEL_MIN_ZOOM/.test(liveSrc) &&                     // Marken immer, nicht erst beim Zoomen
-    /getRadius: 22 \+ 4 \* Math\.abs\(Math\.sin\(t \/ 430\)\), radiusUnits: 'pixels', radiusMinPixels: 21/.test(liveSrc));
-  check('dots we could never describe are not drawn (operator fleet is network-wide, we are not)',
-    /const inBox = \(lat, lon\) => \{/.test(liveSrc) && /opLog\.skipped\+\+; return;/.test(liveSrc));
-  check('the credits name the operator feed and the mixed provenance',
-    /attributionOperator: '/.test(i18nSrc) && /attributionPosition: '/.test(i18nSrc) &&
-    /<p data-i18n="attributionOperator">/.test(html));
-  check('vehicle dots are comfortably tappable but not oversized',
-    /getRadius: d => \(focusTrip && d\.v\.tripId === focusTrip \? 11 : \(d\.v\.mode === 'bus' \? 6\.5 : 7\.5\)\)/.test(liveSrc) &&
-    /pickable: true, radiusMinPixels: 5/.test(liveSrc));
-  // Ein angetipptes Fahrzeug darf nicht weiß aussehen: vorher war der Rand fast weiß (delayColor
-  // liefert 230,235,245 für pünktlich/unbekannt) und der Ring war 20-28 px groß.
-  check('the selected vehicle is marked in the accent colour, not white, with a small ring',
-    /getLineColor: d => \(focusTrip && d\.v\.tripId === focusTrip \? \[255, 209, 102, 255\]/.test(liveSrc) &&
-    /getRadius: 22 \+ 4 \* Math\.abs\(Math\.sin\(t \/ 430\)\), radiusUnits: 'pixels', radiusMinPixels: 21/.test(liveSrc) &&
-    /getLineColor: \[255, 209, 102, 240\], getLineWidth: 2/.test(liveSrc) &&
-    !/autoHighlight: true, highlightColor: \[255, 255, 255, 130\]/.test(liveSrc));
-  check('camera follow uses the drawn operator position (no drift off the dot)',
-    /const op = opPos\.get\(followTrip\)/.test(liveSrc) && /opPos\.set\(trip, pos\)/.test(liveSrc));
+  // Marken sind DOM-Elemente: wirklich rund, weiß, mit SVG-Sinnbild für Bus/Bahn/Zug — und sie
+  // bekommen den Tipp vor der Karte (sonst öffnete sich der Halt dahinter).
+  check('vehicle markers are round white pills with a mode pictogram (DOM, not a text layer)',
+    /id="markers"/.test(html) && /#markers \{ position: absolute/.test(css) &&
+    /\.mk \{[\s\S]*border-radius: 999px; background: #fff; color: #10131a;/.test(css) &&
+    /\.mk svg \{ width: 14px; height: 14px; flex: none; fill: currentColor; \}/.test(css) &&
+    /const MODE_SVG = \{/.test(liveSrc) &&
+    /tram: '<svg viewBox="0 0 24 24"/.test(liveSrc) && /bus: '<svg viewBox="0 0 24 24"/.test(liveSrc) &&
+    /rail: '<svg viewBox="0 0 24 24"/.test(liveSrc) &&
+    /function renderMarkers\(vis, shownStops, focusTrip\)/.test(liveSrc) &&
+    /el\.className = 'mk'/.test(liveSrc) && !/live-labels/.test(liveSrc));
+  // Ein Tipp auf ein Fahrzeug gehört dem Fahrzeug: Panel weg, Linienauswahl aufheben, Fahrzeug zeigen.
+  check('a tap on a vehicle shows the vehicle, not the stop behind it and not the line',
+    /function tapVehicle\(v\)/.test(liveSrc) &&
+    /if \(ctx\.state\.selLine !== null && ctx\.selectLine\) ctx\.selectLine\(null\)/.test(liveSrc) &&
+    /ev\.stopPropagation\(\); tapVehicle\(v\)/.test(liveSrc) &&
+    /renderMarkers\(vis, shownStops, focusTrip\)/.test(liveSrc) &&
+    /function click\(info\) \{[\s\S]*stopFollow\(\); closePopup\(\);/.test(liveSrc));
+  check('stops are circles with a letter, localised and switching without a reload',
+    /\.stopmk \{[\s\S]*border-radius: 50%/.test(css) &&
+    /el\.className = 'stopmk'/.test(liveSrc) &&
+    /if \(el\.textContent !== letter\) el\.textContent = letter/.test(liveSrc) &&
+    /const letter = T\('stopMark'\)/.test(liveSrc));
+  check('focus sits on the marker itself and the others step back',
+    /\.mk\.focus \{ border-color: var\(--accent\)/.test(css) && /\.mk\.dim \{ opacity: \.55; \}/.test(css) &&
+    /el\.classList\.toggle\('focus', id === focusTrip\)/.test(liveSrc) &&
+    /el\.classList\.toggle\('dim', !!focusTrip && id !== focusTrip\)/.test(liveSrc));
+  check('the operator feed is gone (it could not be merged without duplicates)',
+    !/heag/i.test(liveSrc) && !/heag\.js/.test(html) && !fs.existsSync(path.join(DOCS, 'heag.js')));
+  check('credits state the single source again (derived positions only)',
+    /attributionPosition: '/.test(i18nSrc) && !/attributionOperator/.test(i18nSrc) &&
+    !/positionOperator/.test(i18nSrc) && /<p class="note-warn" data-i18n="attributionPosition">/.test(html));
   // Eine Suche von außerhalb des Ausschnitts muss trotzdem Abfahrten zeigen: der Halt wird über den
   // Namen nachgeschlagen, statt auf die Halte des aktuellen Ausschnitts zu hoffen ("mal ja, mal nein").
   check('a stop outside the current view is looked up by name (departures are no longer hit-and-miss)',
     /API_GEOCODE = 'https:\/\/api\.transitous\.org\/api\/v1\/geocode'/.test(liveSrc) &&
     /async function lookupStop\(name\)/.test(liveSrc) && /lookupStop\(stop\.name\)\.then/.test(liveSrc));
   // Am Knotenpunkt (Hauptbahnhof: 16 Steig-Einträge) standen viele fast weiße Punkte übereinander.
-  check('station dots are deduped per stop (not per platform) and no longer near-white',
+  check('stops are deduped per stop, not per platform',
     /normStopName\(s\.name\)\}\|\$\{s\.lat\.toFixed\(2\)\}/.test(liveSrc) &&
-    /id: 'live-stations'/.test(liveSrc) && /id: 'live-station-marks'/.test(liveSrc) &&
-    /getText: \(\) => T\('stopMark'\)/.test(liveSrc) &&
-    /getRadius: d => \(d\.focus \? 10 : 8\)/.test(liveSrc));
+    /const better = \(!prev\.stopId && cand\.stopId\)/.test(liveSrc));
   // Haltestelle als Kreis mit Buchstabe: im Deutschen „H" (Haltestelle), im Englischen „S" (station).
   check('stop letter is localised (H in German, S in English)',
     /stopMark: 'S'/.test(i18nSrc) && /stopMark: 'H'/.test(i18nSrc) &&
@@ -268,8 +251,6 @@ function run(check, log = console.log) {
     /function tripChain\(leg\)/.test(liveSrc) && /id: 'live-line-chain'/.test(liveSrc) &&
     /const c = popupVehicle \? colorFor\(popupVehicle\)/.test(liveSrc) &&
     /chainCache = popupChain \? \[popupChain\] : \[\]/.test(liveSrc));
-  check('unselected vehicles are dimmed but still readable (not pale ghosts)',
-    /const alpha = v => \(dim\(v\) \? 130 : 255\)/.test(liveSrc));
   check('the drawer check mirrors the CSS media query exactly (panel closes where the drawer exists)',
     /const DRAWER_QUERY = '\(max-width: 700px\), \(hover: none\) and \(pointer: coarse\)'/.test(html) &&
     /\(max-width: 700px\), \(hover: none\) and \(pointer: coarse\)/.test(css) &&
