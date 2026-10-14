@@ -240,8 +240,13 @@ function run(check, log = console.log) {
     /syncMarkers: \(\) => syncMarkerPositions\(\)/.test(liveSrc) &&
     /\['move', 'zoom', 'rotate', 'pitch'\]\.forEach\(ev => map\.on\(ev, \(\) => window\.DarmstadtLive\.syncMarkers\(\)\)\)/.test(html) &&
     /window\.DarmstadtLive\.syncMarkers\(\);\n    requestAnimationFrame\(loop\);/.test(html));
-  check('stop marker is a small, properly centred circle',
-    /\.stopmk \{[\s\S]*box-sizing: border-box; padding: 0; margin: 0;[\s\S]*width: 17px; height: 17px; border-radius: 50%;[\s\S]*align-items: center; justify-content: center;/.test(css));
+  check('stop marker is a small, properly centred circle (yellow, green letter, 13px)',
+    /\.stopmk \{[\s\S]*box-sizing: border-box; padding: 0; margin: 0;[\s\S]*width: 13px; height: 13px; border-radius: 50%;[\s\S]*align-items: center; justify-content: center;[\s\S]*background: var\(--accent\); color: #1d7a3d;/.test(css));
+  // Die Linie einer Fahrt folgt den Straßen: echte Geometrie (legGeometry) vor Luftlinie.
+  check('route line uses the trip street geometry, stops only as fallback',
+    /leg\.legGeometry && leg\.legGeometry\.points/.test(liveSrc) &&
+    /const pts = decodePolyline\(g, 1e7\)/.test(liveSrc) &&
+    /function decodePolyline\(str, factor\)/.test(liveSrc));
   check('the operator feed is gone (it could not be merged without duplicates)',
     !/heag/i.test(liveSrc) && !/heag\.js/.test(html) && !fs.existsSync(path.join(DOCS, 'heag.js')));
   check('credits state the single source again (derived positions only)',
@@ -362,6 +367,38 @@ if (require.main === module) {
   let fails = 0;
   const check = (n, c, e) => { console.log(`  ${c ? 'PASS' : 'FAIL'}  ${n}${!c && e ? ' — ' + e : ''}`); if (!c) fails++; };
   run(check);
+  // Dekoder gegen echte Proben prüfen: die beiden Quellen kodieren unterschiedlich (1e5 vs 1e7).
+  {
+    const vm = require('vm');
+    const liveSrcU = fs.readFileSync(path.join(DOCS, 'live.js'), 'utf8');   // liveSrc gilt nur im Block oben
+    const fn = liveSrcU.match(/function decodePolyline\([\s\S]*?\n  \}/);
+    const box = {};
+    if (!fn) {
+      check('encoded polyline decodes back to the known coordinates', false, 'Funktion nicht gefunden');
+    } else {
+      vm.createContext(box);
+      vm.runInContext(fn[0] + '\nthis.decodePolyline = decodePolyline;', box);
+      // Beispielkette (Präzision 5) aus der Google-Dokumentation
+      const got = box.decodePolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@', 1e5);
+      const want = [[-120.2, 38.5], [-120.95, 40.7], [-126.453, 43.252]];
+      check('encoded polyline decodes back to the known coordinates',
+        got.length === want.length && got.every((p, i) =>
+          Math.abs(p[0] - want[i][0]) < 1e-3 && Math.abs(p[1] - want[i][1]) < 1e-3), JSON.stringify(got));
+      // Zwei echte Proben: /map/trips-Abschnitt (1e5) und legGeometry aus /trip (1e7).
+      const SEC = 'akgoHwcys@ADAHAJCFCFEHEDKFYHGBE?q@NWFa@L[J{@XIB_Bj@eBn@ULs@V';
+      const TRIP = 'oiufv\\mliscDaCPeVtBkPvAmIh@m[tBsg@fAsCCgMKsM_CsLuBaPuJcCyAiY}YaPaYuKwYyFaVcFe_@uCif@';
+      const a5 = box.decodePolyline(SEC, 1e5)[0], a7 = box.decodePolyline(SEC, 1e7)[0];
+      check('a /map/trips section decodes with 1e5 into Darmstadt (and not with 1e7)',
+        Math.abs(a5[0] - 8.6536) < 0.002 && Math.abs(a5[1] - 49.8503) < 0.002 && a7[1] < 1,
+        `1e5 ${a5.map(v => v.toFixed(4))} | 1e7 ${a7.map(v => v.toFixed(4))}`);
+      const t7 = box.decodePolyline(TRIP, 1e7)[0];
+      check('the trip legGeometry decodes with 1e7 into Darmstadt',
+        Math.abs(t7[0] - 8.6316) < 0.002 && Math.abs(t7[1] - 49.8724) < 0.002, t7.map(v => v.toFixed(4)).join(', '));
+      check('both call sites use the factor their source encodes with',
+        /decodePolyline\(t\.polyline, 1e5\)/.test(liveSrcU) && /decodePolyline\(g, 1e7\)/.test(liveSrcU));
+    }
+  }
+
   console.log(`\nRESULT: ${fails ? 'FAIL (' + fails + ')' : 'PASS'}`);
   process.exit(fails ? 1 : 0);
 }

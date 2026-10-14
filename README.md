@@ -62,6 +62,11 @@ still yields smooth movement.
   colour, that the position is derived from realtime stop prognoses.
 - **Big, tappable markers.** A pill is roughly 30 × 22 px with 12.5 px text, so a thumb hits the right
   vehicle without zooming first — much easier than the 6.5 px dots this replaced.
+- **The drawn line follows the streets.** Tapping a vehicle shows its whole line using the trip's own
+  geometry (`legGeometry`, 419 points at 6.3 m spacing on a measured tram line) instead of straight
+  stop-to-stop segments, which were 52× coarser and 8% short. Stops are only the fallback when a trip
+  carries no geometry. Two encodings are involved — section polylines from `/map/trips` at 1e5, trip
+  geometry from `/trip` at 1e7 — so the factor is passed at each call site and asserted in the tests.
 - **Realtime only.** Only vehicles that actually carry realtime data are drawn. Vehicles without
   realtime are dropped — a position derived solely from the timetable would be invented, not observed.
 - **Vehicle popup.** Tap a vehicle: line badge in its line colour, delay status

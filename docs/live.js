@@ -46,7 +46,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261014-19';
+  const VERSION = '20261014-20';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -87,8 +87,11 @@
   const num = ts => { const v = Date.parse(ts); return Number.isFinite(v) ? v : NaN; };
 
   // ---------- Geometrie
-  function decodePolyline(str) {
+  // Kodierte Polylinie (Google-Format) zu [lon, lat]. Der Faktor gehört zum Aufruf, weil die Quellen
+  // unterschiedlich kodieren: Abschnitte aus /map/trips mit 1e5, legGeometry aus /trip mit 1e7.
+  function decodePolyline(str, factor) {
     if (!str) return [];
+    const f = factor || 1e5;          // 1e5 ist die Kodierung der Abschnittspolylinien
     let i = 0, lat = 0, lon = 0;
     const out = [];
     while (i < str.length) {
@@ -98,7 +101,7 @@
         const dv = (r & 1) ? ~(r >> 1) : (r >> 1);
         if (which === 0) lat += dv; else lon += dv;
       }
-      out.push([lon * 1e-5, lat * 1e-5]);
+      out.push([lon / f, lat / f]);
     }
     return out;
   }
@@ -236,7 +239,9 @@
       const prev = byTrip.get(tid);
       const running = dep <= nowMs;
       if (prev && !(running && !prev.running)) continue;      // pro Fahrt genau ein Abschnitt
-      const path = decodePolyline(t.polyline);
+      // Faktor 1e5: so kodiert /map/trips seine Abschnitte. Falscher Faktor -> alle Positionen liegen
+      // weit außerhalb des Ausschnitts und die Karte bleibt leer.
+      const path = decodePolyline(t.polyline, 1e5);
       if (path.length < 2) continue;
       const cd = cumDist(path);
       if (!(cd[cd.length - 1] > 0)) continue;
@@ -605,10 +610,18 @@
     return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
   };
 
+  // Die Fahrt liefert ihre echte Geometrie mit (legGeometry.points, kodierte Polylinie, Faktor 1e7).
+  // Damit liegt die Linie auf den Straßen statt als Luftlinie von Halt zu Halt.
   // Alle Halte der Fahrt der Reihe nach (auch die bereits durchfahrenen) — das ist die volle Länge der
   // Linie, nicht nur der Rest vor dem Fahrzeug. Die Halte bringen Koordinaten mit.
   function tripChain(leg) {
     if (!leg || leg.error || leg.operator || leg.noLegs) return null;
+    // Vorrang: die mitgelieferte Straßengeometrie. Nur wenn sie fehlt, gerade Linien zwischen den Halten.
+    const g = leg.legGeometry && leg.legGeometry.points;
+    if (typeof g === 'string' && g.length > 8) {
+      const pts = decodePolyline(g, 1e7).filter(q => q.every(Number.isFinite));
+      if (pts.length >= 2) return pts;
+    }
     const seq = [];
     if (leg.from) seq.push(leg.from);
     (leg.intermediateStops || []).forEach(s => seq.push(s));
@@ -1247,7 +1260,7 @@
     },
     _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell,
              dedupeStops, markers: () => markerLog, markerNode: () => markerBox, markerHtml,
-             syncMarkers: () => syncMarkerPositions(),
+             syncMarkers: () => syncMarkerPositions(), decodePolyline,
              tapVehicle, tapStop,
              tripChain, chain: () => chainCache,
              goToStop, nextStops, stops: () => stops, popupStopList: () => popupStopList,
