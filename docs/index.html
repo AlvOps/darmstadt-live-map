@@ -2,8 +2,9 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Darmstadt in Bewegung</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<title>Darmstadt Live Map</title>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.4/dist.min.js"></script>
@@ -86,82 +87,135 @@
   @keyframes bpulse { 0%,100% { opacity: 1 } 50% { opacity: .2 } }
   .badge-live.off { background: rgba(255,255,255,.06); color: var(--muted); border-color: var(--line); }
   .badge-live.off i { background: var(--muted); animation: none; }
+  /* --- Sprachumschalter (oben rechts) --- */
+  #lang { top: 16px; right: 16px; padding: 6px; z-index: 4; top: calc(16px + env(safe-area-inset-top)); }
+  #lang .seg button { padding: 7px 11px; font-size: 12.5px; font-weight: 600; min-width: 40px; }
+
+  /* --- Fahrzeug-Popup (Karte unten: Bottom-Sheet, Desktop: Karte) --- */
+  #popup { display: none; z-index: 6; padding: 12px 14px 14px; }
+  #popup.on { display: block; }
+  .pop-head { display: flex; align-items: center; gap: 8px; }
+  .pop-line { font-size: 13px; font-weight: 700; color: #111; padding: 2px 8px; border-radius: 7px; flex: none; }
+  .pop-title { font-weight: 650; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pop-close { margin-left: auto; flex: none; padding: 4px 9px; font-size: 12px; border-radius: 8px; }
+  .pop-delay { display: inline-block; font-size: 12px; font-weight: 650; padding: 3px 9px; border-radius: 999px; margin-top: 8px; }
+  .pop-delay.late { background: rgba(255,90,80,.16); color: #ff9b93; }
+  .pop-delay.ontime { background: rgba(120,220,160,.16); color: #86e0a8; }
+  .pop-delay.early { background: rgba(120,220,160,.16); color: #86e0a8; }
+  .pop-sub { color: var(--muted); font-size: 11.5px; margin-top: 7px; line-height: 1.45; }
+  .pop-stops { list-style: none; margin: 10px 0 0; padding: 0; max-height: 34vh; overflow-y: auto; }
+  .pop-stops li { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
+  .pop-stops .st-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pop-stops .st-time { font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
+  .pop-stops .st-dly { font-variant-numeric: tabular-nums; font-weight: 600; flex: none; min-width: 34px; text-align: right; }
+  .pop-stops .st-dly.late { color: #ff9b93; }
+  .pop-stops .st-dly.ontime { color: #86e0a8; }
+  .pop-note { color: var(--muted); font-size: 11px; margin-top: 10px; line-height: 1.4; }
+
   #banner { position: absolute; z-index: 3; top: 16px; left: 50%; transform: translateX(-50%);
     max-width: min(560px, 90vw); padding: 9px 14px; font-size: 12.5px; background: rgba(255,90,80,.14);
     border: 1px solid rgba(255,90,80,.4); border-radius: 10px; color: #ffd9d6; backdrop-filter: blur(8px); }
   body.live #play, body.live #daywrap, body.live #speedwrap { display: none; }
   body.live #hint { display: none; }
 
-  @media (max-width: 640px) {
-    #head { right: 16px; max-width: none; }
+  /* --- Telefon: kompakte Karte oben, Bottom-Sheet unten, große Ziele --- */
+  @media (max-width: 700px) {
+    #head { top: calc(10px + env(safe-area-inset-top)); left: 10px; right: 74px; padding: 11px 13px; max-width: none; }
+    #head h1 { font-size: 15px; }
+    #head p { font-size: 11.5px; }
     #legend-sec { display: none; }
-    .seg button { padding: 7px 9px; }
-    #clock { font-size: 26px; min-width: 80px; }
-    #hint { display: none; }
+    #toggles { gap: 4px; }
+    .tog { padding: 6px 9px; font-size: 12px; }
+    #counts { gap: 14px; }
+    .cnt b { font-size: 19px; }
+    .cnt span { font-size: 10.5px; }
+    #lang { top: calc(10px + env(safe-area-inset-top)); right: 10px; padding: 4px; }
+    #lang .seg button { padding: 9px 10px; min-width: 42px; }
+    #bar { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); padding: 10px 12px 11px; }
+    #row { gap: 8px; }
+    #clock { font-size: 24px; min-width: 72px; }
+    .seg button { padding: 9px 11px; min-height: 40px; }
+    #timeline { height: 40px; }
+    #popup { left: 8px; right: 8px; bottom: calc(96px + env(safe-area-inset-bottom)); max-height: 46vh; overflow-y: auto; }
+    .pop-stops { max-height: none; }
+    #banner { top: calc(70px + env(safe-area-inset-top)); font-size: 12px; }
+    #tip { display: none !important; }        /* auf Touch gibt es nur das Popup */
+  }
+  @media (min-width: 701px) {
+    #popup { left: 16px; bottom: 132px; width: 372px; max-height: 54vh; overflow-y: auto; }
   }
 </style>
 </head>
 <body>
 <div id="map"></div>
-<div id="loading">Lade Daten …</div>
+<div id="loading" data-i18n="loading">Loading …</div>
+
+<div id="lang" class="panel">
+  <div class="seg" role="group" aria-label="Language / Sprache">
+    <button data-lang="en" aria-pressed="true">EN</button><button data-lang="de" aria-pressed="false">DE</button>
+  </div>
+</div>
 
 <div id="head" class="panel">
-  <h1>Darmstadt in Bewegung<span class="badge-live" id="livebadge"><i></i>Live</span></h1>
-  <p>Straßenbahn, Bus und S-/Regionalbahn – Echtzeit aus dem DELFI-Datenstrom</p>
+  <h1><span data-i18n="appTitle">Darmstadt Live Map</span><span class="badge-live" id="livebadge"><i></i><span id="livebadgetxt">Live</span></span></h1>
+  <p data-i18n="subtitle">Tram, bus and regional rail — from the open realtime feed</p>
   <div class="sec">
-    <div class="lbl">Datenquelle</div>
+    <div class="lbl" data-i18n="dataSource">Data</div>
     <div class="seg" id="mode">
-      <button data-live="1" class="on">Echtzeit</button><button data-live="0">Fahrplan</button>
+      <button data-live="1" class="on" data-i18n="modeLive">Realtime</button><button data-live="0" data-i18n="modeSchedule">Timetable</button>
     </div>
-    <div id="livestat2">warte auf erste Daten …</div>
+    <div id="livestat2" data-i18n="waiting">waiting for first data …</div>
+    <div id="routenote" class="pop-note"></div>
   </div>
   <div class="sec">
-    <div class="lbl">Gerade unterwegs</div>
+    <div class="lbl" data-i18n="heading">On the road now</div>
     <div id="counts">
-      <div class="cnt" data-mode="tram"><b id="n-tram">0</b><span><i style="background:var(--tram)"></i>Straßenbahnen</span></div>
-      <div class="cnt" data-mode="bus"><b id="n-bus">0</b><span><i style="background:var(--bus)"></i>Busse</span></div>
-      <div class="cnt" data-mode="rail"><b id="n-rail">0</b><span><i style="background:var(--rail)"></i>Züge</span></div>
+      <div class="cnt" data-mode="tram"><b id="n-tram">0</b><span><i style="background:var(--tram)"></i><span data-i18n="trams">Trams</span></span></div>
+      <div class="cnt" data-mode="bus"><b id="n-bus">0</b><span><i style="background:var(--bus)"></i><span data-i18n="buses">Buses</span></span></div>
+      <div class="cnt" data-mode="rail"><b id="n-rail">0</b><span><i style="background:var(--rail)"></i><span data-i18n="trains">Trains</span></span></div>
     </div>
     <div class="livestat" id="livestat"></div>
   </div>
   <div class="sec">
-    <div class="lbl">Auf der Karte zeigen</div>
+    <div class="lbl" data-i18n="showOnMap">Show on map</div>
     <div id="toggles">
-      <button class="tog" data-mode="tram" aria-pressed="true"><span class="box"></span><i style="background:var(--tram)"></i>Straßenbahn</button>
-      <button class="tog" data-mode="bus" aria-pressed="true"><span class="box"></span><i style="background:var(--bus)"></i>Bus</button>
-      <button class="tog" data-mode="rail" aria-pressed="true"><span class="box"></span><i style="background:var(--rail)"></i>S-/Regionalbahn</button>
+      <button class="tog" data-mode="tram" aria-pressed="true"><span class="box"></span><i style="background:var(--tram)"></i><span data-i18n="togTram">Tram</span></button>
+      <button class="tog" data-mode="bus" aria-pressed="true"><span class="box"></span><i style="background:var(--bus)"></i><span data-i18n="togBus">Bus</span></button>
+      <button class="tog" data-mode="rail" aria-pressed="true"><span class="box"></span><i style="background:var(--rail)"></i><span data-i18n="togRail">Regional rail</span></button>
     </div>
   </div>
   <div class="sec" id="legend-sec">
-    <div class="lbl">Linie hervorheben</div>
-    <div id="selinfo"><span id="selname"></span><button id="selclear" title="Hervorhebung aufheben">✕</button></div>
+    <div class="lbl" data-i18n="highlightLine">Highlight line</div>
+    <div id="selinfo"><span id="selname"></span><button id="selclear" data-i18n-title="clear" aria-label="Clear highlight">✕</button></div>
     <div id="legend"></div>
   </div>
 </div>
 
 <div id="bar" class="panel">
   <div id="row">
-    <div id="clock">04:00</div>
-    <button id="play" title="Abspielen/Pause (Leertaste)">❚❚</button>
+    <div id="clock">--:--</div>
+    <button id="play" data-i18n-title="playPause" title="Play/pause (space)">❚❚</button>
     <div class="ctl" id="daywrap">
-      <div class="lbl">Fahrplan für</div>
+      <div class="lbl" data-i18n="scheduleFor">Timetable for</div>
       <div class="seg" id="days">
-        <button data-day="werktag" class="on">Werktag</button><button data-day="samstag">Samstag</button><button data-day="sonntag">Sonntag</button>
+        <button data-day="werktag" class="on" data-i18n="weekday">Weekday</button><button data-day="samstag" data-i18n="saturday">Saturday</button><button data-day="sonntag" data-i18n="sunday">Sunday</button>
       </div>
     </div>
     <div class="ctl" id="speedwrap">
-      <div class="lbl">Abspieltempo · <span id="tempo-cap"></span></div>
+      <div class="lbl"><span data-i18n="tempo">Playback speed</span> · <span id="tempo-cap"></span></div>
       <div class="seg" id="speed">
-        <button data-speed="1" title="Aktuelle Uhrzeit, Fahrzeuge fahren in echter Geschwindigkeit">Live</button><button data-speed="60">Langsam</button><button data-speed="240" class="on">Mittel</button><button data-speed="960">Schnell</button>
+        <button data-speed="1" data-i18n="speedLive">Live</button><button data-speed="60" data-i18n="speedSlow">Slow</button><button data-speed="240" class="on" data-i18n="speedMedium">Medium</button><button data-speed="960" data-i18n="speedFast">Fast</button>
       </div>
     </div>
-    <span id="hint">Fahrzeug anklicken, um seine Linie hervorzuheben · Leertaste: Pause</span>
+    <span id="hint" data-i18n="hint">Tap a vehicle for line, delay and next stops</span>
   </div>
   <div id="timeline"><canvas id="tl"></canvas></div>
 </div>
 <div id="tip"></div>
 <div id="banner" hidden></div>
+<div id="popup" class="panel" role="dialog" aria-live="polite"></div>
 
+<script src="i18n.js"></script>
 <script src="live.js"></script>
 <script>
 const T0 = 3.5 * 3600, T1 = 27 * 3600;        // Betriebstag 03:30 – 03:00 (+1)
@@ -313,23 +367,26 @@ function selectLine(li) {
 
 // Linienleiste nach Verkehrsart/Betreiber gruppiert
 const GROUPS = [
-  { name: 'Straßenbahn', open: true, test: l => l.mode === 'tram' },
-  { name: 'S-Bahn', open: true, test: l => l.mode === 'rail' && l.name.startsWith('S') },
-  { name: 'Regionalzüge', test: l => l.mode === 'rail' },
-  { name: 'Stadtbusse HEAG', test: l => l.agency === 'HEAG' },
-  { name: 'Busse DADINA', test: l => l.agency === 'DADINA' },
-  { name: 'Regionalbusse RMV', test: l => l.agency === 'RMV' },
-  { name: 'Sonstige Busse', test: () => true },
+  { key: 'grpTram', open: true, test: l => l.mode === 'tram' },
+  { key: 'grpS', open: true, test: l => l.mode === 'rail' && l.name.startsWith('S') },
+  { key: 'grpRegional', test: l => l.mode === 'rail' },
+  { key: 'grpBusHeag', test: l => l.agency === 'HEAG' },
+  { key: 'grpBusDadina', test: l => l.agency === 'DADINA' },
+  { key: 'grpBusRmv', test: l => l.agency === 'RMV' },
+  { key: 'grpBusOther', test: () => true },
 ];
 function buildLegend() {
   const lg = document.getElementById('legend'), done = new Set();
-  const byName = (a, b) => a.l.name.localeCompare(b.l.name, 'de', { numeric: true });
+  const T = k => (window.I18N ? window.I18N.t(k) : k);
+  lg.innerHTML = '';                                  // nötig beim Sprachwechsel
+  const byName = (a, b) => a.l.name.localeCompare(b.l.name, window.I18N ? window.I18N.lang : 'de', { numeric: true });
   for (const g of GROUPS) {
     const items = META.lines.map((l, i) => ({ l, i })).filter(x => !done.has(x.i) && g.test(x.l)).sort(byName);
     if (!items.length) continue;
     items.forEach(x => done.add(x.i));
     const det = document.createElement('details'); det.open = !!g.open;
-    det.innerHTML = `<summary>${g.name}<span class="n">${items.length} ${items.length === 1 ? 'Linie' : 'Linien'}</span></summary><div class="chips"></div>`;
+    const n = items.length === 1 ? T('lineOne') : T('lineMany', { n: items.length });
+    det.innerHTML = `<summary>${T(g.key)}<span class="n">${n}</span></summary><div class="chips"></div>`;
     const box = det.querySelector('.chips');
     for (const { l, i } of items) {
       const c = document.createElement('span'); c.className = 'chip'; c.dataset.line = i;
@@ -398,9 +455,11 @@ addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault();
 function setSpeed(v) {
   state.speed = v;
   document.querySelectorAll('#speed button').forEach(b => b.classList.toggle('on', +b.dataset.speed === v));
+  const T = (k, vars) => (window.I18N ? window.I18N.t(k, vars) : k);
   const sec = 3600 / v;
-  document.getElementById('tempo-cap').textContent = v === 1 ? 'wie in echt' :
-    '1 Std. in ' + (sec >= 60 ? Math.round(sec / 60) + ' Min.' : Math.round(sec) + ' Sek.');
+  document.getElementById('tempo-cap').textContent = v === 1 ? T('tempoReal')
+    : sec >= 60 ? T('tempoHour', { n: Math.round(sec / 60), u: T('minUnit') })
+                : T('tempoHour', { n: Math.round(sec), u: T('secUnit') });
 }
 // Echtzeit: zur aktuellen Uhrzeit springen und den passenden Tagestyp wählen
 // Fahrplanzeit + Tagestyp für "jetzt"
@@ -468,15 +527,18 @@ async function ensureSchedule() {
 
 function setLive(on) {
   state.liveOn = on;
+  const T = k => (window.I18N ? window.I18N.t(k) : k);
   document.body.classList.toggle('live', on);
   document.querySelectorAll('#mode button').forEach(b => b.classList.toggle('on', (+b.dataset.live === 1) === on));
   const badge = document.getElementById('livebadge');
   badge.classList.toggle('off', !on);
-  badge.lastChild.textContent = on ? 'Live' : 'Fahrplan';
-  document.getElementById('hint').textContent = on
-    ? 'Fahrzeug anklicken, um seine Linie hervorzuheben · Echtzeit: DELFI (CC BY-SA)'
-    : 'Fahrzeug anklicken, um seine Linie hervorzuheben · Leertaste: Pause';
+  const bt = document.getElementById('livebadgetxt');
+  if (bt) bt.textContent = on ? T('modeLive') : T('modeSchedule');
+  const rn = document.getElementById('routenote');
+  if (rn) rn.textContent = on ? T('routingNote') : '';
+  document.getElementById('hint').textContent = T('hint');
   window.DarmstadtLive.setOn(on);
+  window.DarmstadtLive.closePopup();
   if (on) {
     window.DarmstadtLive.render(true);
   } else {
@@ -485,10 +547,20 @@ function setLive(on) {
 }
 
 (async () => {
+  window.I18N.init();                       // Sprache zuerst: Vorgabe EN, Merker in localStorage
   // meta.json liefert Linien, Farben, Haltestellen, Tram-Gleise – das reicht dem Echtzeit-Modus.
   META = await fetch('data/meta.json').then(r => r.json());
   buildLegend();
   document.getElementById('selclear').onclick = () => selectLine(state.selLine);
+  document.querySelectorAll('#lang button').forEach(b => b.onclick = () => window.I18N.set(b.dataset.lang));
+  window.addEventListener('langchange', () => {
+    buildLegend();
+    setSpeed(state.speed);
+    const rn = document.getElementById('routenote');
+    if (rn) rn.textContent = state.liveOn ? window.I18N.t('routingNote') : '';
+    if (state.liveOn && window.DarmstadtLive) window.DarmstadtLive.setLang();
+    else render();
+  });
   window.DarmstadtLive.attach({ map, overlay, deck, META, state, hex, fmt, shortStop, MODE_RGB, selectLine });
   document.querySelectorAll('#mode button').forEach(b => b.onclick = () => setLive(+b.dataset.live === 1));
   document.getElementById('loading').remove();

@@ -1,41 +1,47 @@
-/* Echtzeit-Modul für "Darmstadt in Bewegung"
+/* Echtzeit-Modul für "Darmstadt Live Map"
  *
- * Quelle: DELFI e.V. Echtzeitdaten (CC BY-SA 4.0) über den Transitous-/MOTIS-Dienst
- *         https://api.transitous.org/api/v1/map/trips   (offen, kein Schlüssel, CORS *)
+ * Quellen (beide offen, kein Schlüssel, CORS *):
+ *   https://api.transitous.org/api/v1/map/trips      Fahrzeuge/Abschnitte im Kartenausschnitt
+ *   https://api.transitous.org/api/v1/trip?tripId=…  Fahrtdetails (Haltestellenfolge) für das Popup
  *
- * Datenmodell der API (empirisch verifiziert):
- *   Jeder Eintrag ist ein Halt-zu-Halt-Abschnitt ("hop") einer Fahrt, nicht ein Fahrzeugpunkt:
- *     from/to          Haltestellen mit lat/lon
+ * Datenmodell der API (empirisch verifiziert, siehe analysis/):
+ *   Jeder Eintrag von map/trips ist ein Halt-zu-Halt-Abschnitt einer Fahrt, kein Fahrzeugpunkt:
+ *     from/to                      Haltestellen mit lat/lon
  *     departure/arrival            Ist-Zeiten des Abschnitts (bei realTime=true)
  *     scheduledDeparture/Arrival   Soll-Zeiten
- *     polyline         Geometrie des Abschnitts; Anfang == from, Ende == to (Abweichung 0-3 m)
- *     realTime         true, wenn Ist-Zeiten vorliegen
- *     trips[0].tripId  Fahrt-Kennung; routeShortName = Linienname
- *   Es gibt KEIN Feld mit der GPS-Position. Die Position wird daher aus den Ist-Zeiten
- *   entlang der Abschnittsgeometrie interpoliert (wie es die Transitous-Karte selbst tut).
+ *     polyline                     Geometrie des Abschnitts (Anfang == from, Ende == to)
+ *     realTime                     true, wenn Ist-Zeiten vorliegen
+ *     trips[0].tripId              Fahrt-Kennung für /trip
+ *   Im gesamten offenen DELFI-Echtzeitstrom kommen KEINE GPS-Koordinaten vor — nachgewiesen per
+ *   Brute-Force-Scan über 50 MB (analysis/brute_coords.py: 0 Treffer) und der SIRI-ET-Struktur
+ *   (Haltestellen-Prognosen). Es gibt für Darmstadt auch kein offenes SIRI-VM-Fahrzeugpositionsangebot.
  *
- * API-Eigenheiten, die Zeit gekostet haben:
- *   - bbox-Reihenfolge ist min=lat,lon&max=lat,lon  (lon,lat liefert eine leere Liste)
- *   - zoom, startTime, endTime sind Pflicht, sonst 400
- *   - das Zeitfenster bestimmt die Nutzlast: 1 Min. ~280 KB, 30 Min. ~1.2 MB
- *     (längere Fenster liefern nur zusätzliche künftige Abschnitte)
- *   - ein zu großes bbox/zu kleiner zoom kann HTTP 422 liefern -> bbox wird geklemmt
+ *   Daraus folgt für die Punkte auf der Karte:
+ *     - Gezeichnet werden ausschließlich Fahrzeuge mit realTime=true. Fahrzeuge ohne Echtzeit
+ *       werden verworfen — deren Position wäre reine Fahrplandaten (Halluzination).
+ *     - Die Position ergibt sich aus dem Fortschritt des laufenden Abschnitts nach Ist-Zeiten
+ *       entlang dessen echter Geometrie (dieselbe Methode nutzt die Transitous-Karte).
+ *     - Das Popup weist diese Ableitung ausdrücklich aus, damit nichts als GPS missverstanden wird.
+ *
+ * API-Eigenheiten:
+ *   - bbox-Reihenfolge ist min=lat,lon&max=lat,lon (umgekehrt -> leere Liste)
+ *   - zoom, startTime, endTime sind Pflicht; zu große bbox kann HTTP 422 liefern (bbox wird geklemmt)
+ *   - Zeitfenster bestimmt die Nutzlast: 1 Min ≈ 280 kB, 30 Min ≈ 1,2 MB
+ *   - generische/fehlende User-Agents -> HTTP 403 (Browser senden ihren eigenen)
  */
 (function () {
   'use strict';
 
   const API = 'https://api.transitous.org/api/v1/map/trips';
-  // Hinweis: Die API weist generische/default User-Agents mit HTTP 403 ab
-  // ("Generic user-agent headers are not allowed, please set your own").
-  // Im Browser ist der eigene UA automatisch gesetzt; eigene Skripte müssen einen setzen.
-  const REFRESH_MS = 30000;       // Abrufintervall (Positionen werden dazwischen lokal interpoliert)
-  const WINDOW_MIN = 1;           // Zeitfenster je Anfrage (Nutzlast-Minimum)
-  const MAX_SPAN = 0.28;          // max. bbox-Kantenlänge in Grad (verhindert 422)
-  const STALE_MS = 45000;         // ab wann Daten als veraltet gelten
+  const API_TRIP = 'https://api.transitous.org/api/v1/trip';
+  const REFRESH_MS = 30000;        // Abrufintervall (Positionen dazwischen lokal interpoliert)
+  const POPUP_REFRESH_MS = 30000;
+  const WINDOW_MIN = 1;            // Zeitfenster je Anfrage (Nutzlast-Minimum)
+  const MAX_SPAN = 0.28;           // max. bbox-Kantenlänge in Grad (verhindert 422)
+  const STALE_MS = 45000;          // ab wann Daten als veraltet gelten
+  const NEXT_STOPS = 8;            // wie viele kommende Halte das Popup zeigt
 
-  // API-Modus -> Modus der Karte (null = ausblenden).
-  // Bewusst auf den Umfang der Fahrplan-Simulation begrenzt: kein Fernverkehr (ICE/IC),
-  // keine Fernbusse (FlixBus = COACH), keine Flugzeuge/Fähren – sonst hängen Abschnitte
+  // Nur Nahverkehr (kein ICE/IC, keine Fernbusse, keine Flugzeuge) — sonst hängen Abschnitte
   // mit mehreren tausend Geometriepunkten bis Stuttgart/Nürnberg in der Karte.
   const MODE_MAP = {
     TRAM: 'tram', BUS: 'bus',
@@ -44,15 +50,17 @@
     AIRPLANE: null, FERRY: null, ODM: null,
   };
 
-  let ctx = null;            // von index.html übergeben
+  const T = (key, vars) => (window.I18N ? window.I18N.t(key, vars) : key);
+
+  let ctx = null;
   let vehicles = [];
   let lastOk = 0, lastErr = null, failures = 0, lastPaint = 0;
   let pollTimer = null, refreshTimer = null, refreshInFlight = false;
-  let lineIndex = null;
+  let lineIndex = null, viewBox = null;
+  let popupVehicle = null, popupLeg = null, popupTimer = null;
 
-  // ---------- Geometrie-Helfer
+  // ---------- Geometrie
   function decodePolyline(str) {
-    // Google-Encoded-Polyline -> [[lon, lat], ...] (deck.gl-Reihenfolge)
     if (!str) return [];
     let i = 0, lat = 0, lon = 0;
     const out = [];
@@ -69,7 +77,6 @@
   }
 
   function cumDist(path) {
-    // kumulative Länge in Metern (gleiche Näherung wie im Rest der Seite)
     const n = path.length, out = new Float64Array(n);
     for (let i = 1; i < n; i++) {
       const kx = 111320 * Math.cos((path[i - 1][1] + path[i][1]) / 2 * Math.PI / 180);
@@ -78,8 +85,7 @@
     return out;
   }
 
-  function posAt(path, cd, d) {
-    // Punkt bei Streckenlänge d (Fortschritt j wird über die Aufrufe gehalten)
+  function posAt(path, cd) {
     let j = 0;
     return function (dist) {
       while (j < cd.length - 2 && cd[j + 1] < dist) j++;
@@ -91,11 +97,10 @@
   }
 
   // ---------- Linienzuordnung (Farbe aus meta.json)
-  // Liniennamen sind zwischen API und meta.json nicht identisch ("RB68 (15316)", "ICE 211"),
-  // daher beide Seiten normalisieren: Kleinschreibung, Klammern/Wagen-Nummern und Leerzeichen weg,
-  // führende Verkehrsmittelkürzel (S, RB, RE, ICE, N ...) entfernen.
+  // Namen sind zwischen API und meta.json nicht identisch ("RB68 (15316)"), daher beide Seiten
+  // normalisieren: Kleinschreibung, Klammern/Wagennummern und Leerzeichen weg, führende Kürzel weg.
   function normLine(name) {
-    let s = String(name || '').toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z0-9]/g, '');
+    const s = String(name || '').toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z0-9]/g, '');
     return s.replace(/^(ice|ic|ec|en|rj|re|rb|ire|n|s|u|tram|bus|str)(?=[0-9])/, '');
   }
 
@@ -118,18 +123,21 @@
 
   function colorFor(v) {
     if (v.lineIdx >= 0) return ctx.hex(ctx.META.lines[v.lineIdx].color);
-    if (v.routeColor) {           // API liefert z. B. "ffbe3c"
+    if (v.routeColor) {                       // API liefert z. B. "ffbe3c"
       const c = String(v.routeColor).replace('#', '');
       if (c.length === 6) return [parseInt(c.slice(0, 2), 16), parseInt(c.slice(2, 4), 16), parseInt(c.slice(4, 6), 16)];
     }
     return ctx.MODE_RGB[v.mode] || [200, 200, 200];
   }
 
-  // ---------- Abruf
-  let viewBox = null;        // zuletzt angefragter (geklemmter) Kartenausschnitt
+  function cssColor(v) {
+    const c = colorFor(v);
+    return `rgb(${c[0]},${c[1]},${c[2]})`;
+  }
 
+  // ---------- Abruf
   function bboxParams() {
-    const b = ctx.map.getBounds();               // [[west,south],[east,north]]
+    const b = ctx.map.getBounds();
     let w = b.getWest(), s = b.getSouth(), e = b.getEast(), n = b.getNorth();
     const cx = (w + e) / 2, cy = (s + n) / 2;
     const spanLon = Math.min(e - w, MAX_SPAN), spanLat = Math.min(n - s, MAX_SPAN);
@@ -147,12 +155,10 @@
     const t0 = new Date(now).toISOString().replace(/\.\d+Z$/, 'Z');
     const t1 = new Date(now + WINDOW_MIN * 60000).toISOString().replace(/\.\d+Z$/, 'Z');
     try {
-      const url = `${API}?${bboxParams()}&startTime=${t0}&endTime=${t1}`;
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await fetch(`${API}?${bboxParams()}&startTime=${t0}&endTime=${t1}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
-      const built = buildVehicles(data);
-      if (built.length || failures === 0) {     // leere Antwort nicht als Erfolg überbügeln
+      const built = buildVehicles(await res.json());
+      if (built.length || failures === 0) {      // leere Antwort nicht als Erfolg überbügeln
         vehicles = built;
         lastOk = Date.now();
       }
@@ -162,8 +168,8 @@
       failures++;
       lastErr = err;
       setBanner(failures >= 2
-        ? 'Echtzeitdaten nicht erreichbar (' + (err.message || 'Netzwerkfehler') + ') – letzte bekannte Positionen, neuer Versuch läuft.'
-        : 'Echtzeitdaten: kurzer Aussetzer, neuer Versuch läuft …');
+        ? T('bannerUnreachable', { err: err.message || 'network' })
+        : T('bannerBlip'));
     } finally {
       refreshInFlight = false;
       updateStat();
@@ -175,25 +181,25 @@
     const byTrip = new Map();
     for (const t of data) {
       const mode = MODE_MAP[t.mode];
-      if (!mode) continue;                                  // Flugzeuge, Fähren, ODM: raus
+      if (!mode) continue;
+      // Nur echte Echtzeitfahrzeuge: ohne realTime wäre die Position reine Fahrplanableitung.
+      if (t.realTime !== true) continue;
       if (!t.polyline || !t.departure || !t.arrival) continue;
       const dep = Date.parse(t.departure), arr = Date.parse(t.arrival);
       if (!(arr > dep)) continue;
-      if (nowMs > arr) continue;                            // Abschnitt ist durch
+      if (nowMs > arr) continue;                              // Abschnitt ist durch
       const tr = (t.trips && t.trips[0]) || {};
       const tid = tr.tripId || (t.from && t.from.stopId) + '|' + t.departure;
       const prev = byTrip.get(tid);
-      // pro Fahrt nur einen Abschnitt: den gerade laufenden, sonst den nächsten
       const running = dep <= nowMs;
-      if (prev && !(running && !prev.running)) continue;
+      if (prev && !(running && !prev.running)) continue;      // pro Fahrt genau ein Abschnitt
       const path = decodePolyline(t.polyline);
       if (path.length < 2) continue;
       const cd = cumDist(path);
       if (!(cd[cd.length - 1] > 0)) continue;
-      // Fahrzeug nur aufnehmen, wenn es im (leicht erweiterten) Kartenausschnitt steht
-      if (viewBox) {
+      if (viewBox) {                                          // nur Fahrzeuge im Kartenausschnitt
         const u = Math.min(1, Math.max(0, (nowMs - dep) / (arr - dep)));
-        const p = posAt(path, cd, 0)(u * cd[cd.length - 1]);
+        const p = posAt(path, cd)(u * cd[cd.length - 1]);
         const padLat = (viewBox.n - viewBox.s) * 0.25, padLon = (viewBox.e - viewBox.w) * 0.25;
         if (p[1] < viewBox.s - padLat || p[1] > viewBox.n + padLat ||
             p[0] < viewBox.w - padLon || p[0] > viewBox.e + padLon) continue;
@@ -202,9 +208,10 @@
       byTrip.set(tid, {
         tripId: tid, mode, running,
         lineName: tr.routeShortName || '?',
+        headsign: tr.headsign || '',
         dest: (t.to && t.to.name) || '',
         fromName: (t.from && t.from.name) || '',
-        dep, arr, delayMin, realTime: !!t.realTime, routeColor: t.routeColor || '',
+        dep, arr, delayMin, realTime: true, routeColor: t.routeColor || '',
         path, cd, total: cd[cd.length - 1],
         lineIdx: matchLine(tr.routeShortName, mode),
       });
@@ -216,8 +223,7 @@
     const out = [];
     for (const v of vehicles) {
       const u = Math.min(1, Math.max(0, (t - v.dep) / (v.arr - v.dep)));
-      const posFn = posAt(v.path, v.cd, 0);
-      const pos = posFn(u * v.total);
+      const pos = posAt(v.path, v.cd)(u * v.total);
       const idx = v.cd.findIndex(d => d >= u * v.total);
       const rest = idx < 0 ? [] : [[pos[0], pos[1]]].concat(v.path.slice(idx));
       out.push({ v, pos, rest, u });
@@ -227,10 +233,10 @@
 
   // ---------- Darstellung
   function delayColor(d) {
-    if (d >= 5) return [255, 90, 80];      // deutlich verspätet
-    if (d >= 1) return [255, 209, 102];    // leicht verspätet
-    if (d <= -1) return [120, 220, 160];   // verfrüht
-    return [230, 235, 245];                // pünktlich
+    if (d >= 5) return [255, 90, 80];
+    if (d >= 1) return [255, 209, 102];
+    if (d <= -1) return [120, 220, 160];
+    return [230, 235, 245];
   }
 
   function render(force) {
@@ -251,11 +257,11 @@
       }),
       new ctx.deck.ScatterplotLayer({
         id: 'live-heads', data: vis, getPosition: d => d.pos,
-        getRadius: d => (d.v.mode === 'bus' ? 3.6 : 4.6), radiusUnits: 'pixels',
+        getRadius: d => (d.v.mode === 'bus' ? 4 : 5), radiusUnits: 'pixels',
         getFillColor: d => { const c = colorFor(d.v); return [...c, alpha(d.v)]; },
         stroked: true, getLineColor: d => [...delayColor(d.v.delayMin), dim(d.v) ? 30 : 235],
         getLineWidth: d => (Math.abs(d.v.delayMin) >= 1 ? 2 : 1.2), lineWidthUnits: 'pixels',
-        pickable: true,
+        pickable: true, radiusMinPixels: 3,
         updateTriggers: { getPosition: t, getFillColor: sel, getLineColor: sel },
       }),
     ];
@@ -270,31 +276,148 @@
     }
   }
 
+  // Hover-Tooltip nur auf Zeigegeräten; auf Touch öffnet der Tipp das Popup.
+  const finePointer = () => !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches);
+
   function hover(info) {
     const tip = document.getElementById('tip');
-    if (!info.object || !info.object.v) { tip.style.display = 'none'; return; }
+    if (!tip) return;
+    if (!info.object || !info.object.v || !finePointer()) { tip.style.display = 'none'; return; }
     const v = info.object.v;
-    const age = Math.round((Date.now() - v.dep) / 1000);
-    const d = v.delayMin;
-    const dtxt = d > 0 ? `+${d} min` : d < 0 ? `${d} min` : 'pünktlich';
-    tip.innerHTML =
-      `<b>${v.lineName}</b> → ${ctx.shortStop(v.dest)}<br>` +
-      `<span style="color:var(--muted)">${v.fromName ? ctx.shortStop(v.fromName) + ' → ' : ''}` +
-      `${ctx.shortStop(v.dest)} · ${dtxt} ${v.realTime ? '(Echtzeit)' : '(Soll)'}</span>` +
-      `<br><span style="color:var(--muted)">Abschnitt seit ${Math.floor(age / 60)}:${String(age % 60).padStart(2, '0')} unterwegs</span>`;
+    tip.innerHTML = `<b>${v.lineName}</b> → ${ctx.shortStop(v.headsign || v.dest)}<br>` +
+      `<span style="color:var(--muted)">${delayText(v.delayMin)} · ${T('popup.realtime')}</span>`;
     tip.style.display = 'block';
     tip.style.left = info.x + 14 + 'px'; tip.style.top = info.y + 14 + 'px';
   }
 
   function click(info) {
     const v = info.object && info.object.v;
-    document.getElementById('tip').style.display = 'none';
-    if (v) ctx.selectLine(v.lineIdx >= 0 ? v.lineIdx : null);
+    if (v) openPopup(v);
+    else closePopup();                     // Tipp auf die Karte schließt das Popup
   }
 
   const cursor = ({ isHovering }) => (isHovering ? 'pointer' : 'grab');
 
+  // ---------- Popup: Linie, Verspätungsstatus, nächste Halte
+  function delayText(d) {
+    if (d >= 1) return T('popup.delayPlus', { n: d });
+    if (d <= -1) return T('popup.delayMinus', { n: d });
+    return T('popup.delayNone');
+  }
+
+  function delayClass(d) {
+    if (d >= 1) return 'late';
+    if (d <= -1) return 'early';
+    return 'ontime';
+  }
+
+  const clock = ts => {
+    const d = new Date(ts);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  };
+
+  function nextStops(leg) {
+    const now = Date.now();
+    const seq = [];
+    if (leg.from) seq.push({ name: leg.from.name, time: leg.startTime, sched: leg.scheduledStartTime });
+    (leg.intermediateStops || []).forEach(s => seq.push({
+      name: s.name, time: s.departure || s.arrival,
+      sched: s.scheduledDeparture || s.scheduledArrival, cancelled: s.cancelled,
+    }));
+    if (leg.to) seq.push({ name: leg.to.name, time: leg.endTime, sched: leg.scheduledEndTime });
+    return seq
+      .filter(s => s.time && Date.parse(s.time) >= now - 45000)
+      .slice(0, NEXT_STOPS)
+      .map(s => {
+        const tm = Date.parse(s.time), sc = s.sched ? Date.parse(s.sched) : tm;
+        return {
+          name: ctx.shortStop(s.name), time: tm,
+          delay: Math.round((tm - sc) / 60000),
+          inMin: Math.round((tm - now) / 60000),
+          cancelled: !!s.cancelled,
+        };
+      });
+  }
+
+  function pickLeg(data, v) {
+    const legs = (data && data.legs) || [];
+    if (!legs.length) return null;
+    const leg = legs.find(l => l.tripId === v.tripId)
+      || legs.find(l => normLine(l.routeShortName) === normLine(v.lineName))
+      || legs[0];
+    return {
+      agency: leg.agencyName || '', from: leg.from, to: leg.to,
+      startTime: leg.startTime, endTime: leg.endTime,
+      scheduledStartTime: leg.scheduledStartTime, scheduledEndTime: leg.scheduledEndTime,
+      intermediateStops: leg.intermediateStops || [],
+    };
+  }
+
+  function popupShell(v, leg, loading) {
+    const stops = leg && !leg.error ? nextStops(leg) : null;
+    const rows = stops ? stops.map(s => {
+      const rel = s.inMin >= 0 && s.inMin <= 60
+        ? `<span class="st-time">${s.inMin <= 0 ? T('popup.stopNow') : T('popup.inMin', { n: s.inMin })}</span>` : '';
+      const d = s.delay;
+      return `<li><span class="st-name">${s.name}${s.cancelled ? ' ⚠' : ''}</span>${rel}` +
+        `<span class="st-time">${clock(s.time)}</span>` +
+        `<span class="st-dly ${delayClass(d)}">${d > 0 ? '+' + d : d < 0 ? d : '·'}</span></li>`;
+    }).join('') : '';
+    const body = leg && leg.error
+      ? `<div class="pop-sub">${T('popup.failed')} (${leg.error})</div>`
+      : loading
+        ? `<div class="pop-sub">${T('popup.loading')}</div>`
+        : `<ul class="pop-stops">${rows || `<li><span class="st-name">${T('popup.noStops')}</span></li>`}</ul>`;
+    return `
+      <div class="pop-head">
+        <span class="pop-line" style="background:${cssColor(v)}">${v.lineName}</span>
+        <span class="pop-title">${T('popup.nextStops')} → ${ctx.shortStop(v.headsign || v.dest)}</span>
+        <button class="pop-close" aria-label="${T('popup.close')}">✕</button>
+      </div>
+      <div class="pop-delay ${delayClass(v.delayMin)}">${delayText(v.delayMin)} · ${T('popup.realtime')}</div>
+      <div class="pop-sub">${v.fromName ? ctx.shortStop(v.fromName) + ' → ' : ''}${ctx.shortStop(v.dest)}` +
+        `${leg && !leg.error && leg.agency ? ' · ' + T('popup.agency') + ': ' + leg.agency : ''}</div>
+      ${body}
+      <div class="pop-note">${T('popup.positionNote')}</div>`;
+  }
+
+  function wirePopup(el) {
+    const btn = el.querySelector('.pop-close');
+    if (btn) btn.onclick = closePopup;
+  }
+
+  async function openPopup(v) {
+    const el = document.getElementById('popup');
+    if (!el) return;
+    popupVehicle = v; popupLeg = null;
+    el.classList.add('on');
+    el.innerHTML = popupShell(v, null, true);
+    wirePopup(el);
+    try {
+      const res = await fetch(`${API_TRIP}?tripId=${encodeURIComponent(v.tripId)}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      popupLeg = pickLeg(await res.json(), v);
+    } catch (err) {
+      popupLeg = { error: err.message || 'error' };
+    }
+    if (popupVehicle && popupVehicle.tripId === v.tripId) {
+      el.innerHTML = popupShell(v, popupLeg, false);
+      wirePopup(el);
+    }
+    clearTimeout(popupTimer);
+    popupTimer = setTimeout(() => { if (popupVehicle) openPopup(popupVehicle); }, POPUP_REFRESH_MS);
+  }
+
+  function closePopup() {
+    popupVehicle = null; popupLeg = null;
+    clearTimeout(popupTimer); popupTimer = null;
+    const el = document.getElementById('popup');
+    if (el) { el.classList.remove('on'); el.innerHTML = ''; }
+  }
+
+  // ---------- Statistik
   function paintStats(cur) {
+    if (!ctx) return;
     const counts = { tram: 0, bus: 0, rail: 0 };
     let onTime = 0, late = 0, early = 0;
     for (const c of cur) {
@@ -310,27 +433,33 @@
     const total = cur.filter(c => ctx.state.modes[c.v.mode]).length;
     const meta = document.getElementById('livestat');
     if (meta) {
-      meta.innerHTML = `<b>${total}</b> Fahrzeuge unterwegs · ` +
-        `<span style="color:#78dca0">${onTime} pünktlich</span> · ` +
-        `<span style="color:var(--accent)">${late} verspätet</span> · ` +
-        `<span style="color:#8a90a0">${early} verfrüht</span>`;
+      meta.innerHTML = `<b>${total}</b> ${T('vehicles')} · ` +
+        `<span style="color:#78dca0">${onTime} ${T('onTime')}</span> · ` +
+        `<span style="color:var(--accent)">${late} ${T('delayed')}</span> · ` +
+        `<span style="color:#8a90a0">${early} ${T('early')}</span>`;
     }
   }
 
   // Verspätungsverteilung auf der Zeitleisten-Canvas (Echtzeit-Modus)
   function paintHistogram(cur) {
     const cv = document.getElementById('tl');
-    if (!cv) return;
+    if (!cv || !ctx) return;
     const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
     cv.width = w * dpr; cv.height = h * dpr;
     const c = cv.getContext('2d');
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
     c.clearRect(0, 0, w, h);
     const vis = cur.filter(x => ctx.state.modes[x.v.mode]);
-    if (!vis.length) { c.fillStyle = '#8a90a0'; c.font = '11px system-ui'; c.fillText('keine Echtzeitdaten im Kartenausschnitt', 4, 24); return; }
-    const BIN = 2;                                          // 2-Minuten-Klassen
-    const bins = new Map();
-    for (const x of vis) { const k = Math.max(-6, Math.min(20, Math.round(x.v.delayMin / BIN) * BIN)); bins.set(k, (bins.get(k) || 0) + 1); }
+    if (!vis.length) {
+      c.fillStyle = '#8a90a0'; c.font = '11px system-ui';
+      c.fillText(T('noData'), 4, 24);
+      return;
+    }
+    const BIN = 2, bins = new Map();
+    for (const x of vis) {
+      const k = Math.max(-6, Math.min(20, Math.round(x.v.delayMin / BIN) * BIN));
+      bins.set(k, (bins.get(k) || 0) + 1);
+    }
     const keys = Array.from(bins.keys()).sort((a, b) => a - b);
     const max = Math.max(...bins.values());
     const bw = w / keys.length, top = 14, H = h - top;
@@ -344,7 +473,7 @@
       }
     });
     c.fillStyle = '#8a90a0'; c.font = '10px system-ui';
-    c.fillText('Verspätung in Minuten (Anteil der Fahrzeuge)', w - 240, 10);
+    c.fillText(T('delayHistogram'), Math.max(4, w - 260), 10);
   }
 
   function updateStat() {
@@ -352,9 +481,9 @@
     if (!el) return;
     const age = lastOk ? Math.round((Date.now() - lastOk) / 1000) : null;
     const stale = lastOk && Date.now() - lastOk > STALE_MS;
-    el.innerHTML = age === null ? 'warte auf erste Daten …'
-      : `aktualisiert vor ${age} s${stale ? ' · <span style="color:#ff5a50">veraltet</span>' : ''}` +
-        (failures ? ` · ${failures} Fehlversuche` : '');
+    el.textContent = age === null ? T('waiting')
+      : T('updatedAgo', { s: age }) + (stale ? ' · ' + T('stale') : '') +
+        (failures ? ' · ' + T('failedAttempts', { n: failures }) : '');
   }
 
   function setBanner(msg) {
@@ -392,6 +521,18 @@
     tick() { render(); },
     refresh,
     setOn(on) { on ? start() : stop(); },
-    info() { return { count: vehicles.length, lastOk, lastErr: lastErr ? String(lastErr.message || lastErr) : null, failures }; },
+    setLang() {                             // nach Sprachwechsel: Statistik, Histogramm, Popup neu beschriften
+      if (ctx) render(true);
+      if (popupVehicle) openPopup(popupVehicle);
+    },
+    closePopup,
+    openPopup,
+    info() {
+      return {
+        count: vehicles.length, lastOk,
+        lastErr: lastErr ? String(lastErr.message || lastErr) : null, failures,
+        popupOpen: !!popupVehicle, popupStops: popupLeg && !popupLeg.error ? nextStops(popupLeg).length : null,
+      };
+    },
   };
 })();
