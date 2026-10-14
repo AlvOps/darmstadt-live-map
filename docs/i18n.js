@@ -41,6 +41,8 @@
       hint: 'Tap a vehicle for line, delay and next stops',
       attributionLive: 'Realtime: DELFI e.V. (CC BY-SA 4.0) via Transitous/MOTIS',
       attributionSchedule: 'Timetable: DELFI via gtfs.de (CC BY 4.0)',
+      attributionMap: 'Shapes: pfaedle · © OpenStreetMap contributors (ODbL)',
+      langGroup: 'Language',
       loading: 'Loading …',
       bannerUnreachable: 'Realtime data unreachable ({err}) — showing last known positions, retrying.',
       bannerBlip: 'Realtime data: brief interruption, retrying …',
@@ -59,6 +61,9 @@
         statusLate: 'Delayed',
         statusEarly: 'Early',
         statusOntime: 'On time',
+        statusUnknown: 'Delay unknown',
+        noTrip: 'No stop list was returned for this trip.',
+        dialog: 'Vehicle details',
         realtime: 'realtime',
         scheduled: 'scheduled',
         agency: 'Operator',
@@ -120,6 +125,8 @@
       hint: 'Fahrzeug antippen für Linie, Verspätung und nächste Halte',
       attributionLive: 'Echtzeit: DELFI e.V. (CC BY-SA 4.0) über Transitous/MOTIS',
       attributionSchedule: 'Fahrplan: DELFI via gtfs.de (CC BY 4.0)',
+      attributionMap: 'Shapes: pfaedle · © OpenStreetMap-Mitwirkende (ODbL)',
+      langGroup: 'Sprache',
       loading: 'Lade …',
       bannerUnreachable: 'Echtzeitdaten nicht erreichbar ({err}) – letzte bekannte Positionen, neuer Versuch läuft.',
       bannerBlip: 'Echtzeitdaten: kurzer Aussetzer, neuer Versuch läuft …',
@@ -138,6 +145,9 @@
         statusLate: 'Verspätet',
         statusEarly: 'Zu früh',
         statusOntime: 'Pünktlich',
+        statusUnknown: 'Verspätung unbekannt',
+        noTrip: 'Für diese Fahrt wurde keine Haltestellenliste geliefert.',
+        dialog: 'Fahrzeugdetails',
         realtime: 'Echtzeit',
         scheduled: 'Soll',
         agency: 'Betreiber',
@@ -147,7 +157,7 @@
         failed: 'Fahrtdetails nicht verfügbar',
         positionNote: 'Position aus Echtzeit-Prognosen abgeleitet (der offene Datenstrom enthält kein GPS).',
         stopNow: 'jetzt',
-        inMin: 'in {n} min',
+        inMin: 'in {n} Min.',
       },
       routingNote: 'Es werden nur Fahrzeuge mit Echtzeitdaten gezeigt – keine reinen Fahrplanpositionen.',
       grpTram: 'Straßenbahn',
@@ -174,9 +184,8 @@
     let stored = null;
     try { stored = localStorage.getItem(KEY); } catch (e) { /* Privatmodus */ }
     if (stored === 'en' || stored === 'de') return stored;
-    // Vorgabe ist Englisch; nur bei eindeutig deutscher Browsersprache wird Deutsch gewählt
-    const nav = (navigator.language || 'en').toLowerCase();
-    return nav.startsWith('de') ? 'de' : 'en';
+    // Vorgabe ist immer Englisch (Vorgabe des Betreibers); Deutsch nur nach ausdrücklicher Wahl.
+    return 'en';
   }
 
   function t(key, vars) {
@@ -224,6 +233,8 @@
 
   window.I18N = {
     get lang() { return lang; },
+    detect,
+    strings: STRINGS,               // für die Schlüsselprüfung in analysis/test_i18n.js
     t,
     apply,
     set,

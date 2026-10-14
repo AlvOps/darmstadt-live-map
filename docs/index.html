@@ -1,10 +1,15 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0d12">
 <title>Darmstadt Live Map</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<script src="i18n.js"></script>
+<script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.4/dist.min.js"></script>
@@ -40,7 +45,7 @@
   .tog[aria-pressed="false"] { color: var(--muted); }
   #head { display: flex; flex-direction: column; max-height: var(--head-max, calc(100vh - 32px)); }
   #legend-sec { min-height: 0; display: flex; flex-direction: column; }
-  #legend { overflow-y: auto; margin-right: -8px; padding-right: 8px; }
+  #legend { overflow-y: auto; margin-right: -8px; padding-right: 8px; scrollbar-gutter: stable; }
   #legend details { border-top: 1px solid var(--line); }
   #legend summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
     padding: 6px 0; font-size: 12.5px; user-select: none; }
@@ -92,7 +97,7 @@
   #lang .seg button { padding: 7px 11px; font-size: 12.5px; font-weight: 600; min-width: 40px; }
 
   /* --- Fahrzeug-Popup (Karte unten: Bottom-Sheet, Desktop: Karte) --- */
-  #popup { display: none; z-index: 6; padding: 12px 14px 14px; }
+  #popup { display: none; z-index: 6; padding: 12px 14px 14px; scrollbar-gutter: stable; }
   #popup.on { display: block; }
   .pop-head { display: flex; align-items: center; gap: 8px; }
   .pop-line { font-size: 13px; font-weight: 700; color: #111; padding: 2px 8px; border-radius: 7px; flex: none; }
@@ -101,7 +106,8 @@
   .pop-delay { display: inline-block; font-size: 12px; font-weight: 650; padding: 3px 9px; border-radius: 999px; margin-top: 8px; }
   .pop-delay.late { background: rgba(255,90,80,.16); color: #ff9b93; }
   .pop-delay.ontime { background: rgba(120,220,160,.16); color: #86e0a8; }
-  .pop-delay.early { background: rgba(120,220,160,.16); color: #86e0a8; }
+  .pop-delay.early { background: rgba(110,180,255,.16); color: #8ecbff; }
+  .pop-delay.unknown { background: rgba(255,255,255,.08); color: var(--text); }
   .pop-sub { color: var(--muted); font-size: 11.5px; margin-top: 7px; line-height: 1.45; }
   .pop-stops { list-style: none; margin: 10px 0 0; padding: 0; max-height: 34vh; overflow-y: auto; }
   .pop-stops li { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
@@ -110,6 +116,8 @@
   .pop-stops .st-dly { font-variant-numeric: tabular-nums; font-weight: 600; flex: none; min-width: 34px; text-align: right; }
   .pop-stops .st-dly.late { color: #ff9b93; }
   .pop-stops .st-dly.ontime { color: #86e0a8; }
+  .pop-stops .st-dly.early { color: #8ecbff; }
+  .pop-stops .st-dly.unknown { color: var(--muted); }
   .pop-note { color: var(--muted); font-size: 11px; margin-top: 10px; line-height: 1.4; }
 
   #banner { position: absolute; z-index: 3; top: 16px; left: 50%; transform: translateX(-50%);
@@ -118,14 +126,36 @@
   body.live #play, body.live #daywrap, body.live #speedwrap { display: none; }
   body.live #hint { display: none; }
 
+  /* --- Scrollbalken passend zum Design (dünn, durchscheinend, ohne Spur) --- */
+  :root { --scroll-thumb: var(--muted); --scroll-thumb-hover: var(--accent); }
+  @supports (color: color-mix(in srgb, red, blue)) {
+    :root { --scroll-thumb: color-mix(in srgb, var(--muted) 45%, transparent);
+            --scroll-thumb-hover: color-mix(in srgb, var(--accent) 70%, transparent); }
+  }
+  .panel, #legend, .pop-stops { overscroll-behavior: contain; }
+  @supports (scrollbar-width: thin) {
+    .panel, #legend, .pop-stops { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+  }
+  .panel::-webkit-scrollbar, #legend::-webkit-scrollbar, .pop-stops::-webkit-scrollbar { width: 9px; height: 9px; }
+  .panel::-webkit-scrollbar-track, #legend::-webkit-scrollbar-track, .pop-stops::-webkit-scrollbar-track { background: transparent; }
+  .panel::-webkit-scrollbar-corner, #legend::-webkit-scrollbar-corner, .pop-stops::-webkit-scrollbar-corner { background: transparent; }
+  .panel::-webkit-scrollbar-thumb, #legend::-webkit-scrollbar-thumb, .pop-stops::-webkit-scrollbar-thumb {
+    background: var(--scroll-thumb); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+  .panel::-webkit-scrollbar-thumb:hover, #legend::-webkit-scrollbar-thumb:hover, .pop-stops::-webkit-scrollbar-thumb:hover {
+    background: var(--scroll-thumb-hover); background-clip: padding-box; }
+
+  /* Fahrplan-Modus: keine Echtzeit-Statistik stehen lassen (wäre eingefrorener Live-Stand) */
+  body:not(.live) #livestat, body:not(.live) #livestat2 { display: none; }
+
   /* --- Telefon: kompakte Karte oben, Bottom-Sheet unten, große Ziele --- */
   @media (max-width: 700px) {
-    #head { top: calc(10px + env(safe-area-inset-top)); left: 10px; right: 74px; padding: 11px 13px; max-width: none; }
+    #head { top: calc(10px + env(safe-area-inset-top)); left: 10px; right: 74px; padding: 11px 13px; max-width: none; overflow-y: auto; }
     #head h1 { font-size: 15px; }
     #head p { font-size: 11.5px; }
     #legend-sec { display: none; }
     #toggles { gap: 4px; }
-    .tog { padding: 6px 9px; font-size: 12px; }
+    .tog { padding: 6px 9px; font-size: 12px; min-height: 40px; }
+    .pop-close { min-width: 40px; min-height: 40px; font-size: 14px; }
     #counts { gap: 14px; }
     .cnt b { font-size: 19px; }
     .cnt span { font-size: 10.5px; }
@@ -136,7 +166,7 @@
     #clock { font-size: 24px; min-width: 72px; }
     .seg button { padding: 9px 11px; min-height: 40px; }
     #timeline { height: 40px; }
-    #popup { left: 8px; right: 8px; bottom: calc(96px + env(safe-area-inset-bottom)); max-height: 46vh; overflow-y: auto; }
+    #popup { left: 8px; right: 8px; bottom: calc(var(--bar-h, 104px) + 16px + env(safe-area-inset-bottom)); max-height: 46vh; overflow-y: auto; }
     .pop-stops { max-height: none; }
     #banner { top: calc(70px + env(safe-area-inset-top)); font-size: 12px; }
     #tip { display: none !important; }        /* auf Touch gibt es nur das Popup */
@@ -151,13 +181,13 @@
 <div id="loading" data-i18n="loading">Loading …</div>
 
 <div id="lang" class="panel">
-  <div class="seg" role="group" aria-label="Language / Sprache">
+  <div class="seg" role="group" data-i18n-aria="langGroup" aria-label="Language">
     <button data-lang="en" aria-pressed="true">EN</button><button data-lang="de" aria-pressed="false">DE</button>
   </div>
 </div>
 
 <div id="head" class="panel">
-  <h1><span data-i18n="appTitle">Darmstadt Live Map</span><span class="badge-live" id="livebadge"><i></i><span id="livebadgetxt">Live</span></span></h1>
+  <h1><span data-i18n="appTitle">Darmstadt Live Map</span><span class="badge-live" id="livebadge"><i></i><span id="livebadgetxt" data-i18n="modeLive">Realtime</span></span></h1>
   <p data-i18n="subtitle">Tram, bus and regional rail — from the open realtime feed</p>
   <div class="sec">
     <div class="lbl" data-i18n="dataSource">Data</div>
@@ -186,7 +216,7 @@
   </div>
   <div class="sec" id="legend-sec">
     <div class="lbl" data-i18n="highlightLine">Highlight line</div>
-    <div id="selinfo"><span id="selname"></span><button id="selclear" data-i18n-title="clear" aria-label="Clear highlight">✕</button></div>
+    <div id="selinfo"><span id="selname"></span><button id="selclear" data-i18n-title="clear" data-i18n-aria="clear" aria-label="Clear highlight">✕</button></div>
     <div id="legend"></div>
   </div>
 </div>
@@ -194,7 +224,7 @@
 <div id="bar" class="panel">
   <div id="row">
     <div id="clock">--:--</div>
-    <button id="play" data-i18n-title="playPause" title="Play/pause (space)">❚❚</button>
+    <button id="play" data-i18n-title="playPause" data-i18n-aria="playPause" title="Play/pause (space)" aria-label="Play/pause (space)">❚❚</button>
     <div class="ctl" id="daywrap">
       <div class="lbl" data-i18n="scheduleFor">Timetable for</div>
       <div class="seg" id="days">
@@ -213,15 +243,16 @@
 </div>
 <div id="tip"></div>
 <div id="banner" hidden></div>
-<div id="popup" class="panel" role="dialog" aria-live="polite"></div>
+<div id="popup" class="panel" role="dialog" data-i18n-aria="popup.dialog" aria-label="Vehicle details"></div>
 
-<script src="i18n.js"></script>
 <script src="live.js"></script>
 <script>
 const T0 = 3.5 * 3600, T1 = 27 * 3600;        // Betriebstag 03:30 – 03:00 (+1)
 const TRAIL = 90;                              // Schweiflänge in Sekunden Fahrplanzeit
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
+const esc = x => String(x == null ? '' : x).replace(/[&<>"']/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = s => { s = ((s % 86400) + 86400) % 86400; return String(Math.floor(s/3600)).padStart(2,'0') + ':' + String(Math.floor(s%3600/60)).padStart(2,'0'); };
 
 const state = { t: 5 * 3600, playing: true, speed: 240, day: 'werktag', liveOn: true,
@@ -297,8 +328,18 @@ const map = new maplibregl.Map({
   container: 'map',
   style: 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
   center: [8.652, 49.872], zoom: 12.3, pitch: 35, bearing: -8, maxPitch: 60,
-  attributionControl: { compact: true, customAttribution: 'Fahrplan: DELFI e.V. via gtfs.de (CC BY 4.0) · Shapes: pfaedle · © OpenStreetMap-Mitwirkende (ODbL)' }
+  attributionControl: false             // eigene, übersetzte Quellenangabe (siehe setAttribution)
 });
+// Quellenangabe in der aktuellen Sprache; beim Sprachwechsel neu einsetzen
+let attribCtrl = null;
+function setAttribution() {
+  const T = k => (window.I18N ? window.I18N.t(k) : k);
+  if (attribCtrl) map.removeControl(attribCtrl);
+  attribCtrl = new maplibregl.AttributionControl({ compact: true,
+    customAttribution: [T('attributionLive'), T('attributionSchedule'), T('attributionMap')].map(esc).join(' · ') });
+  map.addControl(attribCtrl, 'bottom-right');
+  if (typeof placeCtrls === 'function') placeCtrls();
+}
 const overlay = new deck.MapboxOverlay({ interleaved: false, layers: [] });
 map.addControl(overlay);
 map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
@@ -338,8 +379,8 @@ function render() {
   onHover: info => {
     if (!info.object) { tip.style.display = 'none'; return; }
     const o = info.object;
-    tip.innerHTML = Array.isArray(o) ? `<b>${o[0]}</b>` :
-      `<b>${META.lines[o.line].name}</b> → ${shortStop(o.dest)}<br><span style="color:var(--muted)">${META.lines[o.line].agency ?? ''} · ${fmt(o.start)}–${fmt(o.end)}</span>`;
+    tip.innerHTML = Array.isArray(o) ? `<b>${esc(o[0])}</b>` :
+      `<b>${esc(META.lines[o.line].name)}</b> → ${esc(shortStop(o.dest))}<br><span style="color:var(--muted)">${esc(window.I18N.t('modeSchedule'))} · ${esc(META.lines[o.line].agency ?? '')} · ${fmt(o.start)}–${fmt(o.end)}</span>`;
     tip.style.display = 'block'; tip.style.left = info.x + 14 + 'px'; tip.style.top = info.y + 14 + 'px';
   },
   onClick: info => { selectLine(info.object && !Array.isArray(info.object) ? info.object.line : null); },
@@ -349,7 +390,7 @@ function render() {
 }
 
 // Stationsnamen kürzen: "Darmstadt-Eberstadt Frankenstein" -> "Eberstadt Frankenstein"
-const shortStop = n => n.replace(/^Darmstadt[- ]/, '');
+const shortStop = n => String(n == null ? '' : n).replace(/^Darmstadt[- ]/, '');
 const lineEnds = l => l.ends.map(shortStop).join(' ↔ ');
 
 function selectLine(li) {
@@ -359,7 +400,7 @@ function selectLine(li) {
   render();
   if (state.selLine === null) { info.style.display = 'none'; return; }
   const l = META.lines[state.selLine];
-  document.getElementById('selname').innerHTML = `<b>${l.name}</b> <span style="color:var(--muted)">${lineEnds(l)}</span>`;
+  document.getElementById('selname').innerHTML = `<b>${esc(l.name)}</b> <span style="color:var(--muted)">${esc(lineEnds(l))}</span>`;
   info.style.display = 'flex';
   const chip = document.querySelector(`.chip[data-line="${state.selLine}"]`);
   if (chip) { chip.closest('details').open = true; chip.scrollIntoView({ block: 'nearest' }); }
@@ -386,12 +427,12 @@ function buildLegend() {
     items.forEach(x => done.add(x.i));
     const det = document.createElement('details'); det.open = !!g.open;
     const n = items.length === 1 ? T('lineOne') : T('lineMany', { n: items.length });
-    det.innerHTML = `<summary>${T(g.key)}<span class="n">${n}</span></summary><div class="chips"></div>`;
+    det.innerHTML = `<summary>${esc(T(g.key))}<span class="n">${esc(n)}</span></summary><div class="chips"></div>`;
     const box = det.querySelector('.chips');
     for (const { l, i } of items) {
       const c = document.createElement('span'); c.className = 'chip'; c.dataset.line = i;
       c.textContent = l.name; c.style.background = l.color; c.onclick = () => selectLine(i);
-      c.onmouseenter = e => { tip.innerHTML = `<b>${l.name}</b> ${lineEnds(l)}`; tip.style.display = 'block';
+      c.onmouseenter = e => { tip.innerHTML = `<b>${esc(l.name)}</b> ${esc(lineEnds(l))}`; tip.style.display = 'block';
         const r = c.getBoundingClientRect(); tip.style.left = document.getElementById('head').getBoundingClientRect().right + 8 + 'px'; tip.style.top = r.top - 4 + 'px'; };
       c.onmouseleave = () => { tip.style.display = 'none'; };
       box.appendChild(c);
@@ -436,15 +477,17 @@ function drawCursor() {
 const scrub = e => { state.live = false; const r = tl.getBoundingClientRect(); state.t = T0 + Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * (T1 - T0); render(); };
 tl.addEventListener('pointerdown', e => { tl.setPointerCapture(e.pointerId); scrub(e); tl.onpointermove = scrub; });
 tl.addEventListener('pointerup', () => { tl.onpointermove = null; });
-addEventListener('resize', () => HIST && drawTimeline());
+addEventListener('resize', () => { if (!state.liveOn && HIST) drawTimeline(); });   // im Live-Modus malt live.js
 
 // Kartenbedienelemente immer über der unteren Leiste halten
-const placeCtrls = () => {
+function placeCtrls() {
   const bh = document.getElementById('bar').offsetHeight, off = bh + 24 + 'px';
   document.documentElement.style.setProperty('--head-max', `calc(100vh - ${bh + 48}px)`);
+  document.documentElement.style.setProperty('--bar-h', bh + 'px');   // Bottom-Sheet sitzt über der Leiste
   document.querySelectorAll('.maplibregl-ctrl-bottom-right, .maplibregl-ctrl-bottom-left').forEach(e => e.style.bottom = off);
-};
+}
 addEventListener('resize', placeCtrls); placeCtrls();
+if (window.ResizeObserver) new ResizeObserver(placeCtrls).observe(document.getElementById('bar'));
 
 // ---------- Steuerung
 const playBtn = document.getElementById('play');
@@ -525,18 +568,24 @@ async function ensureSchedule() {
   scheduleReady = true;
 }
 
-function setLive(on) {
-  state.liveOn = on;
+// Modus-abhängige Beschriftungen (auch nach Sprachwechsel aufrufen)
+function labelMode() {
   const T = k => (window.I18N ? window.I18N.t(k) : k);
-  document.body.classList.toggle('live', on);
-  document.querySelectorAll('#mode button').forEach(b => b.classList.toggle('on', (+b.dataset.live === 1) === on));
-  const badge = document.getElementById('livebadge');
-  badge.classList.toggle('off', !on);
+  const on = state.liveOn;
   const bt = document.getElementById('livebadgetxt');
   if (bt) bt.textContent = on ? T('modeLive') : T('modeSchedule');
   const rn = document.getElementById('routenote');
   if (rn) rn.textContent = on ? T('routingNote') : '';
   document.getElementById('hint').textContent = T('hint');
+}
+
+function setLive(on) {
+  state.liveOn = on;
+  document.body.classList.toggle('live', on);
+  document.querySelectorAll('#mode button').forEach(b => b.classList.toggle('on', (+b.dataset.live === 1) === on));
+  document.getElementById('livebadge').classList.toggle('off', !on);
+  labelMode();
+  placeCtrls();                              // Leistenhöhe ändert sich je Modus
   window.DarmstadtLive.setOn(on);
   window.DarmstadtLive.closePopup();
   if (on) {
@@ -553,11 +602,13 @@ function setLive(on) {
   buildLegend();
   document.getElementById('selclear').onclick = () => selectLine(state.selLine);
   document.querySelectorAll('#lang button').forEach(b => b.onclick = () => window.I18N.set(b.dataset.lang));
+  setAttribution();
   window.addEventListener('langchange', () => {
     buildLegend();
+    if (state.selLine !== null) { const keep = state.selLine; state.selLine = null; selectLine(keep); }
     setSpeed(state.speed);
-    const rn = document.getElementById('routenote');
-    if (rn) rn.textContent = state.liveOn ? window.I18N.t('routingNote') : '';
+    labelMode();
+    setAttribution();
     if (state.liveOn && window.DarmstadtLive) window.DarmstadtLive.setLang();
     else render();
   });
