@@ -191,6 +191,11 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       sts.length > 0 && sts.every(s => Number.isFinite(s.lat) && Number.isFinite(s.lon) && !!s.stopId));
     check('Halte liegen im Darmstadt-Ausschnitt (keine Fantasiekoordinaten)',
       sts.length > 0 && sts.every(s => s.lat > 49.6 && s.lat < 50.2 && s.lon > 8.3 && s.lon < 9.0));
+    const hit = cap.layers.find(l => l.id === 'live-stations-hit');
+    const hitR = hit ? (typeof hit.getRadius === 'function' ? hit.getRadius(sts[0]) : hit.getRadius) : 0;
+    check('Halte haben eine großzügige Trefferfläche zum Tippen',
+      !!hit && hit.data.length === sts.length && hitR >= 8 && hit.pickable === true,
+      hit ? `radius ${hitR}px` : 'fehlt');
 
     let found = null, deps = null;
     for (const cand of sts.slice(0, 6)) {                 // erster Halt mit gemeldeten Abfahrten

@@ -300,11 +300,19 @@
     const vis = cur.filter(c => ctx.state.modes[c.v.mode]);
 
     const layers = [
+      // Trefferfläche für Halte: unsichtbar, aber großzügig — die sichtbaren Punkte sind nur ~2 px,
+      // und deck.gl prüft die Geometrie, nicht die Deckkraft. So trifft man den Halt auch mit dem Finger.
+      new ctx.deck.ScatterplotLayer({
+        id: 'live-stations-hit', data: stops, getPosition: d => [d.lon, d.lat],
+        getRadius: 11, radiusUnits: 'pixels', radiusMinPixels: 11,
+        getFillColor: [0, 0, 0, 1], pickable: true,
+      }),
       new ctx.deck.ScatterplotLayer({          // Haltestellen: Positionen direkt aus dem Feed
         id: 'live-stations', data: stops, getPosition: d => [d.lon, d.lat],
-        getRadius: 2, radiusUnits: 'pixels', pickable: true, radiusMinPixels: 2,
-        stroked: true, getLineColor: [236, 241, 252, 150], getLineWidth: 0.8, lineWidthUnits: 'pixels',
+        getRadius: 2.6, radiusUnits: 'pixels', pickable: false, radiusMinPixels: 2.6,
+        stroked: true, getLineColor: [236, 241, 252, 170], getLineWidth: 0.8, lineWidthUnits: 'pixels',
         getFillColor: [216, 223, 240, 215],
+        autoHighlight: true, highlightColor: [255, 255, 255, 130],
       }),
       new ctx.deck.PathLayer({
         id: 'live-trails', data: vis, getPath: d => d.rest,
@@ -358,8 +366,21 @@
   function click(info) {
     const o = info.object;
     if (o && o.v) { startFollow(o.v); openPopup(o.v); return; }   // Fahrzeug: Kamera mitnehmen + Karte
-    if (o && o.stopId) { openStation(o); return; }                // Haltestelle: Kamera hin + Abfahrten
+    if (o && o.stopId) {                                          // Haltestelle: Kamera hin + Abfahrten
+      openStation(o);
+      announceStation(o);
+      return;
+    }
     stopFollow(); closePopup();                                   // Tipp auf die Karte schließt
+  }
+
+  // Kurze Rückmeldung im Panel: sonst weiß man nicht, ob der Tipp auf einen Halt gewirkt hat
+  function announceStation(stop) {
+    const el = document.getElementById('selname');
+    const box = document.getElementById('selinfo');
+    if (!el || !box) return;
+    el.innerHTML = `<b>${esc(ss(stop.name))}</b> <span style="color:var(--muted)">${esc(T('station.departures'))}</span>`;
+    box.style.display = 'flex';
   }
 
   const cursor = ({ isHovering }) => (isHovering ? 'pointer' : 'grab');
