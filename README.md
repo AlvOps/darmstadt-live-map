@@ -1,21 +1,30 @@
 # Darmstadt Live Map
 
-Interactive map of public transport in Darmstadt, Germany: trams, city/regional buses and
-S-Bahn/regional trains. This fork of `agent-mili/darmstadt_nahverkehr` adds a **realtime layer**
-driven by the open DELFI realtime feed — plus a full **EN/DE language toggle**, a **vehicle popup**
-with the upcoming stops, and a **phone-first layout**.
+Interactive **live-only** map of public transport in Darmstadt, Germany: trams, city/regional buses
+and S-Bahn/regional trains. This fork of `agent-mili/darmstadt_nahverkehr` replaced the original
+timetable replay with a **realtime layer** driven by the open DELFI realtime feed — plus a full
+**EN/DE language toggle**, a **vehicle popup** with the upcoming stops, and a **phone-first layout**.
+
+The timetable simulation (and its data files) was removed on 2026-10-14: the site shows live
+vehicles only, so nothing on the map is ever derived from a schedule.
 
 Live: https://alvops.github.io/darmstadt-live-map/
 
 Repository: `AlvOps/darmstadt-live-map` (renamed from `darmstadt_nahverkehr` on 2026-10-14; GitHub
 redirects the old repository and Pages URLs, but the current address is the one above).
 
-## Two modes
+## What the selection does
 
-| Mode | Content | Source |
-|------|---------|--------|
-| **Realtime** (default) | Vehicles with **realtime data only**, their delay, and the delay distribution | DELFI realtime prognoses via Transitous/MOTIS |
-| **Timetable (simulation)** | Replay of the published timetable (weekday/Saturday/Sunday), playback speed, daily profile | static GTFS (DELFI via gtfs.de) |
+The map answers the question "where is *my* bus?" instead of drowning it in dots:
+
+| Selection | Vehicles | Stops |
+|-----------|----------|-------|
+| none | all lines, coloured | all live stops |
+| **a line** (chip in the panel) | **only that line**, camera swings to it | hidden — after **10 s without any interaction** they come back, so the stripped view is never a dead end |
+| **a vehicle** (clicked on the map, or a stop in its card) | that vehicle highlighted, the rest faded | **only that vehicle's own next stops** |
+
+Any tap on the map, a drag or Escape clears the selection and restores the full view. The 10 s quiet
+timer lives in `state.selAt` and is shared by `index.html` and `live.js`.
 
 In realtime mode positions are **interpolated locally** between polls, so a 30 s poll interval
 still yields smooth movement.
@@ -28,38 +37,48 @@ still yields smooth movement.
   (`on time` / `+N min late` / `−N min early`), operator, and the **next 3 stops** with their
   clock times and per-stop delay (fetched on demand from `/api/v1/trip`). The card opens next to
   the dot, follows the vehicle as it moves and stays inside the viewport.
+- **Connector line.** A thin dashed line runs from the card's bottom-left corner to the exact dot it
+  belongs to, so there is never a doubt which vehicle a card is describing.
+- **Movable card.** Drag the card to shove it somewhere convenient; it keeps its offset and stays
+  attached to its dot. On phones it is dragged by its header, so the stop list inside stays scrollable.
 - **Stations on the map.** Live mode draws the stops the feed publishes for the current view
   (`/api/v1/map/stops`) — real stop coordinates and stop ids, not our timetable dump. Tapping one
   moves the camera onto it and opens a card with the **next departures**: line badge in the line
-  colour, destination, clock time, relative arrival and delay (from `/api/v1/stoptimes`).
+  colour, destination, clock time, relative arrival and delay (from `/api/v1/stoptimes`). Tapping a
+  stop inside a vehicle card jumps **instantly** (no camera animation) to that station and opens it.
 - **Short camera follow.** Tapping a vehicle zooms onto it and follows it for 2 s, then releases;
-  a wheel, drag, tap or Escape releases it immediately.
+  a wheel, drag, tap or Escape releases it immediately. Picking a line swings the camera to the
+  vehicles of that line.
+- **Delay histogram.** The bar under the map shows the live clock and the current spread of delays
+  across the vehicles in view (`#tl`, drawn by `live.js`).
 - **EN/DE toggle** in the top-right corner. English is the default (also for German browsers);
   the choice is remembered (`localStorage`). Everything switches — panels, legend, tooltips, popup,
   banner, histogram caption, `aria-label`s, document title and the map attribution.
   `analysis/test_i18n.js` fails if a key is missing in one language or if markup/JS contains
   hardcoded human-readable text.
-- **Phone-first UI.** Compact header on small screens, bottom-sheet popup, ≥40 px touch targets,
-  safe-area insets for notched displays, and no hover-only tooltips on touch devices.
+- **Phone-first UI.** The panel is a **drawer**: it opens with the line list, slides away when you
+  tap the map, and comes back through the ☰ *Lines* button (closed again with ✕ inside it). The
+  header switches between *Lines* and *Status & filters* so both fit without scrollbars, the card
+  becomes a bottom sheet, all touch targets are ≥40 px, safe-area insets are respected and
+  hover-only tooltips are disabled on touch devices.
 - **Honest labelling.** The popup states that positions are derived from realtime stop prognoses,
   because the open feed contains no GPS.
 
 ## Files
 
 ```
-docs/index.html      UI, map (MapLibre + deck.gl), timetable simulation
+docs/index.html      UI, map (MapLibre + deck.gl), line browser, drawer, card + connector
 docs/i18n.js         EN/DE strings + toggle + apply/set logic
 docs/live.js         realtime module (polling, vehicles, stations, popup, camera follow, layers, stats)
-docs/data/meta.json  lines, colours, stops, tram tracks (used by both modes)
-docs/data/*.json     static timetable data (simulation mode only)
+docs/data/meta.json  lines, colours, endpoints — the only data file left (no timetable data)
 docs/favicon.svg     site icon (vector, used for the browser tab and the manifest)
 docs/apple-touch-icon.png, docs/icon-192.png, docs/icon-512.png   opaque PNG icons
 docs/manifest.webmanifest   web app manifest (relative start_url/scope "./")
 analysis/            scripts that established and verify the API's data model
 ```
 
-Realtime mode needs only `meta.json` from `docs/data/`; the timetable files load when the
-timetable mode is selected.
+Scripts and styles carry a `?v=…` cache buster so a push reaches phones immediately instead of
+being served from the 10-minute asset cache.
 
 ### Icon
 
@@ -75,8 +94,6 @@ relative so they work under the GitHub Pages subpath.
 | Data | Origin | Licence |
 |------|--------|---------|
 | Realtime (prognoses) | DELFI e.V., via `api.transitous.org` (MOTIS) | **CC BY-SA 4.0** |
-| Timetable (simulation) | DELFI via gtfs.de | **CC BY 4.0** |
-| Route geometries | generated with pfaedle | — |
 | Base map | CARTO dark-matter, © OpenStreetMap contributors | ODbL |
 
 **Attribution is required** (CC BY / CC BY-SA); the UI names the sources in the map attribution
@@ -120,7 +137,7 @@ Established by direct measurement; every claim is reproducible with the scripts 
   your own scripts must set one.
 * **Long-distance excluded:** ICE/IC (`HIGHSPEED_RAIL`, `LONG_DISTANCE`), long-distance coaches
   (`COACH`) and aircraft have hops with thousands of geometry points reaching Stuttgart or
-  Nuremberg — deliberately not drawn, matching the scope of the timetable simulation.
+  Nuremberg — deliberately not drawn.
 * Vehicles outside the visible map view are dropped as well.
 
 ## Run locally

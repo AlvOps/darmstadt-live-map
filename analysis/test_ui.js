@@ -80,10 +80,12 @@ const map = {
   isMoving: () => false,
 };
 const overlay = { setProps(p) { cap.layers = p.layers; if (p.onClick) cap.onClick = p.onClick; } };
-const state = { modes: { tram: true, bus: true, rail: true }, selLine: null };
+const state = { modes: { tram: true, bus: true, rail: true }, selLine: null, selAt: 0 };
+let hideCalls = 0;                          // zählt, ob die Karte auf dem Telefon das Panel wegschickt
 
 sandbox.I18N.init();
-sandbox.DarmstadtLive.attach({ map, overlay, deck: sandbox.deck, META, state, hex, fmt, shortStop, MODE_RGB, selectLine: () => {} });
+sandbox.DarmstadtLive.attach({ map, overlay, deck: sandbox.deck, META, state, hex, fmt, shortStop, MODE_RGB, selectLine: () => {},
+  hidePanel: () => { hideCalls++; } });
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
@@ -244,6 +246,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       console.log(`  Sprung zu "${withCoords.full}": Kamera ${easeCalls.length ? JSON.stringify(easeCalls[0].center) : '-'} | Art ${inf.popupKind} | Abfahrten ${inf.popupDepartures}`);
       check('Klick auf einen Halt springt genau dorthin',
         easeCalls.length > 0 && Math.abs(easeCalls[0].center[0] - withCoords.lon) < 1e-9 && Math.abs(easeCalls[0].center[1] - withCoords.lat) < 1e-9);
+      check('und zwar ohne Kamera-Animation (sofort)', easeCalls.length > 0 && easeCalls[0].duration === 0);
       check('und öffnet die Haltestellenkarte', inf.popupKind === 'station');
     }
     sandbox.DarmstadtLive.closePopup();
@@ -258,7 +261,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     check('mindestens eine Linie mit Fahrzeugen vorhanden', !!pick);
     if (pick) {
       const [lineIdx, before] = pick;
-      state.selLine = lineIdx;                      // wie ein Klick auf den Chip im Panel
+      state.selLine = lineIdx; state.selAt = Date.now();   // wie ein Klick auf den Chip im Panel
       sandbox.DarmstadtLive.closePopup();
       sandbox.DarmstadtLive.render(true);
       const shown = (cap.layers.find(l => l.id === 'live-heads') || { data: [] }).data;
@@ -278,11 +281,11 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       const st3 = (cap.layers.find(l => l.id === 'live-stations') || { data: [] }).data;
       check('ohne Auswahl erscheinen wieder alle Halte', st3.length > 0 && !st3.some(s => s.focus));
 
-      // Nach 10 s ohne Interaktion dürfen die Halte zurückkommen (Ruheuhr)
-      state.selLine = lineIdx;
+      // Nach 10 s ohne Interaktion dürfen die Halte zurückkommen (Ruheuhr in state.selAt)
+      state.selLine = lineIdx; state.selAt = Date.now();
       sandbox.DarmstadtLive.render(true);
       const stHidden = (cap.layers.find(l => l.id === 'live-stations') || { data: [] }).data.length;
-      sandbox.DarmstadtLive._test.setRelaxAt(Date.now() - 1000);
+      sandbox.DarmstadtLive._test.setRelaxAt(Date.now() - sandbox.DarmstadtLive._test.RELAX_MS - 1000);
       sandbox.DarmstadtLive.render(true);
       const stBack = (cap.layers.find(l => l.id === 'live-stations') || { data: [] }).data.length;
       console.log(`  Ruheuhr: Halte sofort ${stHidden} -> nach 10 s ${stBack}`);
@@ -292,6 +295,45 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       sandbox.DarmstadtLive.render(true);
       await sandbox.DarmstadtLive.openPopup(heads.map(d => d.v)[0]);   // für die Sprachprüfung offen lassen
     }
+  }
+
+  console.log('\n=== Verbindungslinie, ziehbare Karte, Telefon-Schublade ===');
+  {
+    const t = sandbox.DarmstadtLive._test;
+    check('Verbindungslinie rechnet von Ecke zu Punkt',
+      t.leaderD({ x: 10, y: 20 }, { x: 30, y: 40 }) === 'M 10.0 20.0 L 30.0 40.0');
+
+    // bevorzugt rechts über dem Punkt; am rechten Rand links daneben, oben kein Platz -> darunter
+    const right = t.layoutPopup({ x: 100, y: 400 }, 300, 200, 1280, 800, 8);
+    const leftEdge = t.layoutPopup({ x: 1270, y: 400 }, 300, 200, 1280, 800, 8);
+    const topEdge = t.layoutPopup({ x: 600, y: 5 }, 300, 200, 1280, 800, 8);
+    console.log(`  Karte: rechts ${JSON.stringify(right)} | Rand rechts ${JSON.stringify(leftEdge)} | am oberen Rand ${JSON.stringify(topEdge)}`);
+    check('Karte sitzt rechts über dem Punkt', right.x === 118 && right.y === 188);
+    check('am rechten Rand wechselt sie nach links', leftEdge.x + 300 <= 1272 && leftEdge.x < 1270 - 100);
+    check('am oberen Rand rutscht sie unter den Punkt', topEdge.y === 23);
+    check('Karte bleibt im Bild (>= 8px Rand)',
+      [right, leftEdge, topEdge].every(p => p.x >= 8 && p.y >= 8 && p.x + 300 <= 1272 && p.y + 200 <= 792));
+
+    // Vom Nutzer gezogene Karte: gleicher Punkt, aber um den Versatz verschoben
+    await sandbox.DarmstadtLive.openPopup(heads.map(d => d.v)[0]);
+    const el = sandbox.DarmstadtLive._test;
+    el.setDrag(null); sandbox.DarmstadtLive.render(true);
+    const baseL = parseFloat(sandbox.document.getElementById('popup').style.left);
+    const baseT = parseFloat(sandbox.document.getElementById('popup').style.top);
+    el.setDrag({ dx: -80, dy: 45 }); sandbox.DarmstadtLive.render(true);
+    const dragL = parseFloat(sandbox.document.getElementById('popup').style.left);
+    const dragT = parseFloat(sandbox.document.getElementById('popup').style.top);
+    console.log(`  Versatz: vorher (${baseL},${baseT}) -> gezogen (${dragL},${dragT})`);
+    check('gezogene Karte wandert genau um den Versatz (und bleibt am Punkt)',
+      Math.abs((dragL - baseL) + 80) < 1.5 && Math.abs((dragT - baseT) - 45) < 1.5);
+
+    // Tippen auf die Karte schließt auf dem Telefon das Panel
+    const before = hideCalls;
+    cap.onClick({ object: null });
+    check('Tipp auf die Karte schließt das Panel (Telefon-Haken wird gerufen)', hideCalls === before + 1);
+    check('und startet die 10-s-Ruheuhr neu', typeof state.selAt === 'number' && state.selAt > 0);
+    sandbox.DarmstadtLive.closePopup();
+    await sandbox.DarmstadtLive.openPopup(heads.map(d => d.v)[0]);   // für die Sprachprüfung offen lassen
   }
 
   console.log('\n=== Sprachumschaltung ===');

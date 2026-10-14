@@ -82,7 +82,6 @@ function run(check, log = console.log) {
   check('legend no longer carries a scrollbar of its own',
     !/#legend[^{]*::-webkit-scrollbar/.test(css) && !/#legend \{[^}]*overflow-y:\s*auto/.test(css));
   check('map canvas has no scrollbar styling', !/#map[^{]*::-webkit-scrollbar/.test(css));
-  check('schedule mode hides the frozen realtime stats', /body:not\(\.live\) #livestat, body:not\(\.live\) #livestat2 \{ display: none; \}/.test(css));
 
   // The line browser is the primary control: it must sit above the presentation layer, be visible on
   // phones too (it used to be display:none there) and be reachable with a thumb.
@@ -113,12 +112,33 @@ function run(check, log = console.log) {
   check(`phone line chips are thumb-sized (${chipMob}px >= 40px)`, chipMob >= 40);
   const sumMob = parseFloat((prop(rule('#legend summary', mob), 'min-height') || '0').replace('px', ''));
   check(`phone group headers are thumb-sized (${sumMob}px >= 40px)`, sumMob >= 40);
-  check('phones collapse the timetable-only bar controls in realtime mode',
-    /body\.live #daywrap, body\.live #speedwrap, body\.live #play \{ display: none; \}/.test(mob));
   check('phone panel is height-limited so the map stays visible', /#head \{[^}]*max-height:\s*6\dvh/.test(mob));
   const popupW = parseFloat((rule('#popup').match(/width:\s*([\d.]+)px/) || [])[1] || '0');
   check(`vehicle card is wide enough for line + destination + time (${popupW}px >= 280px)`, popupW >= 280);
   check('departure/stop clock time has its own prominent style', /\.pop-stops \.st-clock \{/.test(css));
+
+  // Verbindungslinie Karte->Punkt, ziehbare Karte, Panel-Schublade auf dem Telefon
+  const liveSrc = fs.readFileSync(path.join(DOCS, 'live.js'), 'utf8');
+  check('connector element sits between card and point (svg with path + dot)',
+    /<svg id="leader" aria-hidden="true"><path><\/path><circle r="3\.5"><\/circle><\/svg>/.test(html));
+  check('connector is styled (dashed line, dot)',
+    /#leader path \{[^}]*stroke-dasharray/.test(css) && /#leader circle \{[^}]*fill:/.test(css));
+  check('card is draggable (pointerdown wiring + grab cursor)',
+    /el\.addEventListener\('pointerdown'/.test(liveSrc) && /\.pop-head \{[^}]*cursor: grab/.test(css));
+  check('card drag keeps buttons and stop rows clickable', /closest\('button, a, li, \.pop-stops'\)/.test(liveSrc));
+  check('phone: dragging is limited to the card header so the stop list stays scrollable',
+    /closest\('\.pop-head'\)/.test(liveSrc) && /\.pop-stops \{[^}]*touch-action: pan-y/.test(css));
+  check('phone: panel is a drawer (hidden state + toggle + close)',
+    /body\.panel-closed #head \{ display: none; \}/.test(mob) &&
+    /#paneltoggle \{ display: inline-flex/.test(mob) && /#panelclose \{ display: inline-flex/.test(mob));
+  check('phone: drawer controls are thumb-sized (>= 40px)',
+    /#paneltoggle \{[^}]*min-height: 44px/.test(mob) && /#panelclose \{[^}]*min-height: 40px/.test(mob));
+  check('desktop keeps no drawer chrome (toggle/close hidden)',
+    /#paneltoggle, #panelclose \{ display: none; \}/.test(css));
+  check('tapping the map closes the phone drawer',
+    /hidePanel: \(\) => \{ if \(window\.innerWidth <= 700\) setPanel\(false\)/.test(html));
+  check('chosen line swings the camera to its vehicles',
+    /function focusLine\(/.test(liveSrc) && /fitBounds\(b, \{ padding: 72, maxZoom: 14\.5/.test(liveSrc));
 
   // Overlap fix: with 'Status & filters' AND the line list open, the blocks used to collide because
   // the panel could not scroll and the legend still had a grow factor. Now the panel scrolls and the
@@ -153,13 +173,24 @@ function run(check, log = console.log) {
   check('live rendering pauses during map gestures (no layer rebuild while zooming)',
     /isMoving && ctx\.map\.isMoving\(\)\) return/.test(live));
 
-  // assets: every relative src/href must exist
-  const refs = [...html.matchAll(/\s(?:src|href)="([^"]+)"/g)].map(m => m[1]).filter(u => !/^(https?:)?\/\//.test(u) && !u.startsWith('#'));
+  // assets: every relative src/href must exist (query strings like ?v=... are cache busters, not paths)
+  const refs = [...html.matchAll(/\s(?:src|href)="([^"]+)"/g)].map(m => m[1])
+    .filter(u => !/^(https?:)?\/\//.test(u) && !u.startsWith('#'))
+    .map(u => u.split('?')[0]);
   const dataRefs = [...html.matchAll(/fetch\(`?'?(data\/[\w.]+)/g)].map(m => m[1]).filter(u => /\.json$/.test(u));
-  const days = ['werktag', 'samstag', 'sonntag'].map(d => `data/trips_${d}.json`);
-  const missing = refs.concat(dataRefs, days).filter(u => !fs.existsSync(path.join(DOCS, u)));
-  log(`  relative assets referenced: ${refs.concat(dataRefs, days).join(', ')}`);
+  const missing = refs.concat(dataRefs).filter(u => !fs.existsSync(path.join(DOCS, u)));
+  log(`  relative assets referenced: ${refs.concat(dataRefs).join(', ')}`);
   check('all relative assets exist (no leading slash -> works under the Pages subpath)', missing.length === 0 && !refs.some(u => u.startsWith('/')), missing.join(', '));
+  check('scripts carry a cache-busting version so a push reaches phones immediately',
+    /<script src="live\.js\?v=[^"]+"/.test(html) && /<script src="i18n\.js\?v=[^"]+"/.test(html));
+
+  // live-only: die Fahrplan-Daten und -Tests müssen weg sein
+  const gone = ['data/shapes.json', 'data/trips_werktag.json', 'data/trips_samstag.json', 'data/trips_sonntag.json'];
+  const stillThere = gone.filter(u => fs.existsSync(path.join(DOCS, u)));
+  check('timetable data files are gone (live-only map)', stillThere.length === 0, stillThere.join(', '));
+  check('no timetable code left in index.html/live.js',
+    !/loadDay|drawTimeline|SCHEDULE_MODES|trips_werktag|modeSchedule/.test(html + live));
+  check('timetable test file removed', !fs.existsSync(path.join(__dirname, 'test_schedule.js')));
 
   // icons
   check('<link rel="icon" type="image/svg+xml" href="favicon.svg">', html.includes('<link rel="icon" type="image/svg+xml" href="favicon.svg">'));

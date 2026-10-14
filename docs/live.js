@@ -67,7 +67,10 @@
   let popupVehicle = null, popupLeg = null, popupTimer = null, popupSeq = 0;
   let popupStation = null, popupAnchor = null, popupDepartures = null;   // Haltestellenkarte
   let popupStopList = [];                // Halte der gerade gezeigten Fahrzeugkarte (Klick-Ziele)
-  let relaxAt = 0, lastSel = null;       // 10-s-Ruheuhr für die Linien-Auswahl
+  let dragOff = null;                    // vom Nutzer verschobene Karte: Versatz zur Auto-Position
+  let lastSel = null;                    // nur für den Kamera-Schwenk bei neuer Linienwahl
+  // Die Ruheuhr liegt in ctx.state.selAt: Fahrplan- und Echtzeitmodus brauchen dieselbe Regel
+  // ("gewählte Linie -> nur sie; nach 10 s ohne Interaktion kommen die Haltestellen zurück").
   let active = false, lastFrame = 0;
 
   // API-Texte (Linien, Halte, Ziele, Betreiber, Fehlermeldungen) nie roh in innerHTML
@@ -306,11 +309,11 @@
     //   Linie im Panel gewählt -> nur diese Linie, keine Haltestellen (nach 10 s Ruhe kommen sie zurück)
     //   Fahrzeug gewählt       -> dieses Fahrzeug samt seinen eigenen nächsten Halten
     //   nichts gewählt         -> alles
-    if (sel !== lastSel) {                 // Auswahl hat gewechselt -> Ruheuhr neu starten
+    const relaxed = sel !== null && Date.now() - (ctx.state.selAt || 0) > RELAX_MS;   // 10 s Ruhe
+    if (sel !== lastSel) {                 // neue Linie gewählt -> Kamera gleich zu ihren Fahrzeugen
       lastSel = sel;
-      relaxAt = sel === null ? 0 : Date.now() + RELAX_MS;
+      if (sel !== null && !focusTrip) focusLine(sel, cur);
     }
-    const relaxed = sel !== null && relaxAt > 0 && Date.now() > relaxAt;   // 10 s nichts passiert
     const inMode = c => ctx.state.modes[c.v.mode];
     const vis = sel !== null ? cur.filter(c => inMode(c) && c.v.lineIdx === sel) : cur.filter(inMode);
     const dim = v => (focusTrip ? v.tripId !== focusTrip : false);
@@ -396,7 +399,8 @@
   }
 
   function click(info) {
-    relaxAt = ctx.state && ctx.state.selLine !== null ? Date.now() + RELAX_MS : 0;   // Interaktion -> Uhr neu
+    if (ctx.state) ctx.state.selAt = Date.now();          // Interaktion -> Ruheuhr neu starten
+    if (ctx.hidePanel) ctx.hidePanel();                   // Telefon: Panel aus dem Weg räumen
     const o = info.object;
     if (o && o.v) { startFollow(o.v); openPopup(o.v); return; }   // Fahrzeug: Kamera mitnehmen + Karte
     if (o && o.stopId) {                                          // Haltestelle: Kamera hin + Abfahrten
@@ -426,10 +430,16 @@
   function goToStop(i) {
     const s = popupStopList && popupStopList[i];
     if (!s || s.lat === null || s.lon === null) return;
-    // Bevorzugt den Halt aus dem Kartenbestand (der kennt Abfahrten), sonst die Angaben der Fahrt
+    // Kartenbestand liefert Name/Kennung, die Koordinaten kommen aus dem Feed: der Feed kennt den
+    // echten Standort des Halts (unser Bestand weicht teils um bis zu 149 m ab, s. check_stations.js).
     const known = stops.find(x => s.stopId && x.stopId === s.stopId) ||
                   stops.find(x => normStopName(x.name) === normStopName(s.full));
-    const target = known || { name: s.full || s.name, lat: s.lat, lon: s.lon, stopId: s.stopId, modes: [] };
+    const target = {
+      name: (known && known.name) || s.full || s.name,
+      lat: s.lat, lon: s.lon,                       // exakt der angetippte Punkt
+      stopId: (known && known.stopId) || s.stopId || null,
+      modes: (known && known.modes) || [],
+    };
     openStation(target, false, true);      // sofort springen (ohne Kamera-Animation)
     announceStation(target);
   }
@@ -570,31 +580,115 @@
     return posAt(v.path, v.cd)(u * v.total);
   }
 
+  // Reine Rechnung, wohin die Karte kommt (ohne DOM, damit testbar): bevorzugt rechts über dem Punkt,
+  // sonst links daneben, notfalls darunter, immer mit Abstand zum Rand.
+  function layoutPopup(pt, w, h, cw, ch, pad) {
+    let x = pt.x + 18, y = pt.y - h - 12;
+    if (x + w > cw - pad) x = Math.max(pad, pt.x - w - 18);
+    if (y < pad) y = pt.y + 18;
+    x = Math.max(pad, Math.min(x, cw - w - pad));
+    y = Math.max(pad, Math.min(y, ch - h - pad));
+    return { x, y };
+  }
+
+  // Der Linienzug der Verbindungslinie (untere linke Ecke der Karte -> Punkt)
+  function leaderD(from, pt) {
+    return `M ${from.x.toFixed(1)} ${from.y.toFixed(1)} L ${pt.x.toFixed(1)} ${pt.y.toFixed(1)}`;
+  }
+
+  // Verbindungslinie zeichnen: sie sagt eindeutig, zu welchem Punkt die Karte gehört
+  function drawLeader(el, pt) {
+    const svg = document.getElementById('leader');
+    if (!svg || !el.getBoundingClientRect || !ctx.map.getContainer) return;
+    const box = ctx.map.getContainer();
+    if (!box.getBoundingClientRect) return;
+    const host = box.getBoundingClientRect(), r = el.getBoundingClientRect();
+    if (!Number.isFinite(r.left) || !Number.isFinite(r.bottom)) { hideLeader(); return; }
+    const from = { x: r.left - host.left + 3, y: r.bottom - host.top - 3 };
+    if (svg.setAttribute) svg.setAttribute('viewBox', `0 0 ${Math.round(host.width)} ${Math.round(host.height)}`);
+    svg.style.width = Math.round(host.width) + 'px';
+    svg.style.height = Math.round(host.height) + 'px';
+    const path = svg.querySelector ? svg.querySelector('path') : null;
+    const dot = svg.querySelector ? svg.querySelector('circle') : null;
+    if (path && path.setAttribute) path.setAttribute('d', leaderD(from, pt));
+    if (dot && dot.setAttribute) { dot.setAttribute('cx', pt.x.toFixed(1)); dot.setAttribute('cy', pt.y.toFixed(1)); }
+    if (svg.classList) svg.classList.add('on');
+  }
+  function hideLeader() {
+    const svg = document.getElementById('leader');
+    if (svg && svg.classList) svg.classList.remove('on');
+  }
+
+  // Karte verschiebbar: ziehen am Kartenkörper. Auf dem Telefon nur am Kopf, damit die Halteliste
+  // weiterhin scrollt; Knöpfe und Halte-Zeilen bleiben klickbar.
+  function initDrag(el) {
+    if (!el || !el.addEventListener || el.dataset.dragReady) return;
+    el.dataset.dragReady = '1';
+    el.addEventListener('pointerdown', e => {
+      const t = e.target;
+      if (!finePointer() && !(t && t.closest && t.closest('.pop-head'))) return;
+      if (t && t.closest && t.closest('button, a, li, .pop-stops')) return;
+      if (!el.getBoundingClientRect) return;
+      const r = el.getBoundingClientRect();
+      const base = dragOff || { dx: 0, dy: 0 };
+      const start = { x: e.clientX, y: e.clientY, left: r.left, top: r.top };
+      el.classList.add('dragging');
+      if (el.setPointerCapture) { try { el.setPointerCapture(e.pointerId); } catch (_) {} }
+      const move = ev => {
+        dragOff = { dx: base.dx + (ev.clientX - start.x), dy: base.dy + (ev.clientY - start.y) };
+        el.style.left = Math.round(start.left + dragOff.dx) + 'px';
+        el.style.top = Math.round(start.top + dragOff.dy) + 'px';
+        const p = popupAnchor || (popupVehicle && vehiclePosAt(popupVehicle, Date.now()));
+        if (p && ctx.map.project) drawLeader(el, ctx.map.project(p));
+      };
+      const up = () => {
+        el.classList.remove('dragging');
+        el.removeEventListener('pointermove', move);
+        el.removeEventListener('pointerup', up);
+        el.removeEventListener('pointercancel', up);
+      };
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
+    });
+  }
+
+  // Zur gewählten Linie schwenken: sonst muss man den Bus zwischen allen Punkten suchen
+  function focusLine(idx, list) {
+    if (!ctx.map.fitBounds || !window.maplibregl) return;
+    const pts = (list || vehiclesAt(Date.now())).filter(d => d.v.lineIdx === idx).map(d => [d.v.lon, d.v.lat]);
+    if (!pts.length) return;
+    try {
+      const b = new window.maplibregl.LngLatBounds(pts[0], pts[0]);
+      for (const p of pts) b.extend(p);
+      ctx.map.fitBounds(b, { padding: 72, maxZoom: 14.5, duration: 650 });
+    } catch (_) { /* Schwenk ist Komfort, kein Muss */ }
+  }
+
   // Setzt das Popup neben den Punkt, hält es im Bild und zieht es weich nach (immediate = ohne Dämpfung).
   function placePopup(immediate) {
     const el = document.getElementById('popup');
-    if (!el || (!popupVehicle && !popupStation) || !el.classList.contains('on')) return;
-    if (!finePointer()) {                  // Telefon: Bottom-Sheet unten, keine Verfolgung
+    if (!el || (!popupVehicle && !popupStation) || !el.classList.contains('on')) { hideLeader(); return; }
+    const p = popupAnchor || vehiclePosAt(popupVehicle, Date.now());
+    const pt = p && ctx.map.project ? ctx.map.project(p) : null;
+    if (!finePointer() && !dragOff) {      // Telefon: Bottom-Sheet unten, keine Verfolgung
       if (el.style.left || el.style.top) { el.style.left = ''; el.style.top = ''; }
       popupPos = null;
+      if (pt) drawLeader(el, pt);          // Linie zeigt auch hier auf den Punkt
       return;
     }
-    // Fahrzeug: Punkt auf der Strecke · Haltestelle: fester Ort
-    const p = popupAnchor || vehiclePosAt(popupVehicle, Date.now());
-    if (!p) return;
-    const pt = ctx.map.project(p);
+    if (!pt) { hideLeader(); return; }
     const w = el.offsetWidth || 240, h = el.offsetHeight || 132;
     const box = ctx.map.getContainer(), cw = box.clientWidth, ch = box.clientHeight, pad = 8;
-    let x = pt.x + 18, y = pt.y - h - 12;  // bevorzugt rechts über dem Punkt
-    if (x + w > cw - pad) x = Math.max(pad, pt.x - w - 18);   // sonst links daneben
-    if (y < pad) y = pt.y + 18;                                // oben kein Platz -> darunter
-    x = Math.max(pad, Math.min(x, cw - w - pad));
-    y = Math.max(pad, Math.min(y, ch - h - pad));
-    if (immediate || !popupPos) popupPos = { x, y };
-    else popupPos = { x: popupPos.x + (x - popupPos.x) * 0.18,       // sanft nachziehen
-                      y: popupPos.y + (y - popupPos.y) * 0.18 };
-    el.style.left = Math.round(popupPos.x) + 'px';
-    el.style.top = Math.round(popupPos.y) + 'px';
+    const auto = layoutPopup(pt, w, h, cw, ch, pad);
+    if (immediate || !popupPos) popupPos = auto;
+    else popupPos = { x: popupPos.x + (auto.x - popupPos.x) * 0.18,       // sanft nachziehen
+                      y: popupPos.y + (auto.y - popupPos.y) * 0.18 };
+    // Vom Nutzer gezogene Karte behält ihren Versatz und bleibt trotzdem am Punkt hängen
+    const dx = dragOff ? dragOff.dx : 0, dy = dragOff ? dragOff.dy : 0;
+    el.style.left = Math.round(popupPos.x + dx) + 'px';
+    el.style.top = Math.round(popupPos.y + dy) + 'px';
+    drawLeader(el, pt);
   }
 
   // ---------- Haltestellenkarte: Kamera zum Halt, nächste Abfahrten aus demselben Feed
@@ -691,6 +785,7 @@
     el.querySelectorAll('li.st-go[data-i]').forEach(li => {   // Halte in der Fahrzeugkarte sind anklickbar
       li.onclick = e => { e.stopPropagation(); goToStop(+li.dataset.i); };
     });
+    initDrag(el);                                        // Karte ist ziehbar
     placePopup(true);                                    // neue Höhe -> sofort neu ausrichten
   }
 
@@ -853,7 +948,7 @@
       ctx.map.on('moveend', () => scheduleRefresh(700));
       // Der Betreiber hat Vorrang: eigene Geste beendet das Begleiten sofort
       ctx.map.on('dragstart', stopFollow);
-      ctx.map.on('dragstart', () => { if (ctx.state.selLine !== null) relaxAt = Date.now() + RELAX_MS; });
+      ctx.map.on('dragstart', () => { if (ctx.state) ctx.state.selAt = Date.now(); });   // Ruheuhr neu
       const box = ctx.map.getContainer();
       ['wheel', 'mousedown', 'touchstart'].forEach(ev => box.addEventListener(ev, stopFollow, { passive: true }));
       document.addEventListener('visibilitychange', () => { if (!document.hidden && active) refresh(); });
@@ -891,6 +986,7 @@
     },
     _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell,
              goToStop, nextStops, stops: () => stops, popupStopList: () => popupStopList,
-             setRelaxAt(t) { relaxAt = t; }, relaxAt: () => relaxAt },
+             setRelaxAt(t) { ctx.state.selAt = t; }, relaxAt: () => ctx.state.selAt, RELAX_MS,
+             placePopup, dragOff: () => dragOff, setDrag(d) { dragOff = d; }, leaderD: leaderD, layoutPopup },
   };
 })();
