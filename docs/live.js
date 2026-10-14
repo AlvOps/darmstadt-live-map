@@ -46,7 +46,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261014-18';
+  const VERSION = '20261014-19';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -373,9 +373,18 @@
   }
 
   function placeMarker(el, pos) {
+    el._geo = pos;                                  // merken: danach kann die Position neu gesetzt werden
     const p = ctx.map.project([pos[0], pos[1]]);
     el.style.transform = 'translate(' + Math.round(p.x) + 'px,' + Math.round(p.y) + 'px)translate(-50%,-50%)';
     el.style.zIndex = String(1000 + Math.round(p.y));
+  }
+
+  // Positionen ohne Neuaufbau nachziehen. Nötig, weil render() während einer Kartenbewegung absichtlich
+  // früh aussteigt (Layer-Aufbau soll die Geste nicht ausbremsen) — ohne das blieben die Marken stehen
+  // und „schwebten" über der Karte.
+  function syncMarkerPositions() {
+    if (!markerBox) return;
+    for (const el of Array.from(markerBox.children || [])) if (el._geo) placeMarker(el, el._geo);
   }
 
   function renderMarkers(vis, shownStops, focusTrip) {
@@ -405,6 +414,7 @@
         host.appendChild(el);
         markerPool.set(id, el);
       }
+      el.dataset.mode = v.mode || 'bus';                 // Farbe nach Verkehrsart (wie im Panel)
       const html = markerHtml(v.mode, v.lineName);
       if (el.dataset.sig !== html) { el.innerHTML = html; el.dataset.sig = html; }
       el.classList.toggle('focus', id === focusTrip);
@@ -1221,6 +1231,7 @@
     openPopup: v => openPopup(v, false),
     openStation: (s, instant) => openStation(s, false, instant),
     stops: () => stops,                  // für Suche/Favoriten: Halte des aktuellen Ausschnitts
+    syncMarkers: () => syncMarkerPositions(),   // Marken an die Karte hängen (auch während der Bewegung)
     info() {
       return {
         active, count: vehicles.length, stops: stops.length, lastOk,
@@ -1236,6 +1247,7 @@
     },
     _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell,
              dedupeStops, markers: () => markerLog, markerNode: () => markerBox, markerHtml,
+             syncMarkers: () => syncMarkerPositions(),
              tapVehicle, tapStop,
              tripChain, chain: () => chainCache,
              goToStop, nextStops, stops: () => stops, popupStopList: () => popupStopList,

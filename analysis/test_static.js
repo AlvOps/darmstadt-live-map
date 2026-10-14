@@ -225,9 +225,23 @@ function run(check, log = console.log) {
     /if \(el\.textContent !== letter\) el\.textContent = letter/.test(liveSrc) &&
     /const letter = T\('stopMark'\)/.test(liveSrc));
   check('focus sits on the marker itself and the others step back',
-    /\.mk\.focus \{ border-color: var\(--accent\)/.test(css) && /\.mk\.dim \{ opacity: \.55; \}/.test(css) &&
+    /\.mk\.focus \{ border-color: #fff; box-shadow: 0 0 0 2\.5px var\(--accent\)/.test(css) &&
+    /\.mk\.dim \{ opacity: \.55; \}/.test(css) &&
     /el\.classList\.toggle\('focus', id === focusTrip\)/.test(liveSrc) &&
     /el\.classList\.toggle\('dim', !!focusTrip && id !== focusTrip\)/.test(liveSrc));
+  // Farbe nach Verkehrsart wie die Schalter im Panel, und die Marken folgen der Karte (kein Schweben).
+  check('pills take the mode colour of the panel switches (tram red, bus turquoise, rail purple)',
+    /\.mk\[data-mode="tram"\] \{ background: var\(--tram\); \}/.test(css) &&
+    /\.mk\[data-mode="bus"\] \{ background: var\(--bus\); \}/.test(css) &&
+    /\.mk\[data-mode="rail"\] \{ background: var\(--rail\); \}/.test(css) &&
+    /el\.dataset\.mode = v\.mode \|\| 'bus'/.test(liveSrc));
+  check('markers are repositioned while the map moves (they do not float)',
+    /function syncMarkerPositions\(\)/.test(liveSrc) &&
+    /syncMarkers: \(\) => syncMarkerPositions\(\)/.test(liveSrc) &&
+    /\['move', 'zoom', 'rotate', 'pitch'\]\.forEach\(ev => map\.on\(ev, \(\) => window\.DarmstadtLive\.syncMarkers\(\)\)\)/.test(html) &&
+    /window\.DarmstadtLive\.syncMarkers\(\);\n    requestAnimationFrame\(loop\);/.test(html));
+  check('stop marker is a small, properly centred circle',
+    /\.stopmk \{[\s\S]*box-sizing: border-box; padding: 0; margin: 0;[\s\S]*width: 17px; height: 17px; border-radius: 50%;[\s\S]*align-items: center; justify-content: center;/.test(css));
   check('the operator feed is gone (it could not be merged without duplicates)',
     !/heag/i.test(liveSrc) && !/heag\.js/.test(html) && !fs.existsSync(path.join(DOCS, 'heag.js')));
   check('credits state the single source again (derived positions only)',
