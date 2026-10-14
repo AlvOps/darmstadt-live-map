@@ -13,8 +13,8 @@
  *     realTime                     true, wenn Ist-Zeiten vorliegen
  *     trips[0].tripId              Fahrt-Kennung für /trip
  *   Im gesamten offenen DELFI-Echtzeitstrom kommen KEINE GPS-Koordinaten vor — nachgewiesen per
- *   Brute-Force-Scan über 50 MB (analysis/brute_coords.py: 0 Treffer) und der SIRI-ET-Struktur
- *   (Haltestellen-Prognosen). Es gibt für Darmstadt auch kein offenes SIRI-VM-Fahrzeugpositionsangebot.
+ *   Brute-Force-Scan über 50 MB (0 Treffer; das Scan-Skript liegt nicht im Repository, siehe
+ *   README) und der SIRI-ET-Struktur (Haltestellen-Prognosen). Es gibt für Darmstadt auch kein offenes SIRI-VM-Fahrzeugpositionsangebot.
  *
  *   Daraus folgt für die Punkte auf der Karte:
  *     - Gezeichnet werden ausschließlich Fahrzeuge mit realTime=true. Fahrzeuge ohne Echtzeit
@@ -40,6 +40,9 @@
   const MAX_SPAN = 0.28;           // max. bbox-Kantenlänge in Grad (verhindert 422)
   const STALE_MS = 45000;          // ab wann Daten als veraltet gelten
   const NEXT_STOPS = 8;            // wie viele kommende Halte das Popup zeigt
+  const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
+                                   // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
+  const FRAME_MS = 200;            // Live-Animation ~5 Bilder/s: spart Akku/GC auf Telefonen
 
   // Nur Nahverkehr (kein ICE/IC, keine Fernbusse, keine Flugzeuge) — sonst hängen Abschnitte
   // mit mehreren tausend Geometriepunkten bis Stuttgart/Nürnberg in der Karte.
@@ -57,7 +60,14 @@
   let lastOk = 0, lastErr = null, failures = 0, lastPaint = 0;
   let pollTimer = null, refreshTimer = null, refreshInFlight = false;
   let lineIndex = null, viewBox = null;
-  let popupVehicle = null, popupLeg = null, popupTimer = null;
+  let popupVehicle = null, popupLeg = null, popupTimer = null, popupSeq = 0;
+  let active = false, lastFrame = 0;
+
+  // API-Texte (Linien, Halte, Ziele, Betreiber, Fehlermeldungen) nie roh in innerHTML
+  const esc = x => String(x == null ? '' : x).replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const ss = n => ctx.shortStop(String(n == null ? '' : n));
+  const num = ts => { const v = Date.parse(ts); return Number.isFinite(v) ? v : NaN; };
 
   // ---------- Geometrie
   function decodePolyline(str) {
@@ -125,7 +135,7 @@
     if (v.lineIdx >= 0) return ctx.hex(ctx.META.lines[v.lineIdx].color);
     if (v.routeColor) {                       // API liefert z. B. "ffbe3c"
       const c = String(v.routeColor).replace('#', '');
-      if (c.length === 6) return [parseInt(c.slice(0, 2), 16), parseInt(c.slice(2, 4), 16), parseInt(c.slice(4, 6), 16)];
+      if (/^[0-9a-f]{6}$/i.test(c)) return [parseInt(c.slice(0, 2), 16), parseInt(c.slice(2, 4), 16), parseInt(c.slice(4, 6), 16)];
     }
     return ctx.MODE_RGB[v.mode] || [200, 200, 200];
   }
@@ -149,7 +159,7 @@
   }
 
   async function refresh() {
-    if (refreshInFlight || !ctx) return;
+    if (refreshInFlight || !ctx || !active) return;   // nach dem Ausschalten kein Abruf mehr
     refreshInFlight = true;
     const now = Date.now();
     const t0 = new Date(now).toISOString().replace(/\.\d+Z$/, 'Z');
@@ -157,7 +167,10 @@
     try {
       const res = await fetch(`${API}?${bboxParams()}&startTime=${t0}&endTime=${t1}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      const built = buildVehicles(await res.json());
+      const json = await res.json();
+      if (!active) return;                       // während des Abrufs ausgeschaltet
+      if (!Array.isArray(json)) throw new Error('bad payload');
+      const built = buildVehicles(json);
       if (built.length || failures === 0) {      // leere Antwort nicht als Erfolg überbügeln
         vehicles = built;
         lastOk = Date.now();
@@ -180,15 +193,16 @@
     const nowMs = Date.now();
     const byTrip = new Map();
     for (const t of data) {
+      if (!t || typeof t !== 'object') continue;
       const mode = MODE_MAP[t.mode];
       if (!mode) continue;
       // Nur echte Echtzeitfahrzeuge: ohne realTime wäre die Position reine Fahrplanableitung.
       if (t.realTime !== true) continue;
-      if (!t.polyline || !t.departure || !t.arrival) continue;
-      const dep = Date.parse(t.departure), arr = Date.parse(t.arrival);
+      if (typeof t.polyline !== 'string' || !t.departure || !t.arrival) continue;
+      const dep = num(t.departure), arr = num(t.arrival);
       if (!(arr > dep)) continue;
       if (nowMs > arr) continue;                              // Abschnitt ist durch
-      const tr = (t.trips && t.trips[0]) || {};
+      const tr = (Array.isArray(t.trips) && t.trips[0]) || {};
       const tid = tr.tripId || (t.from && t.from.stopId) + '|' + t.departure;
       const prev = byTrip.get(tid);
       const running = dep <= nowMs;
@@ -204,13 +218,14 @@
         if (p[1] < viewBox.s - padLat || p[1] > viewBox.n + padLat ||
             p[0] < viewBox.w - padLon || p[0] > viewBox.e + padLon) continue;
       }
-      const delayMin = Math.round((dep - Date.parse(t.scheduledDeparture || t.departure)) / 60000);
+      const sched = t.scheduledDeparture ? num(t.scheduledDeparture) : dep;
+      const delayMin = Number.isFinite(sched) ? Math.round((dep - sched) / 60000) : null;  // null = unbekannt
       byTrip.set(tid, {
         tripId: tid, mode, running,
-        lineName: tr.routeShortName || '?',
-        headsign: tr.headsign || '',
-        dest: (t.to && t.to.name) || '',
-        fromName: (t.from && t.from.name) || '',
+        lineName: String(tr.routeShortName || '?'),
+        headsign: String(tr.headsign || ''),
+        dest: String((t.to && t.to.name) || ''),
+        fromName: String((t.from && t.from.name) || ''),
         dep, arr, delayMin, realTime: true, routeColor: t.routeColor || '',
         path, cd, total: cd[cd.length - 1],
         lineIdx: matchLine(tr.routeShortName, mode),
@@ -222,6 +237,7 @@
   function vehiclesAt(t) {
     const out = [];
     for (const v of vehicles) {
+      if (t > v.arr + LEG_GRACE_MS) continue;   // Daten zu alt: nicht als Live-Position zeigen
       const u = Math.min(1, Math.max(0, (t - v.dep) / (v.arr - v.dep)));
       const pos = posAt(v.path, v.cd)(u * v.total);
       const idx = v.cd.findIndex(d => d >= u * v.total);
@@ -233,6 +249,7 @@
 
   // ---------- Darstellung
   function delayColor(d) {
+    if (d === null) return [150, 155, 170];
     if (d >= 5) return [255, 90, 80];
     if (d >= 1) return [255, 209, 102];
     if (d <= -1) return [120, 220, 160];
@@ -260,7 +277,7 @@
         getRadius: d => (d.v.mode === 'bus' ? 4 : 5), radiusUnits: 'pixels',
         getFillColor: d => { const c = colorFor(d.v); return [...c, alpha(d.v)]; },
         stroked: true, getLineColor: d => [...delayColor(d.v.delayMin), dim(d.v) ? 30 : 235],
-        getLineWidth: d => (Math.abs(d.v.delayMin) >= 1 ? 2 : 1.2), lineWidthUnits: 'pixels',
+        getLineWidth: d => (d.v.delayMin !== null && Math.abs(d.v.delayMin) >= 1 ? 2 : 1.2), lineWidthUnits: 'pixels',
         pickable: true, radiusMinPixels: 3,
         updateTriggers: { getPosition: t, getFillColor: sel, getLineColor: sel },
       }),
@@ -284,8 +301,8 @@
     if (!tip) return;
     if (!info.object || !info.object.v || !finePointer()) { tip.style.display = 'none'; return; }
     const v = info.object.v;
-    tip.innerHTML = `<b>${v.lineName}</b> → ${ctx.shortStop(v.headsign || v.dest)}<br>` +
-      `<span style="color:var(--muted)">${delayText(v.delayMin)} · ${T('popup.realtime')}</span>`;
+    tip.innerHTML = `<b>${esc(v.lineName)}</b> → ${esc(ss(v.headsign || v.dest))}<br>` +
+      `<span style="color:var(--muted)">${esc(delayText(v.delayMin))} · ${esc(T('popup.realtime'))}</span>`;
     tip.style.display = 'block';
     tip.style.left = info.x + 14 + 'px'; tip.style.top = info.y + 14 + 'px';
   }
@@ -302,12 +319,14 @@
   // "Verspätet · +3 Min." / "Pünktlich" / "Zu früh · −2 Min." — der Status steht als Wort vorn,
   // damit auch ohne Farbwahrnehmung eindeutig ist, ob das Fahrzeug verspätet ist.
   function delayText(d) {
+    if (d === null || !Number.isFinite(d)) return T('popup.statusUnknown');
     if (d >= 1) return T('popup.statusLate') + ' · ' + T('popup.delayPlus', { n: d });
     if (d <= -1) return T('popup.statusEarly') + ' · ' + T('popup.delayMinus', { n: Math.abs(d) });
     return T('popup.statusOntime');
   }
 
   function delayClass(d) {
+    if (d === null || !Number.isFinite(d)) return 'unknown';
     if (d >= 1) return 'late';
     if (d <= -1) return 'early';
     return 'ontime';
@@ -328,13 +347,13 @@
     }));
     if (leg.to) seq.push({ name: leg.to.name, time: leg.endTime, sched: leg.scheduledEndTime });
     return seq
-      .filter(s => s.time && Date.parse(s.time) >= now - 45000)
+      .filter(s => s.time && num(s.time) >= now - 45000)
       .slice(0, NEXT_STOPS)
       .map(s => {
-        const tm = Date.parse(s.time), sc = s.sched ? Date.parse(s.sched) : tm;
+        const tm = num(s.time), sc = s.sched ? num(s.sched) : tm;
         return {
-          name: ctx.shortStop(s.name), time: tm,
-          delay: Math.round((tm - sc) / 60000),
+          name: ss(s.name), time: tm,
+          delay: Number.isFinite(sc) ? Math.round((tm - sc) / 60000) : null,
           inMin: Math.round((tm - now) / 60000),
           cancelled: !!s.cancelled,
         };
@@ -342,7 +361,7 @@
   }
 
   function pickLeg(data, v) {
-    const legs = (data && data.legs) || [];
+    const legs = (data && Array.isArray(data.legs) ? data.legs : []).filter(l => l && typeof l === 'object');
     if (!legs.length) return null;
     const leg = legs.find(l => l.tripId === v.tripId)
       || legs.find(l => normLine(l.routeShortName) === normLine(v.lineName))
@@ -351,7 +370,7 @@
       agency: leg.agencyName || '', from: leg.from, to: leg.to,
       startTime: leg.startTime, endTime: leg.endTime,
       scheduledStartTime: leg.scheduledStartTime, scheduledEndTime: leg.scheduledEndTime,
-      intermediateStops: leg.intermediateStops || [],
+      intermediateStops: Array.isArray(leg.intermediateStops) ? leg.intermediateStops : [],
     };
   }
 
@@ -359,58 +378,84 @@
     const stops = leg && !leg.error ? nextStops(leg) : null;
     const rows = stops ? stops.map(s => {
       const rel = s.inMin >= 0 && s.inMin <= 60
-        ? `<span class="st-time">${s.inMin <= 0 ? T('popup.stopNow') : T('popup.inMin', { n: s.inMin })}</span>` : '';
+        ? `<span class="st-time">${esc(s.inMin <= 0 ? T('popup.stopNow') : T('popup.inMin', { n: s.inMin }))}</span>` : '';
       const d = s.delay;
-      return `<li><span class="st-name">${s.name}${s.cancelled ? ' ⚠' : ''}</span>${rel}` +
+      const dl = d === null ? '–' : d > 0 ? '+' + d : d < 0 ? '−' + Math.abs(d) : '·';
+      return `<li><span class="st-name">${esc(s.name)}${s.cancelled ? ' ⚠' : ''}</span>${rel}` +
         `<span class="st-time">${clock(s.time)}</span>` +
-        `<span class="st-dly ${delayClass(d)}">${d > 0 ? '+' + d : d < 0 ? d : '·'}</span></li>`;
+        `<span class="st-dly ${delayClass(d)}">${dl}</span></li>`;
     }).join('') : '';
+    const failMsg = leg && leg.error
+      ? (leg.error === 'noLegs' ? T('popup.noTrip') : T('popup.failed') + ' (' + leg.error + ')') : '';
     const body = leg && leg.error
-      ? `<div class="pop-sub">${T('popup.failed')} (${leg.error})</div>`
+      ? `<div class="pop-sub pop-err">${esc(failMsg)}</div>`
       : loading
-        ? `<div class="pop-sub">${T('popup.loading')}</div>`
-        : `<ul class="pop-stops">${rows || `<li><span class="st-name">${T('popup.noStops')}</span></li>`}</ul>`;
+        ? `<div class="pop-sub">${esc(T('popup.loading'))}</div>`
+        : `<ul class="pop-stops">${rows || `<li><span class="st-name">${esc(T('popup.noStops'))}</span></li>`}</ul>`;
     return `
       <div class="pop-head">
-        <span class="pop-line" style="background:${cssColor(v)}">${v.lineName}</span>
-        <span class="pop-title">${T('popup.nextStops')} → ${ctx.shortStop(v.headsign || v.dest)}</span>
-        <button class="pop-close" aria-label="${T('popup.close')}">✕</button>
+        <span class="pop-line" style="background:${cssColor(v)}">${esc(v.lineName)}</span>
+        <span class="pop-title">${esc(T('popup.nextStops'))} → ${esc(ss(v.headsign || v.dest))}</span>
+        <button class="pop-close" aria-label="${esc(T('popup.close'))}">✕</button>
       </div>
-      <div class="pop-delay ${delayClass(v.delayMin)}">${delayText(v.delayMin)}</div>
-      <div class="pop-sub">${T('popup.realtime')}${v.fromName ? ' · ' + ctx.shortStop(v.fromName) + ' → ' : ' · '}${ctx.shortStop(v.dest)}` +
-        `${leg && !leg.error && leg.agency ? ' · ' + T('popup.agency') + ': ' + leg.agency : ''}</div>
+      <div class="pop-delay ${delayClass(v.delayMin)}">${esc(delayText(v.delayMin))}</div>
+      <div class="pop-sub">${esc(T('popup.realtime'))}${v.fromName ? ' · ' + esc(ss(v.fromName)) + ' → ' : ' · '}${esc(ss(v.dest))}` +
+        `${leg && !leg.error && leg.agency ? ' · ' + esc(T('popup.agency')) + ': ' + esc(leg.agency) : ''}</div>
       ${body}
-      <div class="pop-note">${T('popup.positionNote')}</div>`;
+      <div class="pop-note">${esc(T('popup.positionNote'))}</div>`;
   }
 
-  function wirePopup(el) {
+  function paintPopup(loading) {
+    const el = document.getElementById('popup');
+    if (!el || !popupVehicle) return;
+    const list = el.querySelector('.pop-stops');
+    const scroll = (list && list.scrollTop) || 0, outer = el.scrollTop || 0;
+    el.innerHTML = popupShell(popupVehicle, popupLeg, loading);
     const btn = el.querySelector('.pop-close');
     if (btn) btn.onclick = closePopup;
+    const nl = el.querySelector('.pop-stops');           // Scrollposition beim Auffrischen behalten
+    if (nl) nl.scrollTop = scroll;
+    el.scrollTop = outer;
   }
 
-  async function openPopup(v) {
+  // Popup öffnen (refresh=false) oder auffrischen (refresh=true: keine "lädt"-Anzeige, Scroll bleibt).
+  // Jede Anfrage bekommt eine laufende Nummer; Antworten für ein inzwischen geschlossenes oder
+  // gewechseltes Popup werden verworfen und setzen keinen neuen Timer.
+  async function openPopup(v, refreshing) {
     const el = document.getElementById('popup');
-    if (!el) return;
-    popupVehicle = v; popupLeg = null;
+    if (!el || !v) return;
+    const seq = ++popupSeq;
+    clearTimeout(popupTimer); popupTimer = null;
+    if (!refreshing) { popupVehicle = v; popupLeg = null; }
+    else {                                   // aktuellen Datensatz der Fahrt übernehmen (Verspätung ändert sich)
+      const fresh = vehicles.find(x => x.tripId === v.tripId);
+      if (fresh) popupVehicle = fresh;
+    }
     el.classList.add('on');
-    el.innerHTML = popupShell(v, null, true);
-    wirePopup(el);
+    paintPopup(!refreshing);
+    let leg;
     try {
       const res = await fetch(`${API_TRIP}?tripId=${encodeURIComponent(v.tripId)}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      popupLeg = pickLeg(await res.json(), v);
+      leg = pickLeg(await res.json(), v) || { error: 'noLegs' };
     } catch (err) {
-      popupLeg = { error: err.message || 'error' };
+      leg = { error: (err && err.message) || 'error' };
     }
-    if (popupVehicle && popupVehicle.tripId === v.tripId) {
-      el.innerHTML = popupShell(v, popupLeg, false);
-      wirePopup(el);
-    }
-    clearTimeout(popupTimer);
-    popupTimer = setTimeout(() => { if (popupVehicle) openPopup(popupVehicle); }, POPUP_REFRESH_MS);
+    if (seq !== popupSeq || !popupVehicle) return;     // veraltet: Popup zu oder anderes Fahrzeug
+    if (!(refreshing && leg.error && popupLeg && !popupLeg.error)) popupLeg = leg;  // Aussetzer: alte Liste behalten
+    paintPopup(false);
+    popupTimer = setTimeout(popupTick, POPUP_REFRESH_MS);
+  }
+
+  function popupTick() {
+    popupTimer = null;
+    if (!popupVehicle || !active) return;
+    if (document.hidden) { popupTimer = setTimeout(popupTick, POPUP_REFRESH_MS); return; }
+    openPopup(popupVehicle, true);
   }
 
   function closePopup() {
+    popupSeq++;                              // laufende Antworten verwerfen
     popupVehicle = null; popupLeg = null;
     clearTimeout(popupTimer); popupTimer = null;
     const el = document.getElementById('popup');
@@ -424,6 +469,7 @@
     let onTime = 0, late = 0, early = 0;
     for (const c of cur) {
       if (ctx.state.modes[c.v.mode]) counts[c.v.mode]++;
+      if (!ctx.state.modes[c.v.mode] || c.v.delayMin === null) continue;   // gleiche Basis wie die Gesamtzahl
       if (c.v.delayMin >= 1) late++;
       else if (c.v.delayMin <= -1) early++;
       else onTime++;
@@ -435,10 +481,10 @@
     const total = cur.filter(c => ctx.state.modes[c.v.mode]).length;
     const meta = document.getElementById('livestat');
     if (meta) {
-      meta.innerHTML = `<b>${total}</b> ${T('vehicles')} · ` +
-        `<span style="color:#78dca0">${onTime} ${T('onTime')}</span> · ` +
-        `<span style="color:var(--accent)">${late} ${T('delayed')}</span> · ` +
-        `<span style="color:#8a90a0">${early} ${T('early')}</span>`;
+      meta.innerHTML = `<b>${total}</b> ${esc(T('vehicles'))} · ` +
+        `<span style="color:#78dca0">${onTime} ${esc(T('onTime'))}</span> · ` +
+        `<span style="color:var(--accent)">${late} ${esc(T('delayed'))}</span> · ` +
+        `<span style="color:#8ecbff">${early} ${esc(T('early'))}</span>`;
     }
   }
 
@@ -451,7 +497,7 @@
     const c = cv.getContext('2d');
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
     c.clearRect(0, 0, w, h);
-    const vis = cur.filter(x => ctx.state.modes[x.v.mode]);
+    const vis = cur.filter(x => ctx.state.modes[x.v.mode] && x.v.delayMin !== null);
     if (!vis.length) {
       c.fillStyle = '#8a90a0'; c.font = '11px system-ui';
       c.fillText(T('noData'), 4, 24);
@@ -498,18 +544,25 @@
   // ---------- Steuerung
   function start() {
     stop();
+    active = true;
+    if (lastOk && Date.now() - lastOk > STALE_MS) vehicles = [];   // alte Positionen nicht wieder zeigen
     refresh();
     pollTimer = setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
   }
 
   function stop() {
+    active = false;
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = null;
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = null;
+    clearTimeout(popupTimer); popupTimer = null;
   }
 
   function scheduleRefresh(delay) {         // bei Kartenbewegung
+    if (!active) return;
     if (refreshTimer) clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(refresh, delay);
+    refreshTimer = setTimeout(() => { refreshTimer = null; refresh(); }, delay);
   }
 
   window.DarmstadtLive = {
@@ -517,24 +570,33 @@
       ctx = context;
       lineIndex = null;
       ctx.map.on('moveend', () => scheduleRefresh(700));
-      document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+      document.addEventListener('visibilitychange', () => { if (!document.hidden && active) refresh(); });
+      document.addEventListener('keydown', e => { if (e.key === 'Escape' && popupVehicle) closePopup(); });
     },
     render,
-    tick() { render(); },
+    tick() {                                // aus requestAnimationFrame: gedrosselt
+      const now = Date.now();
+      if (now - lastFrame < FRAME_MS) return;
+      lastFrame = now;
+      render();
+    },
     refresh,
     setOn(on) { on ? start() : stop(); },
     setLang() {                             // nach Sprachwechsel: Statistik, Histogramm, Popup neu beschriften
       if (ctx) render(true);
-      if (popupVehicle) openPopup(popupVehicle);
+      if (popupVehicle) paintPopup(false);  // aus dem Zwischenspeicher, kein neuer Abruf
     },
     closePopup,
-    openPopup,
+    openPopup: v => openPopup(v, false),
     info() {
       return {
-        count: vehicles.length, lastOk,
+        active, count: vehicles.length, lastOk,
         lastErr: lastErr ? String(lastErr.message || lastErr) : null, failures,
+        polling: !!pollTimer, popupTimer: !!popupTimer,
         popupOpen: !!popupVehicle, popupStops: popupLeg && !popupLeg.error ? nextStops(popupLeg).length : null,
+        popupError: popupLeg && popupLeg.error ? popupLeg.error : null,
       };
     },
+    _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell },
   };
 })();
