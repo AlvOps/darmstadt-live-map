@@ -258,6 +258,10 @@
 
   function render(force) {
     if (!ctx) return;
+    // Während Zoom/Pan nichts neu bauen: Layer-Aufbau und Fahrzeugberechnung konkurrieren sonst mit
+    // der Geste um den Hauptthread, was die Karte beim Zoomen hakelig wirken lässt. Der nächste
+    // Tick zeichnet direkt nach dem Ende der Geste.
+    if (ctx.map.isMoving && ctx.map.isMoving()) return;
     const t = Date.now();
     const sel = ctx.state.selLine;
     const cur = vehiclesAt(t);

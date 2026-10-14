@@ -44,20 +44,22 @@
   .tog[aria-pressed="true"] .box::after { content: "✓"; font-weight: 800; }
   .tog[aria-pressed="false"] { color: var(--muted); }
   #head { display: flex; flex-direction: column; max-height: var(--head-max, calc(100vh - 32px)); }
-  #legend-sec { min-height: 0; display: flex; flex-direction: column; }
-  #legend { overflow-y: auto; margin-right: -8px; padding-right: 8px; scrollbar-gutter: stable; }
+  #legend-sec { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  /* Eigene Scrollfläche der Linienliste. Ohne flex/min-height schrumpft sie im Panel auf wenige
+     Pixel — der Balken wird dann ein kaum greifbarer Splitter und die Linien sind nicht wählbar. */
+  #legend { flex: 1 1 auto; min-height: 176px; overflow-y: auto; margin-right: -8px; padding-right: 10px; scrollbar-gutter: stable; }
   #legend details { border-top: 1px solid var(--line); }
   #legend summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
-    padding: 6px 0; font-size: 12.5px; user-select: none; }
+    padding: 9px 0; font-size: 12.5px; user-select: none; }
   #legend summary::-webkit-details-marker { display: none; }
   #legend summary::before { content: "▸"; color: var(--muted); font-size: 10px; width: 10px; transition: transform .15s; }
   #legend details[open] summary::before { transform: rotate(90deg); }
   #legend summary .n { color: var(--muted); font-size: 11px; margin-left: auto; }
-  #legend .chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 0 9px 16px; }
+  #legend .chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 0 11px 16px; }
   #selinfo { font-size: 12px; margin-bottom: 6px; display: none; align-items: baseline; gap: 6px; }
   #selinfo button { padding: 1px 7px; font-size: 11px; border-radius: 6px; margin-left: auto; flex: none; }
-  .chip { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; cursor: pointer;
-    color: #111; border: 2px solid transparent; }
+  .chip { font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 7px; cursor: pointer;
+    color: #111; border: 2px solid transparent; display: inline-flex; align-items: center; min-height: 28px; }
   .chip.sel { border-color: #fff; }
   #bar { left: 16px; right: 16px; bottom: 16px; padding: 12px 16px 14px; }
   #row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
@@ -134,15 +136,27 @@
   }
   .panel, #legend, .pop-stops { overscroll-behavior: contain; }
   @supports (scrollbar-width: thin) {
-    .panel, #legend, .pop-stops { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+    .panel, .pop-stops { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
   }
-  .panel::-webkit-scrollbar, #legend::-webkit-scrollbar, .pop-stops::-webkit-scrollbar { width: 9px; height: 9px; }
+  /* Die Linienliste bekommt bewusst einen normalbreiten Balken — "thin" war ein Splitter, den man
+     kaum treffen konnte. */
+  @supports (scrollbar-width: auto) {
+    #legend { scrollbar-width: auto; scrollbar-color: var(--scroll-thumb) transparent; }
+  }
+  .panel::-webkit-scrollbar, .pop-stops::-webkit-scrollbar { width: 9px; height: 9px; }
+  #legend::-webkit-scrollbar { width: 13px; height: 13px; }
   .panel::-webkit-scrollbar-track, #legend::-webkit-scrollbar-track, .pop-stops::-webkit-scrollbar-track { background: transparent; }
   .panel::-webkit-scrollbar-corner, #legend::-webkit-scrollbar-corner, .pop-stops::-webkit-scrollbar-corner { background: transparent; }
   .panel::-webkit-scrollbar-thumb, #legend::-webkit-scrollbar-thumb, .pop-stops::-webkit-scrollbar-thumb {
     background: var(--scroll-thumb); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+  #legend::-webkit-scrollbar-thumb { border-width: 3px; }
   .panel::-webkit-scrollbar-thumb:hover, #legend::-webkit-scrollbar-thumb:hover, .pop-stops::-webkit-scrollbar-thumb:hover {
     background: var(--scroll-thumb-hover); background-clip: padding-box; }
+
+  /* Fahrplan-Modus: keine Regionalzüge (Geometrie zu grob, siehe SCHEDULE_MODES) — also auch keine
+     Bahn-Zähler, keine Bahn-Schalter und keine Bahn-Gruppen in der Linienliste zeigen. */
+  body:not(.live) [data-mode="rail"],
+  body:not(.live) #legend details[data-modes~="rail"] { display: none; }
 
   /* Fahrplan-Modus: keine Echtzeit-Statistik stehen lassen (wäre eingefrorener Live-Stand) */
   body:not(.live) #livestat, body:not(.live) #livestat2 { display: none; }
@@ -258,6 +272,7 @@ const fmt = s => { s = ((s % 86400) + 86400) % 86400; return String(Math.floor(s
 const state = { t: 5 * 3600, playing: true, speed: 240, day: 'werktag', liveOn: true,
   modes: { tram: true, bus: true, rail: true }, selLine: null };
 let META, SHAPES, SHAPE_CD, TRIPS = [], HIST = null;
+let SCHEDULE_STATIONS = null;              // Haltestellen ohne reine Bahnhöfe (Fahrplan-Modus)
 const cache = {};
 
 // kumulative Distanzen je Shape – gleiche Näherung wie im Python-Build
@@ -270,6 +285,14 @@ function cumdist(f) {
   }
   return out;
 }
+
+// Fahrplan-Modus: nur Straßenbahn und Bus.
+// Die Regionalzug-Linien (S6, RB61, RB68, RB75 …) führen hier 32–104 km weit, mit Sprüngen von im
+// Mittel 8 km zwischen zwei Geometriepunkten (an shapes.json gemessen). Auf Stadtmaßstab gezeichnet
+// ergibt das lange violette Streifen, die keiner Straße folgen — deshalb werden sie im Fahrplan
+// nicht mehr gezeichnet. Der Echtzeit-Modus bleibt unberührt: dort kommen die Positionen aus
+// Haltestellenprognosen mit echten Halt-zu-Halt-Geometrien.
+const SCHEDULE_MODES = ['tram', 'bus'];
 
 // Pfad + Zeitstempel einer Fahrt aus Shape und (Distanz, Zeit)-Stützstellen
 function buildTrip([li, si, dest, pts]) {
@@ -302,7 +325,9 @@ function buildTrip([li, si, dest, pts]) {
 async function loadDay(day) {
   if (!cache[day]) {
     const raw = await fetch(`data/trips_${day}.json`).then(r => r.json());
-    const trips = raw.map(buildTrip).filter(t => t.path.length > 1);
+    const trips = raw
+      .filter(r => SCHEDULE_MODES.includes(META.lines[r[0]].mode))    // keine Regionalzüge (s. SCHEDULE_MODES)
+      .map(buildTrip).filter(t => t.path.length > 1);
     // Histogramm aktiver Fahrzeuge je 5 min und Modus
     const bins = Math.ceil((T1 - T0) / 300), hist = { tram: new Uint16Array(bins), bus: new Uint16Array(bins), rail: new Uint16Array(bins) };
     for (const t of trips) {
@@ -324,11 +349,37 @@ function headPos(tr, t) {
 }
 
 // ---------- Karte
+const BASEMAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json';
+// CARTOs Vektor-Kacheln enden bei z14 (am 2026-10-14 gemessen: z14 = HTTP 200, z15 und tiefer = 404).
+// Die Style-Datei nennt kein maxzoom, deshalb fragt MapLibre beim Hineinzoomen Kacheln ab, die es
+// nicht gibt — die Grundkarte bleibt dann auf der zuletzt geladenen Zoomstufe stehen und wirkt beim
+// Zoomen "eingefroren". Darum wird die TileJSON-Quelle durch eine feste Vorlage mit maxzoom 14
+// ersetzt: darüber skaliert MapLibre die z14-Kacheln selbst (Overzoom), die Karte bleibt weich.
+const TILE_SUBS = ['a', 'b', 'c', 'd'];
+const TILE_MAXZOOM = 14;
+function inlineTileSource() {
+  const style = map.getStyle();
+  const src = style.sources && style.sources.carto;
+  if (!src || !src.url) return false;                    // schon gepatcht oder unerwartete Struktur
+  src.tiles = TILE_SUBS.map(s =>
+    `https://tiles-${s}.basemaps.cartocdn.com/vectortiles/carto.streets/v1/{z}/{x}/{y}.mvt`);
+  src.minzoom = 0;
+  src.maxzoom = TILE_MAXZOOM;
+  delete src.url;                                        // sonst gilt weiter die Angabe der TileJSON
+  map.setStyle(style, { diff: false });
+  return true;
+}
 const map = new maplibregl.Map({
   container: 'map',
-  style: 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
-  center: [8.652, 49.872], zoom: 12.3, pitch: 35, bearing: -8, maxPitch: 60,
+  style: BASEMAP_STYLE,
+  center: [8.652, 49.872], zoom: 12.3, pitch: 35, bearing: -8, maxPitch: 60, maxZoom: 16,
   attributionControl: false             // eigene, übersetzte Quellenangabe (siehe setAttribution)
+});
+let basemapCapped = false;
+map.on('style.load', () => {            // einmalig nach dem ersten Laden begrenzen
+  if (basemapCapped) return;
+  try { basemapCapped = inlineTileSource(); }
+  catch (err) { console.warn('Basemap-Kacheln konnten nicht begrenzt werden:', err); }
 });
 // Quellenangabe in der aktuellen Sprache; beim Sprachwechsel neu einsetzen
 let attribCtrl = null;
@@ -348,6 +399,8 @@ const tip = document.getElementById('tip');
 function render() {
   // Im Echtzeit-Modus zeichnet das Live-Modul (live.js)
   if (state.liveOn && window.DarmstadtLive) { window.DarmstadtLive.render(true); return; }
+  if (!SCHEDULE_STATIONS)                  // einmalig: Haltestellen ohne reine Fernbahnhöfe
+    SCHEDULE_STATIONS = META.stations.filter(s => SCHEDULE_MODES.some(m => String(s[3]).includes(m)));
   const t = state.t, sel = state.selLine;
   const vis = [], heads = [], counts = { tram: 0, bus: 0, rail: 0 };
   for (const tr of TRIPS) {
@@ -363,9 +416,9 @@ function render() {
     new deck.PathLayer({ id: 'tracks', data: META.tram_tracks, getPath: d => {
         const p = []; for (let i = 0; i < d.length; i += 2) p.push([d[i], d[i+1]]); return p; },
       getColor: [255, 255, 255, 38], widthUnits: 'pixels', getWidth: 1 }),
-    new deck.ScatterplotLayer({ id: 'stations', data: META.stations, getPosition: d => [d[1], d[2]],
-      getRadius: d => d[3].includes('rail') ? 5 : d[3].includes('tram') ? 3 : 2, radiusUnits: 'pixels',
-      getFillColor: d => d[3].includes('rail') ? [199,125,255,110] : [255,255,255,55], pickable: true }),
+    new deck.ScatterplotLayer({ id: 'stations', data: SCHEDULE_STATIONS, getPosition: d => [d[1], d[2]],
+      getRadius: d => d[3].includes('tram') ? 3 : 2, radiusUnits: 'pixels',
+      getFillColor: [232,236,245,70], pickable: true }),
     new deck.TripsLayer({ id: 'trails', data: vis, getPath: d => d.path, getTimestamps: d => d.ts,
       getColor: d => [...d.color, alpha(d)], currentTime: t, trailLength: TRAIL, fadeTrail: true,
       widthUnits: 'pixels', getWidth: d => d.mode === 'bus' ? 2.5 : 3.5, capRounded: true, jointRounded: true,
@@ -408,13 +461,13 @@ function selectLine(li) {
 
 // Linienleiste nach Verkehrsart/Betreiber gruppiert
 const GROUPS = [
-  { key: 'grpTram', open: true, test: l => l.mode === 'tram' },
-  { key: 'grpS', open: true, test: l => l.mode === 'rail' && l.name.startsWith('S') },
-  { key: 'grpRegional', test: l => l.mode === 'rail' },
-  { key: 'grpBusHeag', test: l => l.agency === 'HEAG' },
-  { key: 'grpBusDadina', test: l => l.agency === 'DADINA' },
-  { key: 'grpBusRmv', test: l => l.agency === 'RMV' },
-  { key: 'grpBusOther', test: () => true },
+  { key: 'grpTram', open: true, modes: ['tram'], test: l => l.mode === 'tram' },
+  { key: 'grpS', open: true, modes: ['rail'], test: l => l.mode === 'rail' && l.name.startsWith('S') },
+  { key: 'grpRegional', modes: ['rail'], test: l => l.mode === 'rail' },
+  { key: 'grpBusHeag', modes: ['bus'], test: l => l.agency === 'HEAG' },
+  { key: 'grpBusDadina', modes: ['bus'], test: l => l.agency === 'DADINA' },
+  { key: 'grpBusRmv', modes: ['bus'], test: l => l.agency === 'RMV' },
+  { key: 'grpBusOther', modes: ['bus'], test: () => true },
 ];
 function buildLegend() {
   const lg = document.getElementById('legend'), done = new Set();
@@ -426,6 +479,7 @@ function buildLegend() {
     if (!items.length) continue;
     items.forEach(x => done.add(x.i));
     const det = document.createElement('details'); det.open = !!g.open;
+    det.dataset.modes = (g.modes || []).join(' ');      // erlaubt CSS, z. B. Bahn im Fahrplan zu verbergen
     const n = items.length === 1 ? T('lineOne') : T('lineMany', { n: items.length });
     det.innerHTML = `<summary>${esc(T(g.key))}<span class="n">${esc(n)}</span></summary><div class="chips"></div>`;
     const box = det.querySelector('.chips');
@@ -449,7 +503,10 @@ function drawTimeline() {
   const dpr = devicePixelRatio || 1, w = tl.clientWidth, h = tl.clientHeight;
   tl.width = w * dpr; tl.height = h * dpr; tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   tctx.clearRect(0, 0, w, h);
-  const bins = HIST.tram.length, modes = ['rail', 'tram', 'bus'].filter(m => state.modes[m]);
+  const bins = HIST.tram.length;
+  // Im Fahrplan werden keine Regionalzüge mehr gezeichnet (siehe SCHEDULE_MODES) — also auch keine
+  // violette Säule im Tagesprofil. Im Echtzeit-Modus zählt rail weiter mit.
+  const modes = ['tram', 'bus'].concat(state.liveOn ? ['rail'] : []).filter(m => state.modes[m]);
   let max = 1;
   for (let i = 0; i < bins; i++) max = Math.max(max, modes.reduce((s, m) => s + HIST[m][i], 0));
   const bw = w / bins, top = 14, H = h - top;

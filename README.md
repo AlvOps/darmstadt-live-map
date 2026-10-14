@@ -5,7 +5,10 @@ S-Bahn/regional trains. This fork of `agent-mili/darmstadt_nahverkehr` adds a **
 driven by the open DELFI realtime feed — plus a full **EN/DE language toggle**, a **vehicle popup**
 with the upcoming stops, and a **phone-first layout**.
 
-Live: https://alvops.github.io/darmstadt_nahverkehr/
+Live: https://alvops.github.io/darmstadt-live-map/
+
+Repository: `AlvOps/darmstadt-live-map` (renamed from `darmstadt_nahverkehr` on 2026-10-14; GitHub
+redirects the old repository and Pages URLs, but the current address is the one above).
 
 ## Two modes
 
@@ -129,7 +132,10 @@ node analysis/test_live.js        # loads docs/live.js, fetches real data, check
 node analysis/test_ui.js          # realtime-only filtering, popup (races, timers, failures), XSS escaping,
                                   # malformed API records, polling stop, + test_i18n + test_static
 node analysis/test_i18n.js        # EN/DE key coverage + hardcoded-string scan (offline)
-node analysis/test_static.js      # CSS for phones/scrollbars, status-pill contrast, assets, icons (offline)
+node analysis/test_static.js      # CSS for phones/scrollbars/legend sizing, status-pill contrast, assets,
+                                  # icons, basemap zoom cap (offline)
+node analysis/check_tile_ceiling.js    # ONLINE: measures the basemap's real tile ceiling and fails if the
+                                       # cap baked into index.html no longer matches
 python3 analysis/where_is_vehicle.py   # proves: polyline == hop geometry, no position field
 python3 analysis/hop_structure.py      # hop/vehicle structure, payload per time window
 python3 analysis/poll_shape.py         # payload vs. time window and bbox limits

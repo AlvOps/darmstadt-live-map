@@ -82,6 +82,32 @@ function run(check, log = console.log) {
   check('map canvas has no scrollbar styling', !/#map[^{]*::-webkit-scrollbar/.test(css));
   check('schedule mode hides the frozen realtime stats', /body:not\(\.live\) #livestat, body:not\(\.live\) #livestat2 \{ display: none; \}/.test(css));
 
+  // The line list must be usable: a real scroll area, a grabbable bar and hittable chips.
+  const legend = rule('#legend') || '', legendSec = rule('#legend-sec') || '';
+  const legendMin = parseFloat((legend.match(/min-height:\s*([\d.]+)px/) || [])[1] || '0');
+  check('legend can grow inside the panel (flex on legend and its section)',
+    /flex:\s*1 1 auto/.test(legend) && /flex:\s*1 1 auto/.test(legendSec));
+  check(`legend scroll area tall enough to hold lines (${legendMin}px >= 120px)`, legendMin >= 120);
+  const lgWk = parseFloat(((rule('#legend::-webkit-scrollbar') || '').match(/width:\s*([\d.]+)px/) || [])[1] || '0');
+  check(`legend scrollbar is wide enough to grab (${lgWk}px >= 12px)`, lgWk >= 12);
+  check('legend gets a full-width Firefox scrollbar, not "thin"', /#legend \{[^}]*scrollbar-width:\s*auto/.test(css));
+  const chipMin = parseFloat(((rule('.chip') || '').match(/min-height:\s*([\d.]+)px/) || [])[1] || '0');
+  check(`line chips are big enough to hit (${chipMin}px >= 26px)`, chipMin >= 26);
+
+  // Basemap zooming: CARTO's vector tiles stop at a fixed zoom with no maxzoom in the style, so the
+  // source must be inlined and capped, otherwise MapLibre requests 404 tiles and the map freezes.
+  check('basemap tile source is capped at a declared maxzoom',
+    /const TILE_MAXZOOM = \d+/.test(html) && /src\.maxzoom = TILE_MAXZOOM/.test(html));
+  check('capped source inlines tiles for all four CARTO subdomains',
+    /const TILE_SUBS = \['a', 'b', 'c', 'd'\]/.test(html) && /tiles-\$\{s\}\.basemaps\.cartocdn\.com/.test(html));
+  check('TileJSON url removed so the cap takes effect', /delete src\.url/.test(html));
+  check('style.load cap runs exactly once', /map\.on\('style\.load'/.test(html) && /if \(basemapCapped\) return/.test(html));
+  check('map zoom is capped too (no pointless overzoom)', /maxZoom:\s*1[0-9]\b/.test(html));
+
+  const live = fs.readFileSync(path.join(DOCS, 'live.js'), 'utf8');
+  check('live rendering pauses during map gestures (no layer rebuild while zooming)',
+    /isMoving && ctx\.map\.isMoving\(\)\) return/.test(live));
+
   // assets: every relative src/href must exist
   const refs = [...html.matchAll(/\s(?:src|href)="([^"]+)"/g)].map(m => m[1]).filter(u => !/^(https?:)?\/\//.test(u) && !u.startsWith('#'));
   const dataRefs = [...html.matchAll(/fetch\(`?'?(data\/[\w.]+)/g)].map(m => m[1]).filter(u => /\.json$/.test(u));
