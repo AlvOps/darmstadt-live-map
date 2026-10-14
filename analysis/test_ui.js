@@ -510,6 +510,69 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('setOn(true): Abruf läuft wieder', net.calls.length > n0 && L.info().polling === true);
   L.setOn(false);
 
+  console.log('\n=== Suche und Favoriten (search.js) ===');
+  vm.runInContext(fs.readFileSync(path.join(DOCS, 'search.js'), 'utf8'), sandbox);
+  const SE = sandbox.DarmstadtSearch;
+  check('Suchmodul wird bereitgestellt', !!SE && typeof SE.matchStations === 'function' && typeof SE.load === 'function');
+  check('Normalisierung: Umlaute, ß, Groß-/Kleinschreibung, Leerraum',
+    SE.norm('Hauptbahnhof') === SE.norm('hauptbahnhof') && SE.norm('Groß-Gerau') === 'gross-gerau' &&
+    SE.norm('  Mehr   fach ') === 'mehr fach' && SE.norm('  ') === '' && SE.norm(null) === '');
+  const pool = [
+    { name: 'Darmstadt Hauptbahnhof', lon: 8.66, lat: 49.87 },
+    { name: 'Darmstadt Hauptbahnhof', lon: 8.66, lat: 49.87 },
+    { name: 'Langen Hauptbahnhof', lon: 8.6, lat: 49.97 },
+    { name: 'Darmstadt Schloss', lon: 8.65, lat: 49.87 },
+    { name: 'Hauptbahnhof Nord', lon: 8.7, lat: 49.9 },
+    { name: 'Bahnhofstraße', lon: 8.64, lat: 49.88 },
+  ];
+  const found = SE.matchStations('HAUPT', pool, 7).map(s => s.name);
+  console.log(`  Treffer für "HAUPT": ${found.join(' | ')}`);
+  check('Suche trifft unabhängig von Schreibweise', found.length === 3);
+  check('Namensanfang vor Wortanfang vor Treffern mitten im Namen',
+    found.join('|') === 'Hauptbahnhof Nord|Darmstadt Hauptbahnhof|Langen Hauptbahnhof');
+  const ranked = SE.matchStations('bahnhof', pool, 9).map(s => s.name);
+  console.log(`  Treffer für "bahnhof": ${ranked.join(' | ')}`);
+  check('Namensanfang steht vor Treffern mitten im Namen',
+    ranked[0] === 'Bahnhofstraße' && ranked.slice(1).every(n => SE.norm(n).indexOf('bahnhof') > 0));
+  check('Duplikate werden entfernt', SE.matchStations('haupt', pool, 9).filter(s => s.name === 'Darmstadt Hauptbahnhof').length === 1);
+  check('Trefferzahl ist begrenzt', SE.matchStations('haupt', pool, 1).length === 1 && SE.matchStations('a', pool, 2).length === 2);
+  check('leere Suche und Nullwerte liefern nichts', SE.matchStations('   ', pool, 7).length === 0 && SE.matchStations(null, null, 7).length === 0);
+
+  delete store[SE.KEY];
+  let fav = SE.load();
+  check('Favoriten starten leer', fav.stations.length === 0 && fav.lines.length === 0);
+  const one = { name: 'Darmstadt Schloss', lat: 49.87, lon: 8.65, stopId: 'st1' };
+  fav = SE.toggleStation(fav, one); SE.save(fav);
+  check('gemerkter Halt steht im Speicher', SE.load().stations.length === 1 && SE.load().stations[0].stopId === 'st1');
+  fav = SE.toggleStation(fav, { name: 'Darmstadt Schloss', lat: 1, lon: 2, stopId: 'st1' });
+  check('derselbe Halt wird nicht doppelt gemerkt (gleiche Kennung, andere Werte)', fav.stations.length === 0);
+  fav = SE.toggleStation(fav, { name: 'Darmstadt Schloss', lat: 49.87, lon: 8.65 });
+  fav = SE.toggleStation(fav, { name: 'Darmstadt Schloss', lat: 49.87, lon: 8.65 });
+  check('ohne Kennung wird über den Namen entdoppelt', fav.stations.length === 0);
+  fav = SE.toggleLine(fav, 4);
+  check('Linie merken und wieder entfernen', SE.hasLine(fav, 4) === 0 && SE.toggleLine(fav, 4).lines.length === 0);
+  fav = SE.toggleLine(SE.toggleLine(fav, 7), 2); SE.save(fav);
+  check('mehrere Linien überleben das Neuladen', SE.load().lines.join(',') === '4,7,2');
+  store[SE.KEY] = '{kaputt';
+  check('kaputter Speicherinhalt legt die Seite nicht lahm', SE.load().stations.length === 0 && SE.load().lines.length === 0);
+  store[SE.KEY] = JSON.stringify({ stations: [{ name: 'X' }], lines: [3, -1, 'a', null] });
+  check('unerwartete Werte werden aussortiert', SE.load().stations.length === 1 && SE.load().lines.join(',') === '3');
+
+  console.log('\n=== Stern in der Haltestellenkarte ===');
+  const tapped = [];
+  sandbox.DarmstadtLive.attach({ map, overlay, deck: sandbox.deck, META, state, hex, fmt, shortStop, MODE_RGB,
+    selectLine: () => {}, hidePanel: () => {},
+    fav: { has: s => !!s && /Hauptbahnhof/.test(s.name), toggle: s => tapped.push(s.name) } });
+  await sandbox.DarmstadtLive.openStation({ name: 'Darmstadt Hauptbahnhof', lat: 49.872, lon: 8.652 }, true);
+  await wait(60);
+  const cardHtml = el('popup').innerHTML;
+  check('Haltestellenkarte zeigt den Merken-Stern', /class="pop-star/.test(cardHtml));
+  check('Stern zeigt den gemerkten Zustand', /class="pop-star on"/.test(cardHtml));
+  const starEl = el('popup').querySelector('.pop-star');
+  check('Stern ist verdrahtet', typeof starEl.onclick === 'function');
+  if (typeof starEl.onclick === 'function') starEl.onclick();
+  check('Tippen auf den Stern meldet den Halt an die Favoritenlogik', tapped.length === 1 && /Hauptbahnhof/.test(tapped[0]));
+
   console.log('\n=== EN/DE-Abdeckung ===');
   require('./test_i18n').run(check);
 

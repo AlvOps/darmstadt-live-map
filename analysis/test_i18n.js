@@ -149,7 +149,7 @@ function markupFindings(html) {
       continue;
     }
     const id = (attrs.match(/\sid="([^"]*)"/) || [])[1];
-    for (const [attr, drv] of [['title', 'data-i18n-title'], ['aria-label', 'data-i18n-aria'], ['alt', null], ['placeholder', null]]) {
+    for (const [attr, drv] of [['title', 'data-i18n-title'], ['aria-label', 'data-i18n-aria'], ['alt', null], ['placeholder', 'data-i18n-placeholder']]) {
       const v = (attrs.match(new RegExp('\\s' + attr + '="([^"]*)"')) || [])[1];
       if (v && /[A-Za-zÄÖÜäöüß]{2,}/.test(v) && !(drv && new RegExp('\\s' + drv + '="').test(attrs)))
         findings.push(`${attr}="${v}" on <${tag}${id ? '#' + id : ''}> has no ${drv || 'i18n binding'}`);
@@ -196,7 +196,7 @@ function run(check, log = console.log) {
     for (const mm of src.matchAll(/(?:\bI18N\.t|\bT|(?<![\w.])t)\(\s*'([A-Za-z0-9_.]+)'/g)) add(mm[1], name);
     for (const mm of src.matchAll(/\bkey:\s*'([A-Za-z0-9_.]+)'/g)) add(mm[1], name + ' (GROUPS)');
   }
-  for (const mm of html.matchAll(/data-i18n(?:-title|-aria)?="([^"]+)"/g)) add(mm[1], 'index.html attr');
+  for (const mm of html.matchAll(/data-i18n(?:-title|-aria|-placeholder)?="([^"]+)"/g)) add(mm[1], 'index.html attr');
   const missing = [];
   for (const [k, w] of used) {
     if (!en.has(k)) missing.push(`${k} missing in en (${[...w].join(', ')})`);

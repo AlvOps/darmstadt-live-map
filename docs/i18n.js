@@ -85,6 +85,15 @@
       presentation: 'Status & filters',
       openPanel: 'Lines',
       closePanel: 'Close panel',
+      favTitle: 'Favourites',
+      favStations: 'Saved stops',
+      favLines: 'Saved lines',
+      favEmpty: 'Nothing saved yet — tap the star on a stop card or on a line.',
+      favAdd: 'Save as favourite',
+      favRemove: 'Remove from favourites',
+      searchPlaceholder: 'Search a stop …',
+      searchLabel: 'Search a stop',
+      searchNoHit: 'No stop found',
     },
     de: {
       appTitle: 'Darmstadt Live Map',
@@ -164,6 +173,15 @@
       presentation: 'Status & Filter',
       openPanel: 'Linien',
       closePanel: 'Panel schließen',
+      favTitle: 'Favoriten',
+      favStations: 'Gemerkte Halte',
+      favLines: 'Gemerkte Linien',
+      favEmpty: 'Noch nichts gemerkt – tippe den Stern auf einer Haltestellenkarte oder bei einer Linie.',
+      favAdd: 'Als Favorit merken',
+      favRemove: 'Favorit entfernen',
+      searchPlaceholder: 'Haltestelle suchen …',
+      searchLabel: 'Haltestelle suchen',
+      searchNoHit: 'Keine Haltestelle gefunden',
     },
   };
 
@@ -205,6 +223,9 @@
     });
     scope.querySelectorAll('[data-i18n-title]').forEach(el => {
       el.title = t(el.getAttribute('data-i18n-title'));
+    });
+    scope.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+      el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
     });
     scope.querySelectorAll('[data-i18n-aria]').forEach(el => {
       el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria')));

@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261014-8"></script>
+<script src="i18n.js?v=20261014-9"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -51,11 +51,38 @@
   #legend-sec { flex: 0 0 auto; min-height: 0; display: flex; flex-direction: column; }
   /* Linienliste ohne eigenen Scrollbalken: sie wächst mit, solange das Panel in den Bildschirm passt */
   #legend { flex: 0 0 auto; min-height: 0; max-height: none; overflow: visible; }
-  /* Umschalter zwischen Linien und Status */
-  #panes { margin-top: 10px; align-self: flex-start; }
+  /* Umschalter zwischen Linien, Favoriten und Status — dazu rechts die Haltestellensuche.
+     Immer nur ein Bereich sichtbar, damit das Panel ohne Scrollbalken auskommt. */
+  #panelbar { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  #panes { align-self: flex-start; }
   #panes button { padding: 6px 11px; font-size: 12.5px; }
   body[data-pane="status"] #legend-sec { display: none; }
   body[data-pane="lines"] #presentation { display: none; }
+  body[data-pane="favs"] #legend-sec { display: none; }
+  body[data-pane="favs"] #presentation { display: none; }
+  body:not([data-pane="favs"]) #favs { display: none; }
+  /* Suche: Eingabe in der Umschaltzeile, Trefferliste direkt darunter (kein Overlay-Ärger) */
+  #searchwrap { position: relative; flex: 1 1 180px; min-width: 140px; }
+  #search { width: 100%; box-sizing: border-box; padding: 6px 10px; font: inherit; font-size: 12.5px;
+    color: var(--text); background: rgba(255,255,255,.07); border: 1px solid var(--line); border-radius: 9px; }
+  #search::placeholder { color: var(--muted); }
+  #results { position: absolute; z-index: 7; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px;
+    list-style: none; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    backdrop-filter: blur(10px); box-shadow: 0 6px 20px rgba(0,0,0,.35); max-height: 46vh; overflow-y: auto; }
+  #results[hidden] { display: none; }
+  #results button.res { display: block; width: 100%; text-align: left; padding: 8px 9px; font: inherit;
+    font-size: 13px; color: var(--fg); background: transparent; border: 0; border-radius: 7px; cursor: pointer; }
+  #results button.res:hover { background: rgba(255,255,255,.1); }
+  /* Favoriten: gemerkte Halte und Linien */
+  #favstations { list-style: none; margin: 4px 0 12px; padding: 0; }
+  #favstations li { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line); }
+  #favstations .fav-go { flex: 1 1 auto; min-width: 0; text-align: left; padding: 8px 0; font: inherit;
+    font-size: 12.5px; color: var(--fg); background: transparent; border: 0; cursor: pointer;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #favstations .fav-x { flex: none; padding: 3px 9px; font-size: 11px; border-radius: 6px; }
+  #favlines { display: flex; flex-wrap: wrap; gap: 5px; }
+  .favchip { border: 0; cursor: pointer; }
+  #favs .pop-note { margin-top: 8px; }
   #legend details { border-top: 1px solid var(--line); }
   #legend summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
     padding: 9px 0; font-size: 12.5px; user-select: none; }
@@ -65,6 +92,7 @@
   #legend .chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 0 11px 16px; }
   #selinfo { font-size: 12px; margin-bottom: 6px; display: none; align-items: baseline; gap: 6px; }
   #selinfo button { padding: 1px 7px; font-size: 11px; border-radius: 6px; margin-left: auto; flex: none; }
+  #selinfo button.on { color: var(--accent); border-color: rgba(255,209,102,.45); }
   .chip { font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 7px; cursor: pointer;
     color: #111; border: 2px solid transparent; display: inline-flex; align-items: center; min-height: 28px; }
   .chip.sel { border-color: #fff; }
@@ -151,6 +179,10 @@
   .pop-stops .st-dly.early { color: #8ecbff; }
   .pop-stops .st-dly.unknown { color: var(--muted); }
   .pop-note { color: var(--muted); font-size: 11px; margin-top: 10px; line-height: 1.4; }
+  /* Herkunftshinweis (Position abgeleitet, kein GPS): gelb und fett — er ordnet die Genauigkeit ein
+     und soll deshalb auffallen, nicht im Kleingedruckten verschwinden. Steht nach .pop-note,
+     damit es dessen Farbe überschreibt. */
+  .note-warn { color: var(--accent); font-weight: 700; }
 
   #banner { position: absolute; z-index: 3; top: 16px; left: 50%; transform: translateX(-50%);
     max-width: min(560px, 90vw); padding: 9px 14px; font-size: 12.5px; background: rgba(255,90,80,.14);
@@ -188,6 +220,11 @@
     .chip { font-size: 13.5px; padding: 9px 13px; min-height: 40px; border-radius: 8px; }
     #panes { align-self: stretch; display: flex; }
     #panes button { flex: 1 1 0; min-height: 44px; font-size: 13.5px; }
+    #searchwrap { flex: 1 1 100%; }
+    #search { min-height: 40px; font-size: 14px; }
+    #results button.res { min-height: 44px; font-size: 14px; }
+    #favstations .fav-go { min-height: 44px; font-size: 14px; }
+    #favstations .fav-x { min-width: 40px; min-height: 40px; font-size: 13px; }
     #selinfo { font-size: 13.5px; }
     #selinfo button { min-width: 40px; min-height: 40px; font-size: 15px; padding: 0; }
     .pop-stops li { padding: 11px 0; }
@@ -251,15 +288,33 @@
   <h1><span data-i18n="appTitle">Darmstadt Live Map</span><span class="badge-live" id="livebadge"><i></i><span id="livebadgetxt" data-i18n="modeLive">Realtime</span></span>
     <button id="panelclose" class="panel-x" data-i18n-aria="closePanel" aria-label="Close panel">✕</button></h1>
 
-  <!-- Umschalter: immer nur ein Bereich sichtbar -> das Panel passt ohne Scrollbalken -->
-  <div class="seg" id="panes" role="group">
-    <button data-pane="lines" class="on" aria-pressed="true" data-i18n="legendTitle">Lines</button><button data-pane="status" aria-pressed="false" data-i18n="presentation">Status &amp; filters</button>
+  <!-- Umschalter: immer nur ein Bereich sichtbar -> das Panel passt ohne Scrollbalken.
+       Rechts daneben die Haltestellensuche (tippen -> Treffer -> Klick zoomt hin). -->
+  <div id="panelbar">
+    <div class="seg" id="panes" role="group">
+      <button data-pane="lines" class="on" aria-pressed="true" data-i18n="legendTitle">Lines</button><button data-pane="favs" aria-pressed="false" data-i18n="favTitle">Favourites</button><button data-pane="status" aria-pressed="false" data-i18n="presentation">Status &amp; filters</button>
+    </div>
+    <div id="searchwrap">
+      <input id="search" type="search" autocomplete="off" spellcheck="false"
+        data-i18n-placeholder="searchPlaceholder" data-i18n-aria="searchLabel"
+        placeholder="Search a stop …" aria-label="Search a stop">
+      <ul id="results" hidden></ul>
+    </div>
   </div>
 
   <!-- Linienliste steht oben: sie ist das wichtigste Bedienelement, nicht die Statistik -->
   <div class="sec" id="legend-sec">
-    <div id="selinfo"><span id="selname"></span><button id="selclear" data-i18n-title="clear" data-i18n-aria="clear" aria-label="Clear highlight">✕</button></div>
+    <div id="selinfo"><span id="selname"></span><button id="selfav" data-i18n-title="favAdd" data-i18n-aria="favAdd" aria-label="Save this line">☆</button><button id="selclear" data-i18n-title="clear" data-i18n-aria="clear" aria-label="Clear highlight">✕</button></div>
     <div id="legend"></div>
+  </div>
+
+  <!-- Favoriten: gemerkte Halte und Linien (localStorage, kein Server) -->
+  <div class="sec" id="favs">
+    <div class="lbl" data-i18n="favStations">Saved stops</div>
+    <ul id="favstations"></ul>
+    <div class="lbl" data-i18n="favLines">Saved lines</div>
+    <div id="favlines"></div>
+    <p class="pop-note" id="favempty" data-i18n="favEmpty">Nothing saved yet — tap the star on a stop card or on a line.</p>
   </div>
 
   <div class="sec" id="presentation">
@@ -299,6 +354,9 @@
       <div id="attribbox" hidden>
         <p data-i18n="attributionLive">Realtime: DELFI e.V. (CC BY-SA 4.0) via Transitous/MOTIS</p>
         <p data-i18n="attributionMap">Base map: © OpenStreetMap contributors (ODbL) · CARTO</p>
+        <!-- Was die Punkte sind (und was nicht): gelb und fett, in beiden Sprachen, direkt in der
+             Quellenangabe — damit die Einordnung dort steht, wo man die Herkunft nachliest. -->
+        <p class="note-warn" data-i18n="popup.positionNote">Position derived from realtime stop prognoses (the open feed carries no GPS).</p>
       </div>
     </div>
   </div>
@@ -308,7 +366,8 @@
 <div id="banner" hidden></div>
 <div id="popup" class="panel" role="dialog" data-i18n-aria="popup.dialog" aria-label="Vehicle details"></div>
 
-<script src="live.js?v=20261014-8"></script>
+<script src="search.js?v=20261014-9"></script>
+<script src="live.js?v=20261014-9"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -384,10 +443,11 @@ function selectLine(li) {
   document.querySelectorAll('.chip').forEach(c => c.classList.toggle('sel', +c.dataset.line === state.selLine));
   const info = document.getElementById('selinfo');
   window.DarmstadtLive.render(true);
-  if (state.selLine === null) { info.style.display = 'none'; return; }
+  if (state.selLine === null) { info.style.display = 'none'; paintLineStar(); return; }
   const l = META.lines[state.selLine];
   document.getElementById('selname').innerHTML = `<b>${esc(l.name)}</b> <span style="color:var(--muted)">${esc(lineEnds(l))}</span>`;
   info.style.display = 'flex';
+  paintLineStar();
   const chip = document.querySelector(`.chip[data-line="${state.selLine}"]`);
   if (chip) { chip.closest('details').open = true; chip.scrollIntoView({ block: 'nearest' }); }
   // Auf dem Telefon nimmt sich das Panel nach der Linienwahl weg: er will die Linie auf der Karte
@@ -456,7 +516,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261014-8';
+  const APP_V = '20261014-9';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {
@@ -477,7 +537,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   }
   // Umschalter im Panel: Linien ODER Status — damit passen beide ohne Scrollbalken
   function setPane(name) {
-    document.body.dataset.pane = name === 'status' ? 'status' : 'lines';
+    document.body.dataset.pane = (name === 'status' || name === 'favs') ? name : 'lines';
     const bar = document.getElementById('panes');
     if (bar) bar.querySelectorAll('button').forEach(b => {
       const on = b.dataset.pane === document.body.dataset.pane;
@@ -490,6 +550,116 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
     setPane('lines');
     paneBar.querySelectorAll('button').forEach(b => b.onclick = () => setPane(b.dataset.pane));
   }
+
+  // ---------- Haltestellensuche ----------
+  // Gesucht wird in unserem eigenen Bestand (meta.json, damit sie auch ohne Netz sofort Treffer
+  // liefert) und zusätzlich in den Halten des aktuellen Kartenausschnitts: die kennen die Kennung,
+  // mit der live.js die Abfahrten holt.
+  const S = window.DarmstadtSearch;
+  function searchIndex() {
+    const out = (META.stations || []).map(s => ({ name: String(s[0]), lon: s[1], lat: s[2], modes: s[3] || [] }));
+    const live = (window.DarmstadtLive && window.DarmstadtLive.stops) ? window.DarmstadtLive.stops() : [];
+    for (const s of live) if (s && s.name) out.push({ name: s.name, lon: s.lon, lat: s.lat, stopId: s.stopId, modes: s.modes || [] });
+    return out;
+  }
+  // Sprung zum Halt: Kamera sofort dorthin. Auf dem Telefon nimmt sich das Panel dabei weg (sonst
+  // verdeckt es genau den Halt), auf dem Rechner bleibt es stehen.
+  function jumpToStation(s) {
+    if (!s || !window.DarmstadtLive) return;
+    window.DarmstadtLive.openStation({ name: s.name, lat: s.lat, lon: s.lon, stopId: s.stopId, modes: s.modes }, true);
+    if (touchLayout() && hidePanelNow) hidePanelNow();
+  }
+  const searchInput = document.getElementById('search');
+  const resultsList = document.getElementById('results');
+  function closeResults() {
+    if (resultsList) { resultsList.hidden = true; resultsList.innerHTML = ''; }
+  }
+  function runSearch() {
+    if (!searchInput || !resultsList || !S) return;
+    const q = searchInput.value.trim();
+    if (q.length < 2) { closeResults(); return; }          // ein Buchstabe trifft fast alles
+    const hits = S.matchStations(q, searchIndex(), 7);
+    resultsList.innerHTML = '';
+    if (!hits.length) { resultsList.hidden = true; return; }
+    for (const s of hits) {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'res'; b.textContent = s.name;
+      b.onclick = () => { searchInput.value = ''; closeResults(); jumpToStation(s); };
+      li.appendChild(b); resultsList.appendChild(li);
+    }
+    resultsList.hidden = false;
+  }
+  if (searchInput && resultsList) {
+    searchInput.addEventListener('input', runSearch);
+    searchInput.addEventListener('focus', runSearch);
+    searchInput.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { searchInput.value = ''; closeResults(); }
+      if (e.key === 'Enter') { const first = resultsList.querySelector('button.res'); if (first) first.click(); }
+    });
+  }
+
+  // ---------- Favoriten ----------
+  // Nur im Browser des Nutzers gespeichert (localStorage): die Seite ist statisch, es gibt keinen
+  // Server, der ein Cookie je Anfrage bekäme. Gespeichert werden Haltestellen (Name + Koordinaten)
+  // und Linien (Index in META.lines).
+  let favs = S ? S.load() : { stations: [], lines: [] };
+  const favApi = {
+    has: s => !!S && S.hasStation(favs, s) >= 0,
+    toggle: s => { if (!S) return; favs = S.toggleStation(favs, s); S.save(favs); renderFavs(); paintLineStar(); },
+  };
+  const favT = k => (window.I18N ? window.I18N.t(k) : k);
+  function renderFavs() {
+    const list = document.getElementById('favstations'), box = document.getElementById('favlines');
+    if (list) {
+      list.innerHTML = '';
+      for (const s of favs.stations) {
+        const li = document.createElement('li');
+        const go = document.createElement('button');
+        go.type = 'button'; go.className = 'fav-go'; go.textContent = s.name;
+        go.onclick = () => jumpToStation(s);
+        const x = document.createElement('button');
+        x.type = 'button'; x.className = 'fav-x'; x.textContent = '✕';
+        x.title = favT('favRemove'); x.setAttribute('aria-label', favT('favRemove'));
+        x.onclick = () => favApi.toggle(s);
+        li.appendChild(go); li.appendChild(x); list.appendChild(li);
+      }
+    }
+    if (box) {
+      box.innerHTML = '';
+      for (const i of favs.lines) {
+        const l = META.lines[i];
+        if (!l) continue;
+        const c = document.createElement('span');
+        c.className = 'chip favchip'; c.style.background = l.color; c.textContent = l.name;
+        c.title = lineEnds(l);
+        c.onclick = () => selectLine(i);                    // Telefon: Panel nimmt sich dabei weg
+        const x = document.createElement('button');
+        x.type = 'button'; x.className = 'fav-x'; x.textContent = '✕';
+        x.title = favT('favRemove'); x.setAttribute('aria-label', favT('favRemove'));
+        x.onclick = e => { e.stopPropagation(); if (S) { favs = S.toggleLine(favs, i); S.save(favs); renderFavs(); paintLineStar(); } };
+        c.appendChild(x); box.appendChild(c);
+      }
+    }
+    const empty = document.getElementById('favempty');
+    if (empty) empty.hidden = !!(favs.stations.length || favs.lines.length);
+  }
+  function paintLineStar() {
+    const b = document.getElementById('selfav');
+    if (!b) return;
+    const on = state.selLine !== null && !!S && S.hasLine(favs, state.selLine) >= 0;
+    b.textContent = on ? '★' : '☆';
+    b.classList.toggle('on', on);
+    b.title = favT(on ? 'favRemove' : 'favAdd');
+    b.setAttribute('aria-label', favT(on ? 'favRemove' : 'favAdd'));
+  }
+  const selfav = document.getElementById('selfav');
+  if (selfav) selfav.onclick = () => {
+    if (state.selLine === null || !S) return;
+    favs = S.toggleLine(favs, state.selLine); S.save(favs); renderFavs(); paintLineStar();
+  };
+  renderFavs();
+  paintLineStar();
   // Telefon: das Panel ist eine Schublade — Tippen auf die Karte schließt sie, der Schalter oben links
   // holt sie zurück bzw. schließt sie. Beschriftung und Symbol wechseln mit dem Zustand.
   hidePanelNow = () => setPanel(false);
@@ -529,10 +699,13 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   }
   window.addEventListener('langchange', () => {
     buildLegend();
+    renderFavs();
+    paintLineStar();
     if (state.selLine !== null) { const keep = state.selLine; state.selLine = null; selectLine(keep); }
     window.DarmstadtLive.setLang();
   });
   window.DarmstadtLive.attach({ map, overlay, deck, META, state, hex, shortStop, MODE_RGB, selectLine,
+    fav: favApi,                                                  // Stern auf der Haltestellenkarte
     hidePanel: () => { if (touchLayout()) setPanel(false); } });   // Telefon: Karte/Linienwahl schiebt das Panel weg
   document.getElementById('loading').remove();
   const start = () => { document.body.classList.add('live'); window.DarmstadtLive.setOn(true); };

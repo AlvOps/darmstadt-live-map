@@ -45,7 +45,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261014-8';
+  const VERSION = '20261014-9';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -571,7 +571,7 @@
       <div class="pop-sub">${esc(T('popup.realtime'))}${v.fromName ? ' · ' + esc(ss(v.fromName)) + ' → ' : ' · '}${esc(ss(v.dest))}` +
         `${leg && !leg.error && leg.agency ? ' · ' + esc(T('popup.agency')) + ': ' + esc(leg.agency) : ''}</div>
       ${body}
-      <div class="pop-note">${esc(T('popup.positionNote'))}</div>`;
+      <div class="pop-note note-warn">${esc(T('popup.positionNote'))}</div>`;
   }
 
   // ---------- Kamera begleitet das angeklickte Fahrzeug — kurz, dann gibt sie wieder frei
@@ -770,6 +770,16 @@
       `<span class="st-dly ${delay === null ? 'unknown' : delayClass(delay)}">${delay === null || delay === 0 ? '·' : delay > 0 ? '+' + delay : delay}</span></li>`;
   }
 
+  // Halt aus unserem Bestand dem Feed-Halt zuordnen: der Feed kennt die Kennung (für die Abfahrten)
+  // und die echte Position. Suche und Favoriten liefern nur Name + Koordinaten.
+  function resolveStop(stop) {
+    if (!stop || stop.stopId) return stop;
+    const hit = stops.find(x => normStopName(x.name) === normStopName(stop.name));
+    if (!hit) return stop;
+    return { name: hit.name || stop.name, lat: hit.lat, lon: hit.lon, stopId: hit.stopId,
+             modes: (hit.modes && hit.modes.length) ? hit.modes : (stop.modes || []) };
+  }
+
   function stationShell(stop, deps, loading) {
     const modes = (stop.modes || []).map(m => String(m).toLowerCase().replace(/_/g, ' ')).join(' · ');
     let body;
@@ -777,9 +787,12 @@
     else if (loading) body = `<div class="pop-sub">${esc(T('station.loading'))}</div>`;
     else if (!deps || !deps.length) body = `<div class="pop-sub">${esc(T('station.none'))}</div>`;
     else body = `<ul class="pop-stops">${deps.slice(0, 4).map(departureRow).join('')}</ul>`;
+    const fav = !!(ctx && ctx.fav && ctx.fav.has && ctx.fav.has(stop));
     return `
       <div class="pop-head">
         <span class="pop-title">${esc(ss(stop.name))}</span>
+        <button class="pop-star${fav ? ' on' : ''}" aria-label="${esc(T(fav ? 'favRemove' : 'favAdd'))}"
+          title="${esc(T(fav ? 'favRemove' : 'favAdd'))}">${fav ? '★' : '☆'}</button>
         <button class="pop-close" aria-label="${esc(T('popup.close'))}">✕</button>
       </div>
       <div class="pop-sub">${esc(T('station.departures'))}${modes ? ' · ' + esc(modes) : ''}</div>
@@ -793,6 +806,12 @@
     el.innerHTML = stationShell(popupStation, popupDepartures, loading);
     const btn = el.querySelector('.pop-close');
     if (btn) btn.onclick = closePopup;
+    const star = el.querySelector('.pop-star');                 // Halt als Favorit merken
+    if (star) star.onclick = () => {
+      if (!ctx || !ctx.fav) return;
+      ctx.fav.toggle(popupStation);
+      paintStation(false);
+    };
     placePopup(true);
   }
 
@@ -803,6 +822,7 @@
     const seq = ++popupSeq;
     clearTimeout(popupTimer); popupTimer = null;
     if (!refreshing) {
+      stop = resolveStop(stop);             // Kennung/Position aus dem Feed nachziehen, falls vorhanden
       popupVehicle = null; popupLeg = null; popupDepartures = null;
       popupStation = stop; popupAnchor = [stop.lon, stop.lat];
       ctx.map.easeTo({ center: [stop.lon, stop.lat], zoom: Math.max(ctx.map.getZoom(), 15.6),
@@ -1037,7 +1057,8 @@
     },
     closePopup,
     openPopup: v => openPopup(v, false),
-    openStation: s => openStation(s, false),
+    openStation: (s, instant) => openStation(s, false, instant),
+    stops: () => stops,                  // für Suche/Favoriten: Halte des aktuellen Ausschnitts
     info() {
       return {
         active, count: vehicles.length, stops: stops.length, lastOk,

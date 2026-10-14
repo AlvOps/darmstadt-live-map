@@ -179,6 +179,27 @@ function run(check, log = console.log) {
   check('attribution credits only sources we actually use (no stale pfaedle shapes)',
     !/pfaedle/.test(i18nSrc) && /attributionLive/.test(i18nSrc) && /CARTO/.test(i18nSrc));
   check('attribution toggle is thumb-sized on phones', /#attribbtn \{[^}]*width: 34px/.test(mob));
+  // Suche und Favoriten: Suchfeld neben dem Umschalter, dritter Bereich für Gemerktes, Stern zum Merken.
+  const searchSrc = fs.readFileSync(path.join(DOCS, 'search.js'), 'utf8');
+  check('panel has a third pane for favourites (still only one pane at a time)',
+    /id="panes"[\s\S]*data-pane="favs"[\s\S]*data-pane="status"/.test(html) &&
+    /body\[data-pane="favs"\] #legend-sec \{ display: none; \}/.test(css) &&
+    /body:not\(\[data-pane="favs"\]\) #favs \{ display: none; \}/.test(css));
+  check('stop search sits next to the pane switcher and uses the shared strings',
+    /id="panelbar"/.test(html) && /#panelbar \{ display: flex/.test(css) &&
+    /<input id="search"[^>]*data-i18n-placeholder="searchPlaceholder"/.test(html) &&
+    /<ul id="results" hidden><\/ul>/.test(html) && /search\.js\?v=\d{8}-\d+/.test(html));
+  check('search results and saved stops are thumb-sized on phones',
+    /#search \{ min-height: 40px/.test(mob) && /#results button\.res \{ min-height: 44px/.test(mob) &&
+    /#favstations \.fav-go \{ min-height: 44px/.test(mob));
+  check('favourites live in localStorage (a static page has no server to receive a cookie)',
+    /localStorage/.test(searchSrc) && !/document\.cookie/.test(searchSrc) && /darmstadt-live-favs/.test(searchSrc));
+  // Der Hinweis „Position abgeleitet, kein GPS" soll auffallen: gelb und fett, in der Karte UND in
+  // der Quellenangabe (dort liest man die Herkunft nach) — in beiden Sprachen über denselben Schlüssel.
+  check('the "no GPS" note is highlighted (bold, yellow) in the card and in the credits',
+    /\.note-warn \{ color: var\(--accent\); font-weight: 700; \}/.test(css) &&
+    /class="pop-note note-warn"/.test(liveSrc) &&
+    /<p class="note-warn" data-i18n="popup.positionNote">/.test(html));
   // Der Kartenraum ist begrenzt: vorher ließ sich die Karte endlos (auch nach oben) schieben.
   {
     const mb = (html.match(/maxBounds: \[\[([-\d.]+), ([-\d.]+)\], \[([-\d.]+), ([-\d.]+)\]\]/) || []).slice(1).map(Number);
