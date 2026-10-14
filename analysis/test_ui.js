@@ -30,12 +30,23 @@ const MODE_RGB = { tram: [255, 107, 107], bus: [46, 196, 182], rail: [199, 125, 
 class Layer { constructor(p) { Object.assign(this, p); } }
 
 const store = {};
+const net = { calls: [], hold: null };   // zählt echte Abrufe; hold = Promise, auf das /trip-Antworten warten
+const realFetch = (url, opts) => fetch(url, { ...(opts || {}), headers: { ...((opts && opts.headers) || {}), 'User-Agent': 'hermes-darmstadt-ui-test/1.0' } });
 const sandbox = {
   console, Math, JSON, Date, Number, String, Array, Object, Map, Set, parseInt, parseFloat, isNaN, isFinite,
   setTimeout, clearTimeout, setInterval, clearInterval, Promise, Float64Array, Error, Uint16Array, CustomEvent: class {},
   navigator: { language: 'en-GB' },
   localStorage: { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
-  fetch: (url, opts) => fetch(url, { ...(opts || {}), headers: { ...((opts && opts.headers) || {}), 'User-Agent': 'hermes-darmstadt-ui-test/1.0' } }),
+  fetch: async (url, opts) => {
+    net.calls.push(url);
+    if (url.includes('tripId=__nolegs__')) return { ok: true, status: 200, json: async () => ({ legs: [] }) };
+    if (url.includes('tripId=__xss__')) return { ok: true, status: 200, json: async () => ({ legs: [{ tripId: '__xss__',
+      agencyName: '<img src=x onerror=alert(1)>', from: { name: '<b>A</b>' }, to: { name: 'Z\"><script>x</script>' },
+      startTime: new Date(Date.now() + 60000).toISOString(), endTime: new Date(Date.now() + 600000).toISOString(),
+      scheduledStartTime: 'garbage', intermediateStops: [{ name: '<svg onload=1>', departure: new Date(Date.now() + 120000).toISOString() }] }] }) };
+    if (net.hold && url.includes('/api/v1/trip?')) await net.hold;
+    return realFetch(url, opts);
+  },
   document: {
     getElementById: el, addEventListener() {}, hidden: false, documentElement: { lang: '' }, title: '',
     querySelectorAll: () => [], createElement: () => el('tmp'),
@@ -51,9 +62,10 @@ vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(path.join(DOCS, 'i18n.js'), 'utf8'), sandbox);
 vm.runInContext(fs.readFileSync(path.join(DOCS, 'live.js'), 'utf8'), sandbox);
 
+const mapHandlers = {};
 const map = {
   getBounds: () => ({ getWest: () => 8.63, getSouth: () => 49.86, getEast: () => 8.68, getNorth: () => 49.89 }),
-  getZoom: () => 14, on() {},
+  getZoom: () => 14, on(ev, fn) { mapHandlers[ev] = fn; },
 };
 const overlay = { setProps(p) { cap.layers = p.layers; } };
 const state = { modes: { tram: true, bus: true, rail: true }, selLine: null };
@@ -91,7 +103,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('Popup ist geöffnet', pi.popupOpen === true);
   check('Popup listet kommende Halte', (pi.popupStops || 0) > 0, `${pi.popupStops} Halte`);
   check('Popup nennt die Linie', html.includes(String(v.lineName)));
-  check('Popup nennt Verspätungsstatus', /min|pünktlich|on time|late|early/i.test(html));
+  check('Popup nennt Verspätungsstatus', /class="pop-delay (late|ontime|early|unknown)">(Delayed|On time|Early|Delay unknown)/.test(html));
   check('Popup weist die Ableitung aus (kein GPS)', html.includes(sandbox.I18N.t('popup.positionNote')));
   const stopMatches = html.match(/class="st-name"/g);
   console.log(`  Haltezeilen im Popup: ${stopMatches ? stopMatches.length : 0}`);
@@ -126,6 +138,139 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 
   sandbox.DarmstadtLive.closePopup();
   check('Popup schließt', sandbox.DarmstadtLive.info().popupOpen === false);
+  check('Popup-Timer nach dem Schließen gestoppt', sandbox.DarmstadtLive.info().popupTimer === false);
+  sandbox.I18N.set('en');
+
+  const L = sandbox.DarmstadtLive, X = L._test;
+  const iso = ms => new Date(Date.now() + ms).toISOString();
+  const enc = pts => {                      // Google-Polyline-Kodierung (lat, lon)
+    let out = '', pl = 0, pn = 0;
+    const e = v => { v = v < 0 ? ~(v << 1) : v << 1; let s = ''; while (v >= 0x20) { s += String.fromCharCode((0x20 | (v & 0x1f)) + 63); v >>= 5; } return s + String.fromCharCode(v + 63); };
+    for (const [lat, lon] of pts) { const a = Math.round(lat * 1e5), b = Math.round(lon * 1e5); out += e(a - pl) + e(b - pn); pl = a; pn = b; }
+    return out;
+  };
+  const POLY = enc([[49.872, 8.650], [49.873, 8.655], [49.874, 8.660]]);
+  const rec = o => Object.assign({ mode: 'TRAM', realTime: true, polyline: POLY, departure: iso(-30000), arrival: iso(60000),
+    scheduledDeparture: iso(-90000), from: { name: 'Darmstadt Schloss', stopId: 's1' }, to: { name: 'Darmstadt Luisenplatz' },
+    trips: [{ tripId: 't-' + Math.random(), routeShortName: '4' }] }, o);
+
+  console.log('\n=== Nur Echtzeit (synthetische Datensätze) ===');
+  const rt = X.buildVehicles([rec({ realTime: false }), rec({ realTime: 'true' }), rec({ realTime: undefined }), rec({})]);
+  check('realTime=false/"true"/fehlend werden verworfen, nur realTime===true bleibt', rt.length === 1 && rt[0].realTime === true, `${rt.length} gebaut`);
+
+  console.log('\n=== Fehlerhafte API-Datensätze ===');
+  let built, threw = null;
+  try {
+    built = X.buildVehicles([null, 7, 'x', {}, rec({ trips: null }), rec({ trips: 'nope' }), rec({ polyline: 12345 }),
+      rec({ departure: 'kaputt' }), rec({ arrival: 'kaputt' }), rec({ polyline: '@@' }),
+      rec({ scheduledDeparture: 'kaputt', trips: [{ tripId: 'badsched', routeShortName: 5 }] }),
+      rec({ routeColor: 'zz<x>z', trips: [{ tripId: 'badcolor' }] }), rec({ from: null, to: null, trips: [{ tripId: 'nostops' }] })]);
+  } catch (e) { threw = e; }
+  check('fehlerhafte Datensätze werfen keine Ausnahme', !threw, threw && threw.message);
+  built = built || [];
+  console.log(`  gebaut: ${built.map(v => v.tripId.slice(0, 10) + ':' + v.delayMin).join(', ')}`);
+  const bs = built.find(v => v.tripId === 'badsched');
+  check('ungültige Sollzeit -> Verspätung unbekannt (nicht NaN, nicht "On time")',
+    bs && bs.delayMin === null && X.delayText(bs.delayMin) === 'Delay unknown' && X.delayClass(bs.delayMin) === 'unknown');
+  check('Liniennummer als Zahl wird zu Text', bs && bs.lineName === '5');
+  const at = X.vehiclesAt.call ? (X.setVehicles(built), X.vehiclesAt(Date.now())) : [];
+  check('keine NaN-Positionen aus fehlerhaften Datensätzen', at.length > 0 && at.every(c => isFinite(c.pos[0]) && isFinite(c.pos[1])), `${at.length} Positionen`);
+  const bc = built.find(v => v.tripId === 'badcolor');
+  sandbox.DarmstadtLive.render(true);
+  const fills = cap.layers[1].data.map(d => cap.layers[1].getFillColor(d));
+  check('ungültige routeColor ergibt keine NaN-Farbe', !!bc && fills.every(c => c.every(Number.isFinite)));
+  const ns = built.find(v => v.tripId === 'nostops');
+  check('fehlende from/to-Halte: leere Namen statt "undefined"', ns && ns.fromName === '' && ns.dest === '');
+  check('Statistik zählt unbekannte Verspätung nicht als pünktlich', !/NaN/.test(el('livestat').innerHTML));
+
+  console.log('\n=== Statuswort für alle Fälle (synthetisch, unabhängig von der aktuellen Lage) ===');
+  for (const [d, word, cls] of [[3, 'Delayed · +3 min', 'late'], [0, 'On time', 'ontime'], [-2, 'Early · −2 min', 'early'], [null, 'Delay unknown', 'unknown']]) {
+    console.log(`  delay=${String(d).padStart(4)} -> "${X.delayText(d)}" / ${X.delayClass(d)}`);
+    check(`Statuswort für ${d}`, X.delayText(d) === word && X.delayClass(d) === cls);
+  }
+
+  console.log('\n=== Veraltete Positionen ===');
+  const old = X.buildVehicles([rec({ trips: [{ tripId: 'old' }] })])[0];
+  old.dep = Date.now() - 300000; old.arr = Date.now() - 120000;    // Abschnitt seit 2 min vorbei, kein neuer Abruf
+  X.setVehicles([old]);
+  check('Fahrzeug mit längst beendetem Abschnitt wird nicht mehr gezeichnet', X.vehiclesAt(Date.now()).length === 0);
+
+  console.log('\n=== HTML-Escaping (XSS aus API-Texten) ===');
+  const evil = X.buildVehicles([rec({ to: { name: '<img src=x onerror=alert(1)>' }, from: { name: '"><script>alert(2)</script>' },
+    trips: [{ tripId: '__xss__', routeShortName: '<b onmouseover=alert(3)>9</b>', headsign: '<iframe src=//x>' }] })])[0];
+  check('esc() maskiert & < > " \'', X.esc(`&<>"'`) === '&amp;&lt;&gt;&quot;&#39;');
+  await L.openPopup(evil);
+  const ph = el('popup').innerHTML;
+  const rawTags = ph.match(/<(img|script|iframe|svg|b onmouseover)[^>]*>/gi);
+  check('Popup enthält keine API-HTML-Tags', !rawTags, rawTags && rawTags.join(' '));
+  check('Popup zeigt die API-Texte maskiert an', ph.includes('&lt;img src=x onerror=alert(1)&gt;') && ph.includes('&lt;svg onload=1&gt;'));
+  sandbox.matchMedia = () => ({ matches: true });   // Maus: Tooltip
+  cap.layers = null; X.setVehicles([evil]); L.render(true);
+  const tipEl = el('tip'); tipEl.innerHTML = '';
+  const ov = { setProps(p) { cap.layers = p.layers; cap.hover = p.onHover; } };
+  sandbox.DarmstadtLive.attach({ map, overlay: ov, deck: sandbox.deck, META, state, hex, fmt, shortStop, MODE_RGB, selectLine: () => {} });
+  L.render(true);
+  cap.hover({ object: { v: evil }, x: 1, y: 1 });
+  check('Hover-Tooltip maskiert API-Texte', !/<(img|iframe|b onmouseover)/i.test(tipEl.innerHTML) && tipEl.innerHTML.includes('&lt;b onmouseover'));
+  sandbox.matchMedia = () => ({ matches: false });
+  check('Touch: kein Hover-Tooltip', (cap.hover({ object: { v: evil }, x: 1, y: 1 }), tipEl.style.display === 'none'));
+  L.closePopup();
+
+  console.log('\n=== Popup: Fahrt ohne Abschnitte / fehlgeschlagene Abfrage ===');
+  const nolegs = Object.assign({}, evil, { tripId: '__nolegs__', lineName: '4' });
+  await L.openPopup(nolegs);
+  check('keine legs -> eigene Meldung statt leerer Haltliste', L.info().popupError === 'noLegs' && el('popup').innerHTML.includes('No stop list was returned'));
+  const bogus = Object.assign({}, evil, { tripId: 'bogus-trip-id', lineName: '4' });
+  await L.openPopup(bogus);
+  const be = L.info().popupError;
+  console.log(`  Abfrage mit ungültiger tripId -> Fehler: ${be}`);
+  check('fehlgeschlagene Abfrage zeigt "Trip details unavailable" (HTTP-Fehler oder Netzfehler)',
+    !!be && el('popup').innerHTML.includes('Trip details unavailable'));
+  L.closePopup();
+
+  console.log('\n=== Popup: Wettlauf und Timer ===');
+  const realV = heads.map(d => d.v);
+  let release; net.hold = new Promise(r => { release = r; });
+  const p1 = L.openPopup(realV[0]);
+  L.closePopup();                            // schließen, solange die Abfrage noch läuft
+  release(); await p1; net.hold = null;
+  check('nach Schließen während der Abfrage bleibt das Popup zu', L.info().popupOpen === false);
+  check('… und es wird kein Auffrisch-Timer gesetzt', L.info().popupTimer === false);
+  check('… und der Inhalt bleibt leer', el('popup').innerHTML === '');
+  if (realV.length >= 2) {
+    let r2; net.hold = new Promise(r => { r2 = r; });
+    const pa = L.openPopup(realV[0]);
+    const pb = L.openPopup(realV[1]);       // zweites Fahrzeug, bevor das erste antwortet
+    r2(); await Promise.all([pa, pb]); net.hold = null;
+    const html2 = el('popup').innerHTML;
+    check('schneller Wechsel: Popup zeigt das zuletzt angetippte Fahrzeug',
+      html2.includes('>' + X.esc(realV[1].lineName) + '<') && L.info().popupOpen, `Linie ${realV[1].lineName}`);
+    check('… mit genau einem Auffrisch-Timer', L.info().popupTimer === true);
+    const before = net.calls.length;
+    sandbox.I18N.set('de'); L.setLang();
+    check('Sprachwechsel übersetzt das Popup ohne neuen Abruf', net.calls.length === before && el('popup').innerHTML.includes('Nächste Halte'));
+    sandbox.I18N.set('en'); L.setLang();
+    L.closePopup();
+  } else console.log('  (weniger als 2 Live-Fahrzeuge — Wechseltest übersprungen, ausdrücklich nicht bestanden gewertet)'), check('mind. 2 Live-Fahrzeuge für den Wechseltest', false);
+
+  console.log('\n=== Abruf aus, wenn der Modus aus ist ===');
+  L.setOn(false);
+  const n0 = net.calls.length;
+  await L.refresh();
+  if (mapHandlers.moveend) mapHandlers.moveend();
+  await wait(1000);
+  check('setOn(false): kein Poll-Intervall mehr', L.info().polling === false && L.info().active === false);
+  check('setOn(false): weder refresh() noch Kartenbewegung rufen die API ab', net.calls.length === n0, `${net.calls.length - n0} Abrufe`);
+  L.setOn(true);
+  await wait(50);
+  check('setOn(true): Abruf läuft wieder', net.calls.length > n0 && L.info().polling === true);
+  L.setOn(false);
+
+  console.log('\n=== EN/DE-Abdeckung ===');
+  require('./test_i18n').run(check);
+
+  console.log('\n=== Statische Prüfungen: CSS, Kontrast, Icons ===');
+  require('./test_static').run(check);
 
   console.log(`\nRESULT: ${fails === 0 ? 'PASS' : 'FAIL (' + fails + ')'}`);
   process.exit(fails === 0 ? 0 : 1);

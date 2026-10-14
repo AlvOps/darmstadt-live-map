@@ -74,7 +74,11 @@ sandbox.window.DarmstadtLive.attach({
   console.log('=== Abruf ===');
   console.log('  Fahrzeuge:', info.count, '| letzter Erfolg:', info.lastOk ? new Date(info.lastOk).toISOString() : null,
               '| Fehler:', info.lastErr, '| Fehlversuche:', info.failures);
-  if (!info.count) { console.log('FAIL: keine Fahrzeuge berechnet'); process.exit(1); }
+  if (!info.count) {
+    // Ausdrücklich: ein API-Ausfall ist kein Bestehen. Fehler wird benannt, Ergebnis FAIL.
+    console.log(`FAIL: keine Fahrzeuge berechnet (${info.lastErr ? 'API nicht erreichbar: ' + info.lastErr : 'API lieferte keine Echtzeitfahrzeuge'})`);
+    process.exit(1);
+  }
 
   sandbox.window.DarmstadtLive.render(true);
   const [trails, heads] = captured.layers;
@@ -113,7 +117,20 @@ sandbox.window.DarmstadtLive.attach({
     console.log(`  ${d.v.mode.padEnd(5)} ${String(d.v.lineName).padEnd(4)} ${String(d.v.delayMin).padStart(3)} min @ ${d.pos[0].toFixed(5)},${d.pos[1].toFixed(5)}  ${shortStop(d.v.fromName).slice(0, 24)} -> ${shortStop(d.v.dest).slice(0, 24)}  Restpunkte=${d.rest.length}`);
   }
 
-  const ok = info.count > 0 && nan === 0 && inBox === pos.length && trails.data.length === heads.data.length;
-  console.log('\nRESULT:', ok ? 'PASS' : 'CHECK');
+  const rtOnly = heads.data.every(d => d.v.realTime === true);
+  console.log('\n=== Geprüft ===');
+  console.log(`  Fahrzeuge > 0: ${info.count > 0} | ungültige Koordinaten = 0: ${nan === 0} | alle im Raum Darmstadt: ${inBox === pos.length}`);
+  console.log(`  Trails == Heads: ${trails.data.length === heads.data.length} | nur realTime===true: ${rtOnly}`);
+  sandbox.window.DarmstadtLive.setOn(false);
+  const off = sandbox.window.DarmstadtLive.info();
+  console.log(`  nach setOn(false): active=${off.active} polling=${off.polling}`);
+
+  console.log('\n=== EN/DE-Abdeckung ===');
+  let i18nFails = 0;
+  require('./test_i18n').run((n, c, e) => { console.log(`  ${c ? 'PASS' : 'FAIL'}  ${n}${!c && e ? ' — ' + e : ''}`); if (!c) i18nFails++; });
+
+  const ok = info.count > 0 && nan === 0 && inBox === pos.length && trails.data.length === heads.data.length &&
+    rtOnly && !off.active && !off.polling && i18nFails === 0;
+  console.log('\nRESULT:', ok ? 'PASS' : 'FAIL');
   process.exit(ok ? 0 : 1);
 })();
