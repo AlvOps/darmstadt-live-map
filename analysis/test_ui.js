@@ -96,6 +96,21 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const stopMatches = html.match(/class="st-name"/g);
   console.log(`  Haltezeilen im Popup: ${stopMatches ? stopMatches.length : 0}`);
 
+  console.log('\n=== Verspätungsstatus im Popup (explizites Wort) ===');
+  const lateV = heads.map(d => d.v).find(x => x.delayMin >= 1);
+  const okV = heads.map(d => d.v).find(x => x.delayMin === 0);
+  const earlyV = heads.map(d => d.v).find(x => x.delayMin <= -1);
+  for (const [label, cand, wantWord, wantCls] of [
+    ['verspätet', lateV, /Delayed/, 'late'],
+    ['pünktlich', okV, /On time/, 'ontime'],
+    ['verfrüht', earlyV, /Early/, 'early'],
+  ]) {
+    if (!cand) { console.log(`  (kein ${label}es Fahrzeug in der Liste — übersprungen)`); continue; }
+    await sandbox.DarmstadtLive.openPopup(cand);
+    const m = el('popup').innerHTML.match(/class="pop-delay ([a-z]+)">([^<]*)</);
+    console.log(`  ${label.padEnd(11)} Verspätung=${String(cand.delayMin).padStart(3)} min  Klasse=${m[1]}  Text="${m[2]}"`);
+    check(`${label}: Statuswort und Klassenfarbe`, !!m && wantWord.test(m[2]) && m[1] === wantCls);
+  }
   console.log('\n=== Sprachumschaltung ===');
   const enTitle = el('livestat').innerHTML;
   sandbox.I18N.set('de');

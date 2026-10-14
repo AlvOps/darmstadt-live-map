@@ -299,10 +299,12 @@
   const cursor = ({ isHovering }) => (isHovering ? 'pointer' : 'grab');
 
   // ---------- Popup: Linie, Verspätungsstatus, nächste Halte
+  // "Verspätet · +3 Min." / "Pünktlich" / "Zu früh · −2 Min." — der Status steht als Wort vorn,
+  // damit auch ohne Farbwahrnehmung eindeutig ist, ob das Fahrzeug verspätet ist.
   function delayText(d) {
-    if (d >= 1) return T('popup.delayPlus', { n: d });
-    if (d <= -1) return T('popup.delayMinus', { n: d });
-    return T('popup.delayNone');
+    if (d >= 1) return T('popup.statusLate') + ' · ' + T('popup.delayPlus', { n: d });
+    if (d <= -1) return T('popup.statusEarly') + ' · ' + T('popup.delayMinus', { n: Math.abs(d) });
+    return T('popup.statusOntime');
   }
 
   function delayClass(d) {
@@ -374,8 +376,8 @@
         <span class="pop-title">${T('popup.nextStops')} → ${ctx.shortStop(v.headsign || v.dest)}</span>
         <button class="pop-close" aria-label="${T('popup.close')}">✕</button>
       </div>
-      <div class="pop-delay ${delayClass(v.delayMin)}">${delayText(v.delayMin)} · ${T('popup.realtime')}</div>
-      <div class="pop-sub">${v.fromName ? ctx.shortStop(v.fromName) + ' → ' : ''}${ctx.shortStop(v.dest)}` +
+      <div class="pop-delay ${delayClass(v.delayMin)}">${delayText(v.delayMin)}</div>
+      <div class="pop-sub">${T('popup.realtime')}${v.fromName ? ' · ' + ctx.shortStop(v.fromName) + ' → ' : ' · '}${ctx.shortStop(v.dest)}` +
         `${leg && !leg.error && leg.agency ? ' · ' + T('popup.agency') + ': ' + leg.agency : ''}</div>
       ${body}
       <div class="pop-note">${T('popup.positionNote')}</div>`;
