@@ -46,7 +46,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261014-13';
+  const VERSION = '20261014-14';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -262,13 +262,23 @@
     return Array.from(byTrip.values()).filter(v => v.running);   // nur fahrende Fahrzeuge
   }
 
-  // Der Feed liefert je Bahnsteig/Kante einen Eintrag — für die Karte genügt ein Punkt je Halt.
+  // Der Feed liefert je Bahnsteig/Kante einen Eintrag. Am Hauptbahnhof waren das 16 Einträge für
+  // "Darmstadt Hauptbahnhof" — auf der Karte standen entsprechend viele Punkte übereinander.
+  // Für die Karte zählt der HALT, nicht der Steig: ein Punkt je Name (plus grobem Raster, damit
+  // gleichnamige Halte in verschiedenen Orten getrennt bleiben), bevorzugt der Stationshalt.
   function dedupeStops(raw) {
     const seen = new Map();
     for (const s of raw) {
       if (!s || typeof s.lat !== 'number' || typeof s.lon !== 'number' || !s.name) continue;
-      const key = `${s.name}|${s.lat.toFixed(3)}|${s.lon.toFixed(3)}`;    // ~100 m Raster
-      if (!seen.has(key)) seen.set(key, { name: s.name, stopId: s.stopId, lat: s.lat, lon: s.lon, modes: s.modes || [] });
+      const key = `${normStopName(s.name)}|${s.lat.toFixed(2)}|${s.lon.toFixed(2)}`;   // ~1 km Raster
+      if (!key || key.indexOf('|') === 0) continue;
+      const cand = { name: s.name, stopId: s.stopId, lat: s.lat, lon: s.lon, modes: s.modes || [] };
+      const prev = seen.get(key);
+      if (!prev) { seen.set(key, cand); continue; }
+      // Der Halt der Station schlägt den Steig: er kennt das ganze Abfahrtsbrett.
+      const better = (!prev.stopId && cand.stopId) ||
+        (!!prev.stopId && !!cand.stopId && stationLevel(cand.stopId) && !stationLevel(prev.stopId));
+      if (better) seen.set(key, cand);
     }
     return Array.from(seen.values());
   }
@@ -457,10 +467,12 @@
       }),
       new ctx.deck.ScatterplotLayer({          // Haltestellen: Positionen direkt aus dem Feed
         id: 'live-stations', data: shownStops, getPosition: d => [d.lon, d.lat],
-        getRadius: d => (d.focus ? 4.5 : 2.6), radiusUnits: 'pixels', pickable: false, radiusMinPixels: 2.6,
-        stroked: true, getLineColor: d => (d.focus ? [255, 255, 255, 240] : [236, 241, 252, 170]),
-        getLineWidth: d => (d.focus ? 1.8 : 0.8), lineWidthUnits: 'pixels',
-        getFillColor: d => (d.focus ? [255, 255, 255, 235] : [216, 223, 240, 215]),
+        // Klein und gedämpft statt fast weiß: die Halte sollen die Fahrzeugpunkte nicht mit ihnen
+        // verwechselbar machen (am Hauptbahnhof standen vorher viele weiße Punkte übereinander).
+        getRadius: d => (d.focus ? 4 : 2.2), radiusUnits: 'pixels', pickable: false, radiusMinPixels: 2.2,
+        stroked: true, getLineColor: d => (d.focus ? [255, 209, 102, 220] : [150, 158, 178, 150]),
+        getLineWidth: d => (d.focus ? 1.6 : 0.7), lineWidthUnits: 'pixels',
+        getFillColor: d => (d.focus ? [255, 209, 102, 200] : [128, 136, 156, 140]),
         updateTriggers: { getRadius: focusTrip, getFillColor: focusTrip, getLineColor: focusTrip, getLineWidth: focusTrip },
       }),
       new ctx.deck.PathLayer({
@@ -1233,6 +1245,7 @@
       };
     },
     _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell,
+             dedupeStops,
              goToStop, nextStops, stops: () => stops, popupStopList: () => popupStopList,
              setRelaxAt(t) { ctx.state.selAt = t; }, relaxAt: () => ctx.state.selAt, RELAX_MS,
              following: () => !!followTrip, resetFollow() { followTrip = null; followUntil = 0; },

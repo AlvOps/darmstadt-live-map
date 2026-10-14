@@ -713,6 +713,18 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('auf dem Rechner bleibt das Panel stehen', hideCalls === 0, `${hideCalls}`);
   sandbox.DarmstadtLive.closePopup();
 
+  console.log('\n=== Haltestellenpunkte am Knotenpunkt ===');
+  const hbfRaw = [];
+  for (let i = 0; i < 15; i++) hbfRaw.push({ name: 'Darmstadt Hauptbahnhof', lat: 49.8725 + i * 0.00012, lon: 8.6296 + i * 0.00012, stopId: `de-DELFI_de:06411:4734:${i}:${i}` });
+  hbfRaw.push({ name: 'Darmstadt Hauptbahnhof', lat: 49.8725, lon: 8.6296, stopId: 'de-DELFI_de:06411:4734' });  // Halt der Station
+  hbfRaw.push({ name: 'Hauptbahnhof', lat: 49.44, lon: 8.44, stopId: 'de-DELFI_de:06422:9999' });                  // anderer Ort
+  const dd = L._test.dedupeStops(hbfRaw);
+  console.log(`  roh ${hbfRaw.length} -> Karte ${dd.length}`);
+  check('Knotenpunkt: ein Punkt je Halt statt ein Punkt je Steig', dd.length === 2, `${dd.length}`);
+  const hbfDot = dd.find(d => d.name === 'Darmstadt Hauptbahnhof');
+  check('der Stationshalt gewinnt (ganzes Abfahrtsbrett)', hbfDot && hbfDot.stopId === 'de-DELFI_de:06411:4734');
+  check('gleichnamiger Halt in einem anderen Ort bleibt erhalten', dd.some(d => d.name === 'Hauptbahnhof'));
+
   console.log('\n=== Halt von außerhalb der Ansicht (Suche/Favorit) ===');
   if (mapHandlers.moveend) mapHandlers.moveend();
   const geoBefore = net.calls.filter(u => u.includes('/api/v1/geocode')).length;

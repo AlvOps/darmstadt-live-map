@@ -238,6 +238,11 @@ function run(check, log = console.log) {
   check('a stop outside the current view is looked up by name (departures are no longer hit-and-miss)',
     /API_GEOCODE = 'https:\/\/api\.transitous\.org\/api\/v1\/geocode'/.test(liveSrc) &&
     /async function lookupStop\(name\)/.test(liveSrc) && /lookupStop\(stop\.name\)\.then/.test(liveSrc));
+  // Am Knotenpunkt (Hauptbahnhof: 16 Steig-Einträge) standen viele fast weiße Punkte übereinander.
+  check('station dots are deduped per stop (not per platform) and no longer near-white',
+    /normStopName\(s\.name\)\}\|\$\{s\.lat\.toFixed\(2\)\}/.test(liveSrc) &&
+    /getFillColor: d => \(d\.focus \? \[255, 209, 102, 200\] : \[128, 136, 156, 140\]\)/.test(liveSrc) &&
+    /getRadius: d => \(d\.focus \? 4 : 2\.2\)/.test(liveSrc));
   check('unselected vehicles are dimmed but still readable (not pale ghosts)',
     /const alpha = v => \(dim\(v\) \? 130 : 255\)/.test(liveSrc));
   check('the drawer check mirrors the CSS media query exactly (panel closes where the drawer exists)',
