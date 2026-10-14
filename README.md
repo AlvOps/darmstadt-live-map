@@ -233,7 +233,9 @@ node analysis/test_behaviour.js   # OFFLINE, deterministic: one end-to-end check
                                   # (street geometry reaches the map, a late /trip draws no line,
                                   # a dwelling vehicle survives the poll, departing rows tell the truth,
                                   # camera swing on real positions, stop cache follows the vehicle,
-                                  # a refresh during a refresh is not dropped, version tokens in sync)
+                                  # a refresh during a refresh is not dropped, version tokens in sync,
+                                  # and the page's own inline script: picking a line runs without an
+                                  # uncaught exception — selection field + favourite star update)
 node analysis/test_static.js      # OFFLINE: CSS for phones/scrollbars/legend sizing, status-pill contrast,
                                   # assets, icons, basemap zoom cap
 node analysis/test_i18n.js        # OFFLINE: EN/DE key coverage + hardcoded-string scan
@@ -260,3 +262,11 @@ python3 analysis/diag_feed.py             /tmp/gtfsrt.pb   # raw entity fields (
 The Node tests stub the DOM/deck.gl and run headless. A pixel-level check in a real browser is
 separate — note that headless browsers on a desktop Linux box often lack working WebGL or
 outbound networking, so verify in a normal browser window.
+
+For the full round trip (real Chromium over CDP, real feed, page served statically) there is an
+opt-in smoke that is not part of the checks above; it fails on any uncaught exception on the page:
+
+```bash
+cd docs && python3 -m http.server 8099 &       # Pages-style static server
+node analysis/smoke_browser.js http://127.0.0.1:8099/    # CHROME=/path/to/chrome to override
+```

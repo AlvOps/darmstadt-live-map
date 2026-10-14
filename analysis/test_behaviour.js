@@ -17,6 +17,7 @@
  *   M12 fehlende Soll-Zeit ergibt "Verspätung unbekannt", nicht 0 ("On time")
  *   Tok alle fünf Versionskennungen stehen auf demselben Wert
  *   M7  Marken hängen im Karten-Container (Gesten erreichen MapLibre)
+ *   Reg Linienwahl/Sprachwechsel laufen ohne Ausnahme (Stern + Auswahlfeld; Inline-Skript der Seite)
  *
  * Usage: node analysis/test_behaviour.js
  */
@@ -174,6 +175,95 @@ const state = { modes: { tram: true, bus: true, rail: true }, selLine: null, sel
 sandbox.I18N.init();
 const L = sandbox.DarmstadtLive, X = L._test;
 L.attach({ map, overlay, deck: sandbox.deck, META, state, hex, shortStop, MODE_RGB, selectLine: () => {}, hidePanel: () => {} });
+
+// ---------- Seitenstart: das INLINE-Skript aus docs/index.html in einer eigenen DOM-Attrappe.
+// Die Prüfungen oben fahren live.js; die Verdrahtung IN index.html — selectLine() ruft den Stern, und
+// i18n set() -> render -> selectLine bei jedem Sprachwechsel — blieb damit ungeprüft. Genau dort lag
+// der unbeachtete ReferenceError "paintLineStar is not defined" (selectLine stand eine Ebene über der
+// Favoritenlogik). openPage() startet deshalb die echte Seite und klickt eine Linie an.
+function openPage(seedFavs) {
+  const pe = {}, pall = [], pstore = {};
+  let pn = 0;
+  if (seedFavs) pstore['darmstadt-live-favs'] = JSON.stringify(seedFavs);
+  const pageEl = id => {
+    if (pe[id]) return pe[id];
+    const o = {
+      id, textContent: '', innerHTML: '', hidden: false, style: {}, dataset: {},
+      clientWidth: 900, clientHeight: 46, offsetHeight: 0, width: 0, height: 0,
+      children: [], attrs: {},
+      appendChild(c) {
+        if (c.parentNode && c.parentNode.children) {
+          const i = c.parentNode.children.indexOf(c);
+          if (i >= 0) c.parentNode.children.splice(i, 1);
+        }
+        c.parentNode = o; o.children.push(c); return c;
+      },
+      remove() { const p = o.parentNode; if (p) { const i = p.children.indexOf(o); if (i >= 0) p.children.splice(i, 1); } o.removed = true; },
+      setAttribute(k, v) { o.attrs[k] = String(v); },
+      closest(sel) { return (o.parentNode && o.parentNode.tag === sel.replace(/^\./, '')) ? o.parentNode : pageEl(id + sel); },
+      scrollIntoView() {}, addEventListener() {},
+      classList: { _s: new Set(), toggle(c, on) { on ? this._s.add(c) : this._s.delete(c); },
+        add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); }, contains(c) { return this._s.has(c); } },
+      querySelector(sel) { return pageEl(id + sel); },
+      querySelectorAll() { return []; },
+      getContext() { return { setTransform() {}, clearRect() {}, fillRect() {}, fillText() {}, set fillStyle(v) {}, set font(v) {} }; },
+    };
+    let cn = '';
+    Object.defineProperty(o, 'className', {
+      get: () => Array.from(o.classList._s).join(' ') || cn,
+      set: v => { cn = String(v == null ? '' : v); o.classList._s = new Set(cn.split(/\s+/).filter(Boolean)); },
+    });
+    pe[id] = o; pall.push(o); return o;
+  };
+  const chips = () => pall.filter(n => n.classList.contains('chip'));
+  const chipFor = i => chips().find(c => String(c.dataset.line) === String(i));
+  const sb = {
+    console, Math, JSON, Date, Number, String, Array, Object, Map, Set, parseInt, parseFloat, isNaN, isFinite,
+    setTimeout, clearTimeout, setInterval, clearInterval, Promise, Float64Array, Uint16Array, Error,
+    CustomEvent: class { constructor(t) { this.type = t; } }, navigator: { language: 'en-GB' },
+    localStorage: { getItem: k => (k in pstore ? pstore[k] : null), setItem: (k, v) => { pstore[k] = String(v); } },
+    sessionStorage: { getItem: () => null, setItem() {} },
+    location: { pathname: '/darmstadt-live-map/', replace() {} },
+    fetch: async url => ({ ok: true, status: 200, json: async () => (String(url).includes('meta.json') ? META : {}) }),
+    requestAnimationFrame: () => 0,
+    document: {
+      body: pageEl('body'), documentElement: { lang: '', style: { setProperty() {} } }, title: '',
+      getElementById: pageEl, addEventListener() {},
+      createElement: tag => { const e = pageEl('new-' + tag + '-' + (++pn)); e.tag = tag; return e; },
+      querySelectorAll: sel => (sel === '.chip' ? chips() : []),
+      querySelector: sel => {
+        const m = sel.match(/^\.chip\[data-line="(\d+)"\]$/);
+        return m ? chipFor(m[1]) : pageEl('q:' + sel);
+      },
+    },
+    deck: { MapboxOverlay: class { constructor(p) { Object.assign(this, p); } setProps(p) { this.props = p; } },
+      PathLayer: Layer, ScatterplotLayer: Layer, TextLayer: Layer },
+  };
+  sb.window = sb;
+  sb.devicePixelRatio = 1;
+  sb.matchMedia = () => ({ matches: false });          // Rechner: kein Schubladen-Layout
+  sb.dispatchEvent = () => {};
+  const wh = {};
+  sb.addEventListener = (ev, fn) => { (wh[ev] = wh[ev] || []).push(fn); };
+  const container = { clientWidth: 1280, clientHeight: 800, addEventListener() {}, appendChild(c) { return c; } };
+  sb.maplibregl = {
+    Map: class { constructor(o) { Object.assign(this, o); }
+      getCanvasContainer() { return container; } getCanvas() { return container; } getContainer() { return container; }
+      getStyle() { return { sources: { carto: { url: 'x' } } }; } addControl() {} on() {}
+      loaded() { return false; } getBounds() { return { getWest: () => 8.63, getSouth: () => 49.86, getEast: () => 8.68, getNorth: () => 49.89 }; }
+      getZoom() { return 14; } project() { return { x: 640, y: 400 }; } easeTo() {} isMoving() { return false; } fitBounds() {} setStyle() {} },
+    LngLatBounds: class { constructor(a, b) { this._p = [a, b]; } extend(p) { this._p.push(p); } },
+    NavigationControl: class {},
+  };
+  vm.createContext(sb);
+  vm.runInContext(read('i18n.js'), sb);
+  vm.runInContext(read('search.js'), sb);
+  vm.runInContext(liveSrc, sb);
+  const blocks = [...html.matchAll(/<script(?![^>]*src)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+  vm.runInContext(blocks[blocks.length - 1], sb);      // das echte Inline-Skript der Seite
+  return { el: pageEl, chips, chipFor, all: pall, fire: ev => (wh[ev] || []).forEach(f => f()),
+    t: k => sb.I18N.t(k), ready: new Promise(r => setTimeout(r, 40)) };
+}
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
@@ -334,6 +424,36 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
   check('index.html hängt es in den Karten-Container (Gesten erreichen MapLibre)',
     /map\.getCanvasContainer\(\)/.test(html) && /canvasBox\.appendChild\(host\)/.test(html));
   check('live.js findet die Marken weiterhin über die Kennung', /getElementById\('markers'\)/.test(liveSrc));
+
+  console.log('\n=== Regression: Linienwahl und Sprachwechsel ohne Ausnahme (Stern + Auswahlfeld) ===');
+  {
+    // Linie 0 ist bereits Favorit: damit unterscheidet der Stern-Test "der Stern wurde nachgezogen"
+    // von "der Stern steht noch auf dem Stand vor der Wahl" — genau die Wirkung des ReferenceErrors.
+    const page = openPage({ stations: [], lines: [0] });
+    await page.ready;
+    const chip0 = page.chipFor(0);
+    check('die Linienleiste der Seite ist aufgebaut (Linie 0 ist ein Chip)',
+      !!chip0, `${page.chips().length} Chips`);
+    let err = null;
+    try { chip0.onclick(); } catch (e) { err = e; }
+    check('die Linienwahl läuft ohne Ausnahme durch (kein "paintLineStar is not defined")',
+      !err, err ? err.message : '');
+    check('nach der Wahl steht das Auswahlfeld (#selinfo) auf flex',
+      page.el('selinfo').style.display === 'flex', String(page.el('selinfo').style.display));
+    check('der Stern zeigt die gewählte Linie als Favorit (★), nicht den Stand davor (☆)',
+      page.el('selfav').textContent === '★' &&
+      page.el('selfav').title === page.t('favRemove') &&
+      page.el('selfav').attrs['aria-label'] === page.t('favRemove'),
+      `${page.el('selfav').textContent} / ${page.el('selfav').title}`);
+    let err2 = null;
+    try { page.fire('langchange'); } catch (e) { err2 = e; }        // i18n set -> render -> selectLine
+    check('der Sprachwechsel läuft ohne Ausnahme durch', !err2, err2 ? err2.message : '');
+    let err3 = null;
+    try { page.el('selclear').onclick(); } catch (e) { err3 = e; }  // abwählen: selLine === null ruft den Stern ebenfalls
+    check('das Abwählen räumt das Auswahlfeld weg, ohne Ausnahme',
+      !err3 && page.el('selinfo').style.display === 'none',
+      err3 ? err3.message : String(page.el('selinfo').style.display));
+  }
 
   console.log(`\nRESULT: ${fails === 0 ? 'PASS' : 'FAIL (' + fails + ')'}`);
   process.exit(fails === 0 ? 0 : 1);

@@ -9,6 +9,8 @@ Diese Skripte haben das Datenmodell der Transitous-/MOTIS-Schnittstelle ermittel
 | `hop_structure.py` | Wie hängen Einträge und Fahrzeuge zusammen? | Ein Eintrag = ein Abschnitt; pro Fahrt bis zu 19 Abschnitte im Zeitfenster; ~55 fahrende Fahrzeuge im Stadtzentrum |
 | `poll_shape.py` | Nutzlast gegen Zeitfenster und bbox | 1 Min ≈ 280 kB, 30 Min ≈ 1,2 MB; zu große bbox → HTTP 422 |
 | `test_ui.js` | Popup, Zeitgeber, XSS, fehlerhafte Datensätze, Abruf-Stopp | ruft `test_i18n.js` und `test_static.js` mit auf |
+| `test_behaviour.js` | Je ein Ende-zu-Ende-Check pro behobenem Befund (M1–M12, Tok) | offline, fährt live.js **und** das Inline-Skript der Seite (Linienwahl/Stern/Sprachwechsel) |
+| `smoke_browser.js` | Läuft die Seite in echtem Chromium über CDP ohne uncaught exception? | opt-in, braucht Netz + statischen Server (`node analysis/smoke_browser.js <url>`) |
 | `test_i18n.js` | Fehlen EN/DE-Schlüssel oder gibt es fest verdrahtete Texte? | offline, schlägt bei Regression fehl |
 | `test_static.js` | CSS fürs Telefon, Scrollbalken, Kontrast, Icons, Pfade | offline |
 | `test_live.js` | Funktioniert das Modul mit echten Daten? | ~50 Fahrzeuge, alle im Ausschnitt, alle `realTime === true`, keine ungültigen Koordinaten |

@@ -499,6 +499,10 @@ const lineEnds = l => l.ends.map(shortStop).join(' ↔ ');
   const DRAWER_QUERY = '(max-width: 700px), (hover: none) and (pointer: coarse)';
   const touchLayout = () => !!(window.matchMedia && window.matchMedia(DRAWER_QUERY).matches);
   let hidePanelNow = null;                  // wird von der Panel-Logik unten gesetzt
+  // Der Stern neben der Linienwahl wird erst in der Favoritenlogik weiter unten gesetzt. selectLine
+  // steht eine Ebene darüber; rief es den Stern direkt auf, lief der Aufruf ins Leere (Uncaught
+  // ReferenceError bei jeder Linienwahl und jedem Sprachwechsel). Vorbelegt wie hidePanelNow.
+  let paintLineStar = () => {};             // wird von der Favoritenlogik unten überschrieben
 
 function selectLine(li) {
   state.selLine = state.selLine === li ? null : li;
@@ -712,7 +716,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
     const empty = document.getElementById('favempty');
     if (empty) empty.hidden = !!(favs.stations.length || favs.lines.length);
   }
-  function paintLineStar() {
+  paintLineStar = function paintLineStar() {
     const b = document.getElementById('selfav');
     if (!b) return;
     const on = state.selLine !== null && !!S && S.hasLine(favs, state.selLine) >= 0;
@@ -720,7 +724,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
     b.classList.toggle('on', on);
     b.title = favT(on ? 'favRemove' : 'favAdd');
     b.setAttribute('aria-label', favT(on ? 'favRemove' : 'favAdd'));
-  }
+  };
   const selfav = document.getElementById('selfav');
   if (selfav) selfav.onclick = () => {
     if (state.selLine === null || !S) return;
