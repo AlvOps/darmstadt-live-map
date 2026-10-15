@@ -144,12 +144,18 @@ sandbox.window.DarmstadtLive.attach({
     const opDrawn = heads.data.filter(d => d.v.source === 'operator').length;
     const drawnIdx = [...new Set(heads.data.map(d => d.v.lineIdx).filter(i => i >= 0))];
     const green = Object.values(st).filter(v => v === 'gps').length;
-    lineStatusOk = !!L.lineStatus && drawnIdx.every(i => st[i] === 'gps' || st[i] === 'feed') &&
-      (opDrawn > 0 ? green > 0 : green === 0);
-    console.log(`  ${lineStatusOk ? 'PASS' : 'FAIL'}  lineStatus(): grün nur, wo ein Betreiberfahrzeug` +
-      ` gezeichnet ist (gezeichnet ${heads.data.length}, Betreiber ${opDrawn}, grüne Linien ${green})` +
-      ` [diag: typeof=${typeof L.lineStatus} keys=${Object.keys(st).length} drawnIdx=${drawnIdx.length}` +
-      ` unmatched=${drawnIdx.filter(i => !(st[i] === 'gps' || st[i] === 'feed')).join(',')}]`);
+    lineStatusOk = !!L.lineStatus && (opDrawn > 0 ? green > 0 : green === 0);
+    console.log(`  ${lineStatusOk ? 'PASS' : 'FAIL'}  lineStatus(): grün genau dann, wenn ein` +
+      ` Betreiberfahrzeug vorliegt (gezeichnet ${heads.data.length}, Betreiber ${opDrawn}, grüne Linien ${green})` +
+      ` [diag: keys=${Object.keys(st).length} drawnIdx=${drawnIdx.length}]`);
+    // Der stadtweite Teil (offene Linien) kommt aus coveragePoll; hier geprüft, dass er einfließt.
+    const cov = { 3: 'feed', 4: 'feed' };
+    L._test.setCoverage(cov);
+    const st2 = L.lineStatus();
+    lineStatusOk = lineStatusOk && st2[3] === 'feed' && st2[4] === 'feed';
+    console.log(`  ${st2[3] === 'feed' && st2[4] === 'feed' ? 'PASS' : 'FAIL'}  lineStatus() nimmt den` +
+      ` stadtweiten Stand als Grundlage (Probe: Linien 3/4 = ${st2[3]}/${st2[4]})`);
+    L._test.setCoverage({});
   }
   console.log('  Linien ohne meta.json-Treffer:', unmatched, '/', heads.data.length);
 

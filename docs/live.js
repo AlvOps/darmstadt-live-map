@@ -69,7 +69,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261015-29';
+  const VERSION = '20261015-30';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -110,6 +110,11 @@
   let opSeen = new Map();                // Linienschlüssel -> { at, pts } (Abdeckung + Haltezeit)
   let opFallback = false, opPresent = false, lastSelect = 0, feedBanner = null, shownBanner = null;
   let selCounts = { operator: 0, open: 0, suppressed: 0, covered: 0 };
+  // Für die Punkte in der Linienliste: 'aus dem Bildausschnitt' taugt nicht als Aussage darüber, ob eine
+  // Linie gerade überhaupt fährt. Deshalb eine langsame, stadtweite Abfrage für die offenen Linien und
+  // die Linien mit Betreiberfahrzeug aus der letzten Auswahl (der Betreiberstrom ist ohnehin netzweit).
+  let coverageLines = {};                // aus dem stadtweiten Abruf: Linie -> 'feed'
+  let selectedOpLines = new Set();       // Linien, für die gerade ein Betreiberfahrzeug vorliegt
   let lastOk = 0, lastErr = null, failures = 0, lastPaint = 0;
   let pollTimer = null, refreshTimer = null, refreshInFlight = false, pendingRefresh = false;
   let lineIndex = null, viewBox = null;
@@ -556,6 +561,7 @@
     opFallback = r.fallback;
     // Betreiberfahrzeuge kommen netzweit: wie der offene Strom nur im (erweiterten) Ausschnitt zeigen.
     drawn = r.list.filter(v => !isOp(v) || inBox(viewBox, [v.lon, v.lat], 0.25));
+    selectedOpLines = new Set(r.list.filter(isOp).map(v => v.lineIdx).filter(i => i >= 0));
     const nOp = drawn.filter(isOp).length;
     selCounts = { operator: nOp, open: drawn.length - nOp, suppressed: r.counts.suppressed, covered: r.counts.covered };
     lastSelect = now;
@@ -1316,6 +1322,33 @@
     }
   }
 
+  // Stadtweiter, langsamer Abruf NUR für die Linienliste: Betriebszeiten ändern sich träge, eine Minute
+  // Takt reicht und kostet einen Abruf. Ohne ihn wäre „rot" eine Aussage über den Bildausschnitt.
+  let coverageAt = 0;
+  const COVERAGE_MS = 60000;
+  async function coveragePoll() {
+    if (!active || typeof fetch !== 'function') return;
+    const now = Date.now();
+    if (now - coverageAt < COVERAGE_MS) return;
+    coverageAt = now;
+    const t0 = new Date(now).toISOString().replace(/\.\d+Z$/, 'Z');
+    const t1 = new Date(now + 60000).toISOString().replace(/\.\d+Z$/, 'Z');
+    try {
+      const res = await timedFetch(`${API}?min=${CITY_BOX.s},${CITY_BOX.w}&max=${CITY_BOX.n},${CITY_BOX.e}` +
+        `&zoom=12&startTime=${t0}&endTime=${t1}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      const keep = viewBox;
+      viewBox = CITY_BOX;                   // die Ausschnittsprüfung im Aufbau nutzt diese Box
+      const wide = buildVehicles(Array.isArray(json) ? json : []);
+      viewBox = keep;
+      const lines = {};
+      for (const v of wide) if (v && v.lineIdx >= 0) lines[v.lineIdx] = 'feed';
+      coverageLines = lines;
+    } catch (_) { /* still: der vorige Stand bleibt stehen, beim nächsten Takt wieder */ }
+  }
+  setInterval(coveragePoll, 15000);        // fragt nur ab, wenn die Minute um ist
+
   // Kamera auf die Fahrzeuge einer Linie setzen — mit Platz für Panel (Rechner) bzw. Karte (Telefon).
   function focusLine(idx, list) {
     if (!ctx || !ctx.map.fitBounds || !window.maplibregl) return;
@@ -1775,11 +1808,8 @@
   // nicht", nicht „gerade nicht im Ausschnitt" (Korrektur des Betreibers 2026-10-15).
   function lineStatus() {
     const out = {};
-    for (const v of vehicles) {
-      if (!v || !(v.lineIdx >= 0)) continue;
-      if (v.source === 'operator') out[v.lineIdx] = 'gps';
-      else if (out[v.lineIdx] !== 'gps') out[v.lineIdx] = 'feed';
-    }
+    for (const k of Object.keys(coverageLines)) out[k] = 'feed';   // fährt im Stadtgebiet
+    for (const i of selectedOpLines) out[i] = 'gps';               // fährt und meldet sich per GPS
     return out;
   }
 
@@ -1821,7 +1851,9 @@
       render();
     },
     refresh,
-    setOn(on) { on ? start() : stop(); },
+    // Beim Einschalten sofort den stadtweiten Stand holen: sonst stünden die Punkte der offenen Linien
+    // bis zum ersten Takt (~15 s) fälschlich auf rot.
+    setOn(on) { if (on) { start(); coveragePoll(); } else stop(); },
     // Eine Linienwahl ersetzt die Fahrzeugauswahl: sonst blieben Karte, Verbindungslinie und
     // Zug der vorher angeklickten Fahrt stehen, während die Linie hervorgehoben wird.
     clearVehicle() { stopFollow(); closePopup(); },
@@ -1857,6 +1889,7 @@
     _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; reselect(false); }, popupShell,
              HYBRID_ON, activateHybridCopy, selectSources, opPosAt, opTripFor, legStopsAhead, opShell, opModel, opKey, lineKey, OP_ALIAS, reselect: () => reselect(true), drawn: () => drawn,
              OP_FRESH_MS, OP_HOLD_MS, OP_SCOPE_M, OP_STALE_MS, OP_MAX_AGE_MS, OP_TICK_MS, OP_REPLAY_MS, OP_PATH_END_M, OP_PATH_MAX_M, opTrack, havM, resetOperator() { opSeen = new Map(); },
+             setCoverage(o) { coverageLines = o; }, coverage: () => coverageLines,
              departureRow, stationShell, freshness, focusLine, focusLineWide, CITY_BOX,
              dedupeStops, markers: () => markerLog, markerNode: () => markerBox, markerHtml,
              syncMarkers: () => syncMarkerPositions(), decodePolyline,

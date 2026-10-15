@@ -262,9 +262,14 @@ function run(check, log = console.log) {
   check('nothing pops up on hover in the left pane, and the dots stay labelled for screen readers',
     !/tip\.innerHTML/.test(html) && !/c\.title = lineEnds\(l\)/.test(html) &&
     /d\.setAttribute\('aria-label', label\)/.test(html) && !/d\.title = label/.test(html));
-  check('the line status comes from the whole feed, not from the current view',
-    /for \(const v of vehicles\) \{[\s\S]{0,200}lineIdx/.test(
-      require('fs').readFileSync(require('path').join(__dirname, '..', 'docs', 'live.js'), 'utf8')));
+  // Rot darf nicht „nicht im Ausschnitt" heißen: der normale Abruf kennt nur den Bildausschnitt,
+  // deshalb ein langsamer stadtweiter Abruf plus die netzweiten Betreiberlinien.
+  check('the line status is based on a city-wide poll and the network-wide operator lines, not the view',
+    /async function coveragePoll\(\)/.test(
+      require('fs').readFileSync(require('path').join(__dirname, '..', 'docs', 'live.js'), 'utf8')) &&
+    /CITY_BOX\.s/.test(require('fs').readFileSync(require('path').join(__dirname, '..', 'docs', 'live.js'), 'utf8')) &&
+    /setInterval\(coveragePoll, 15000\)/.test(require('fs').readFileSync(require('path').join(__dirname, '..', 'docs', 'live.js'), 'utf8')) &&
+    /for \(const i of selectedOpLines\) out\[i\] = 'gps'/.test(require('fs').readFileSync(require('path').join(__dirname, '..', 'docs', 'live.js'), 'utf8')));
   check('a small legend sits beside the realtime badge, in both languages',
     /<span id="dotlegend"[^>]*>[\s\S]{0,420}data-status="gps"[\s\S]{0,220}data-status="feed"[\s\S]{0,220}data-status="none"/.test(html) &&
     /dotGps: 'GPS', dotFeed: 'Prognosis', dotNone: 'No service'/.test(i18nAll) &&
