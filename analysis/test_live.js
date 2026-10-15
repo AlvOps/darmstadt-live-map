@@ -136,6 +136,21 @@ sandbox.window.DarmstadtLive.attach({
   const byMode = heads.data.reduce((a, d) => (a[d.v.mode] = (a[d.v.mode] || 0) + 1, a), {});
   console.log('  Modi:', JSON.stringify(byMode));
   const unmatched = heads.data.filter(d => d.v.lineIdx < 0).length;
+  // Der Punkt je Linie darf nur grün sein, wo wirklich ein Fahrzeug per Betreiber-GPS gemeldet ist:
+  // grün = Betreiber, blau = nur Prognose. Abwesenheit in der Karte heißt rot in der Liste.
+  let lineStatusOk = false;
+  {
+    const st = (L.lineStatus ? L.lineStatus() : null) || {};
+    const opDrawn = heads.data.filter(d => d.v.source === 'operator').length;
+    const drawnIdx = [...new Set(heads.data.map(d => d.v.lineIdx).filter(i => i >= 0))];
+    const green = Object.values(st).filter(v => v === 'gps').length;
+    lineStatusOk = !!L.lineStatus && drawnIdx.every(i => st[i] === 'gps' || st[i] === 'feed') &&
+      (opDrawn > 0 ? green > 0 : green === 0);
+    console.log(`  ${lineStatusOk ? 'PASS' : 'FAIL'}  lineStatus(): grün nur, wo ein Betreiberfahrzeug` +
+      ` gezeichnet ist (gezeichnet ${heads.data.length}, Betreiber ${opDrawn}, grüne Linien ${green})` +
+      ` [diag: typeof=${typeof L.lineStatus} keys=${Object.keys(st).length} drawnIdx=${drawnIdx.length}` +
+      ` unmatched=${drawnIdx.filter(i => !(st[i] === 'gps' || st[i] === 'feed')).join(',')}]`);
+  }
   console.log('  Linien ohne meta.json-Treffer:', unmatched, '/', heads.data.length);
 
   console.log('\n=== UI-Ausgaben ===');
@@ -162,7 +177,7 @@ sandbox.window.DarmstadtLive.attach({
   let i18nFails = 0;
   require('./test_i18n').run((n, c, e) => { console.log(`  ${c ? 'PASS' : 'FAIL'}  ${n}${!c && e ? ' — ' + e : ''}`); if (!c) i18nFails++; });
 
-  const ok = info.count > 0 && nan === 0 && inBox === pos.length && trails.data.length === heads.data.length &&
+  const ok = lineStatusOk && info.count > 0 && nan === 0 && inBox === pos.length && trails.data.length === heads.data.length &&
     rtOnly && !off.active && !off.polling && i18nFails === 0 &&
     stations.data.length > 0 && stations.data.every(s => isFinite(s.lat) && isFinite(s.lon) && !!s.stopId);
   console.log('\nRESULT:', ok ? 'PASS' : 'FAIL');

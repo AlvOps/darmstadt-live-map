@@ -248,6 +248,21 @@ function run(check, log = console.log) {
   check('the confirm button is thumb-sized and the overlay sits above every panel',
     /\.wnav \{[^}]*min-height: 44px/.test(css) &&
     /#welcome \{ position: absolute; inset: 0; z-index: 20;/.test(css));
+  // Punkte je Linie (Wunsch des Betreibers 2026-10-15): grün = Betreiber-GPS, blau = nur Prognose,
+  // rot = fährt gerade nicht; dazu eine kleine Erklärung neben dem Echtzeit-Kennzeichen.
+  check('every line chip carries a status dot and the three colours are fixed in CSS',
+    /\.ldot\[data-status="gps"\] \{ background: #34d058/.test(css) &&
+    /\.ldot\[data-status="feed"\] \{ background: #4c9aff/.test(css) &&
+    /\.ldot\[data-status="none"\] \{ background: #e5534b/.test(css) &&
+    /const dot = document\.createElement\('i'\); dot\.className = 'ldot'/.test(html) &&
+    /c\.appendChild\(dot\); c\.appendChild\(nm\)/.test(html));
+  check('the dots follow the live status, also in the favourites, and cannot rot for long',
+    /window\.DarmstadtLive\.lineStatus/.test(html) && /setInterval\(updateLineDots, 1000\)/.test(html) &&
+    /updateLineDots\(\);/.test(html) && /fdot\.className = 'ldot'/.test(html));
+  check('a small legend sits beside the realtime badge, in both languages',
+    /<span id="dotlegend"[^>]*>[\s\S]{0,420}data-status="gps"[\s\S]{0,220}data-status="feed"[\s\S]{0,220}data-status="none"/.test(html) &&
+    /dotGps: 'GPS', dotFeed: 'Prognosis', dotNone: 'No service'/.test(i18nAll) &&
+    /dotGps: 'GPS', dotFeed: 'Prognose', dotNone: 'Kein Betrieb'/.test(i18nAll));
   check('tapping the map closes the phone drawer',
     /hidePanel: \(\) => \{ if \(touchLayout\(\)\) setPanel\(false\); \}/.test(html));
   check('phone: the drawer toggle stays in one place (top-left, panel starts below it)',

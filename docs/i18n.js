@@ -10,6 +10,8 @@
     en: {
       appTitle: 'Darmstadt Public Transport Map',
       chooseLang: 'Choose language',
+      dotLegendTitle: 'What the dots in the line list mean',
+      dotGps: 'GPS', dotFeed: 'Prognosis', dotNone: 'No service',
       chooseLangHint: 'You can switch any time — the toggle stays in the top right.',
       subtitle: 'Tram, bus and regional rail — from the open realtime feed',
       subtitleOperator: 'Tram, bus and regional rail — operator GPS where available, otherwise the open realtime feed',
@@ -150,6 +152,8 @@
     de: {
       appTitle: 'Nahverkehrskarte Darmstadt',
       chooseLang: 'Sprache wählen',
+      dotLegendTitle: 'Was die Punkte in der Linienliste bedeuten',
+      dotGps: 'GPS', dotFeed: 'Prognose', dotNone: 'Kein Betrieb',
       chooseLangHint: 'Du kannst jederzeit umschalten – der Schalter bleibt oben rechts.',
       subtitle: 'Straßenbahn, Bus und Regionalbahn – aus dem offenen Echtzeitstrom',
       subtitleOperator: 'Straßenbahn, Bus und Regionalbahn – GPS des Betreibers, wo vorhanden, sonst der offene Echtzeitstrom',

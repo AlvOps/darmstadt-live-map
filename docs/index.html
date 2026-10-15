@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-24"></script>
+<script src="i18n.js?v=20261015-25"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -110,6 +110,17 @@
   .chip { font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 7px; cursor: pointer;
     color: #111; border: 2px solid transparent; display: inline-flex; align-items: center; min-height: 28px; }
   .chip.sel { border-color: #fff; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; }
+  /* Zustandspunkt je Linie: grün = Betreiber-GPS, blau = nur Prognose, rot = fährt gerade nicht.
+     Der dunkle Ring hält ihn auf jeder Linienfarbe lesbar. */
+  .ldot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #6b7280;
+    box-shadow: 0 0 0 1.5px rgba(0,0,0,.55); }
+  .ldot[data-status="gps"] { background: #34d058; }
+  .ldot[data-status="feed"] { background: #4c9aff; }
+  .ldot[data-status="none"] { background: #e5534b; }
+  #dotlegend { display: inline-flex; flex-wrap: wrap; gap: 10px; margin-left: 10px; font-size: 11.5px;
+    font-weight: 500; color: var(--muted); vertical-align: middle; }
+  #dotlegend .lg { display: inline-flex; align-items: center; gap: 4px; }
   #bar { left: 16px; right: 16px; bottom: 16px; padding: 12px 16px 14px; }
   #row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   #clock { font-size: 34px; font-weight: 650; font-variant-numeric: tabular-nums; min-width: 105px; letter-spacing: .02em; }
@@ -445,7 +456,7 @@
 </div>
 
 <div id="head" class="panel">
-  <h1><span data-i18n="appTitle">Darmstadt Public Transport Map</span><span class="badge-live" id="livebadge" data-state="waiting"><i></i><span id="livebadgetxt" data-i18n="modeLive">Realtime prognoses</span></span>
+  <h1><span data-i18n="appTitle">Darmstadt Public Transport Map</span><span class="badge-live" id="livebadge" data-state="waiting"><i></i><span id="livebadgetxt" data-i18n="modeLive">Realtime prognoses</span></span><span id="dotlegend" data-i18n-title="dotLegendTitle" title="What the dots in the line list mean"><span class="lg"><i class="ldot" data-status="gps"></i><span data-i18n="dotGps">GPS</span></span><span class="lg"><i class="ldot" data-status="feed"></i><span data-i18n="dotFeed">Prognosis</span></span><span class="lg"><i class="ldot" data-status="none"></i><span data-i18n="dotNone">No service</span></span></span>
     <button id="panelclose" class="panel-x" data-i18n-aria="closePanel" aria-label="Close panel">✕</button></h1>
 
   <!-- Umschalter: immer nur ein Bereich sichtbar -> das Panel passt ohne Scrollbalken.
@@ -559,11 +570,11 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-24"></script>
+<script src="search.js?v=20261015-25"></script>
 <!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
      antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
-<script src="operator.js?v=20261015-24"></script>
-<script src="live.js?v=20261015-24"></script>
+<script src="operator.js?v=20261015-25"></script>
+<script src="live.js?v=20261015-25"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -887,6 +898,18 @@ const GROUPS = [
   { key: 'grpBusRmv', modes: ['bus'], test: l => l.agency === 'RMV' },
   { key: 'grpBusOther', modes: ['bus'], test: () => true },
 ];
+// Punkte in Linienliste und Favoriten aktuell halten. Ein Sekundentakt genügt: der Fahrzeugstrom
+// kommt alle 10 s, und die Liste soll nur nicht minutenlang veralten.
+function updateLineDots() {
+  const st = (window.DarmstadtLive && window.DarmstadtLive.lineStatus)
+    ? window.DarmstadtLive.lineStatus() : {};
+  document.querySelectorAll('.chip[data-line]').forEach(c => {
+    const d = c.querySelector('.ldot');
+    if (d) d.dataset.status = st[+c.dataset.line] || 'none';
+  });
+}
+setInterval(updateLineDots, 1000);
+
 function buildLegend() {
   const lg = document.getElementById('legend'), done = new Set();
   const T = k => (window.I18N ? window.I18N.t(k) : k);
@@ -903,7 +926,10 @@ function buildLegend() {
     const box = det.querySelector('.chips');
     for (const { l, i } of items) {
       const c = document.createElement('span'); c.className = 'chip'; c.dataset.line = i;
-      c.textContent = l.name; c.style.background = l.color; c.onclick = () => selectLine(i);
+      const dot = document.createElement('i'); dot.className = 'ldot'; dot.dataset.status = 'none';
+      const nm = document.createElement('span'); nm.textContent = l.name;
+      c.appendChild(dot); c.appendChild(nm);
+      c.style.background = l.color; c.onclick = () => selectLine(i);
       c.onmouseenter = e => { tip.innerHTML = `<b>${esc(l.name)}</b> ${esc(lineEnds(l))}`; tip.style.display = 'block';
         const r = c.getBoundingClientRect(); tip.style.left = document.getElementById('head').getBoundingClientRect().right + 8 + 'px'; tip.style.top = r.top - 4 + 'px'; };
       c.onmouseleave = () => { tip.style.display = 'none'; };
@@ -912,6 +938,7 @@ function buildLegend() {
     lg.appendChild(det);
   }
   lg.scrollTop = keepScroll;                          // Position wiederherstellen
+  updateLineDots();                                   // nicht eine Sekunde lang falsch rot
 }
 
 // Kartenbedienelemente immer über der unteren Leiste halten
@@ -938,7 +965,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-24';
+  const APP_V = '20261015-25';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {
@@ -1080,7 +1107,10 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
         const l = META.lines[i];
         if (!l) continue;
         const c = document.createElement('span');
-        c.className = 'chip favchip'; c.style.background = l.color; c.textContent = l.name;
+        c.className = 'chip favchip'; c.style.background = l.color; c.dataset.line = i;
+        const fdot = document.createElement('i'); fdot.className = 'ldot'; fdot.dataset.status = 'none';
+        const fnm = document.createElement('span'); fnm.textContent = l.name;
+        c.appendChild(fdot); c.appendChild(fnm);
         c.title = lineEnds(l);
         c.onclick = () => selectLine(i);                    // Telefon: Panel nimmt sich dabei weg
         const x = document.createElement('button');
