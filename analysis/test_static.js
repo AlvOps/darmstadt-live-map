@@ -76,6 +76,16 @@ function run(check, log = console.log) {
     check(`WebKit scrollbar styled for ${sel}`, css.includes(sel + '::-webkit-scrollbar-thumb') && css.includes(sel + '::-webkit-scrollbar-track') &&
       css.includes(sel + '::-webkit-scrollbar-corner') && css.includes(sel + '::-webkit-scrollbar-thumb:hover'));
   }
+  // Rechner: genau DREI Halte sichtbar (wie die Schublade auf dem Telefon), der Rest scrollbar.
+  const cardList = rule('.pop-stops', css), cardRow = rule('.pop-stops li', css);
+  check('desktop: the vehicle card shows exactly three stops, the rest scrolls',
+    prop(cardList, 'max-height') === 'calc(3 * var(--stop-row))' &&
+    prop(cardList, 'overflow-y') === 'auto' &&
+    prop(cardRow, 'min-height') === 'var(--stop-row)' &&
+    prop(cardRow, 'box-sizing') === 'border-box' &&
+    prop(cardRow, 'line-height') === '16px' &&            // 16 + 12 + 1 = 29 -> Zeile genau 30px
+    !/max-height: 34vh/.test(css));
+
   check('stop list scrolls but shows no scrollbar (owner wish)',
     /\.pop-stops \{ scrollbar-width: none; -ms-overflow-style: none; \}/.test(css) &&
     /\.pop-stops::-webkit-scrollbar \{ width: 0; height: 0; \}/.test(css) &&
