@@ -429,6 +429,40 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
       /if \(state\.selLine !== null && window\.DarmstadtLive/.test(html));
   }
 
+  console.log('\n=== M4: ein gewähltes Fahrzeug isoliert die Karte — auch beim Herauszoomen ===');
+  {
+    const kids = () => (((X.markerNode() || {}).children) || []);
+    const mk = () => kids().filter(n => n.classList.contains('mk'));
+    const stops = () => kids().filter(n => n.classList.contains('stopmk'));
+    const vB = Object.assign({}, vA, { tripId: 'T-FOKUS-B', lineName: '7', lon: vA.lon + 0.02 });
+    const vC = Object.assign({}, vA, { tripId: 'T-FOKUS-C', lineName: 'H', lon: vA.lon - 0.02 });
+    const vD = Object.assign({}, vA, { tripId: 'T-FOKUS-D', lineName: '9', lon: vA.lon + 0.04 });
+    const vE = Object.assign({}, vA, { tripId: 'T-FOKUS-E', lineName: '5', lon: vA.lon - 0.04 });
+
+    X.stops().length = 0;                       // Netz-Haltestelle einspeisen: „nichts anderes" muss messbar sein
+    X.stops().push({ name: 'Netzhalt', lat: vA.lat + 0.003, lon: vA.lon + 0.003, stopId: 'NET-1' });
+    X.setVehicles([vA, vB, vC]); L.render(true);
+    check('ohne Auswahl liegen alle Fahrzeuge auf der Karte', mk().length >= 3, `${mk().length} Marken`);
+    check('ohne Auswahl ist auch die Netz-Haltestelle da', stops().length === 1, `${stops().length} Halte`);
+    await L.openPopup(vA); X.tapVehicle(vA); L.render(true);
+    check('ein gewähltes Fahrzeug: nur EINES wird gezeichnet', mk().length === 1, `${mk().length} Marken`);
+    check('und zwar genau das gewählte', mk()[0] && mk()[0].dataset.key === 'v:' + vA.tripId,
+      mk()[0] ? mk()[0].dataset.key : 'keine');
+    check('die anderen werden nicht mehr blass mitgezeichnet', mk().every(n => !n.classList.contains('dim')));
+    check('die Linie bleibt sichtbar', X.chain().length === 1);
+    check('die fremde Haltestelle verschwindet', stops().length === 0, `${stops().length} Halte`);
+
+    X.setVehicles([vA, vB, vC, vD, vE]); L.render(true);          // herauszoomen: der Abruf liefert mehr
+    check('auch nach einem größeren Abruf bleibt nur das gewählte Fahrzeug',
+      mk().length === 1 && mk()[0].dataset.key === 'v:' + vA.tripId, `${mk().length} Marken`);
+    X.setRelaxAt(1); L.render(true);                              // Ruhetimer der Linienwahl darf nicht greifen
+    check('der Ruhetimer der Linienwahl greift hier nicht', mk().length === 1, `${mk().length} Marken`);
+
+    L.clearVehicle(); L.render(true);
+    check('Auswahl aufheben bringt alles zurück', mk().length >= 5, `${mk().length} Marken`);
+    check('und die Netz-Haltestelle ist wieder da', stops().length === 1, `${stops().length} Halte`);
+  }
+
   console.log('\n=== M10: ein Abruf während eines Abrufs wird nachgeholt ===');
   {
     L.setOn(true);

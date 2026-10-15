@@ -69,7 +69,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261015-12';
+  const VERSION = '20261015-13';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -749,7 +749,7 @@
 
     // Die Auswahl bestimmt, was zu sehen ist:
     //   Linie im Panel gewählt -> nur diese Linie, keine Haltestellen (nach 10 s Ruhe kommen sie zurück)
-    //   Fahrzeug gewählt       -> dieses Fahrzeug samt seinen eigenen nächsten Halten
+    //   Fahrzeug gewählt       -> NUR dieses Fahrzeug, seine Linie und seine nächsten Halte
     //   nichts gewählt         -> alles
     const relaxed = sel !== null && Date.now() - (ctx.state.selAt || 0) > RELAX_MS;   // 10 s Ruhe
     if (sel !== lastSel) {                 // neue Linie gewählt -> Kamera gleich zu ihren Fahrzeugen
@@ -757,7 +757,13 @@
       if (sel !== null && !focusTrip) focusLineWide(sel);
     }
     const inMode = c => ctx.state.modes[c.v.mode];
-    const vis = sel !== null ? cur.filter(c => inMode(c) && c.v.lineIdx === sel) : cur.filter(inMode);
+    // Ein gewähltes Fahrzeug ist ein Fokus: nur dieses Fahrzeug und seine Linie, sonst nichts. Das
+    // gilt dauerhaft — auch wenn weit herausgezoomt wird und der Abruf dann das halbe Netz liefert.
+    // Bewusst KEIN Ruhetimer wie bei der Linienwahl, sonst käme der Rest nach ein paar Sekunden
+    // zurück und die Ansicht würde beim Zoomen wieder voll.
+    const vis = focusTrip
+      ? cur.filter(c => c.v.tripId === focusTrip && inMode(c))
+      : sel !== null ? cur.filter(c => inMode(c) && c.v.lineIdx === sel) : cur.filter(inMode);
     // Bei gewähltem Fahrzeug nur dessen eigene Halte zeigen (nicht das ganze Netz)
     // Nur neu berechnen, wenn sich wirklich etwas geändert hat: sonst schiebt deck.gl die
     // Haltestellen-Ebene 30-mal pro Sekunde neu hoch, obwohl sie still steht (spürbare Last).
