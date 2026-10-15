@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-16"></script>
+<script src="i18n.js?v=20261015-17"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -274,7 +274,6 @@
      zwangsläufig über ganzen Häuserblocks — genau das, was der Betreiber als „fliegt über die
      Häuser" gesehen hat. Ab z15 steht die Linie wieder in der Pille, und die hängt dann über dem
      genauen Punkt. Ein gewähltes Fahrzeug behält seine Pille in jedem Zoom. */
-  #markers.dots .mk { padding: 0; width: 11px; height: 11px; border-width: 2px; border-radius: 50%; }
   #markers.dots .mk svg, #markers.dots .mk span { display: none; }
   #markers.dots .mk::before { display: none; }
   #markers.dots .mk.focus { width: auto; height: auto; padding: 3px 9px 3px 7px; border-radius: 999px; }
@@ -288,6 +287,11 @@
   #markers.scaled .mk { font-size: 11px; padding: 2px 7px 2px 6px; }
   #markers.scaled .mk svg { width: 12px; height: 12px; }
   #markers.scaled .mk::before { width: 6px; height: 6px; margin: -3px 0 0 -3px; }
+  /* Muss NACH #markers.scaled .mk stehen: dessen padding (2px 7px 2px 6px) hat dieselbe Spezifität
+     und gewinnt sonst — mit border-box erzwingt das padding dann 17 px Breite, und der Punkt würde
+     zum Oval (im Browser gemessen 2026-10-15: 17x11 px statt 12x12). */
+  #markers.dots .mk { padding: 0; width: 12px; height: 12px; min-width: 0; box-sizing: border-box;
+    border-width: 2px; border-radius: 50%; }
   /* Haltestelle: weißer Kreis mit großem Buchstaben (H = Haltestelle, S = station) */
   /* Haltestelle: kleiner weißer Kreis, Buchstabe wirklich mittig (Buttons bringen sonst eigenes
      Innenmaß und Zeilenhöhe mit — daher padding 0, border-box und Flex-Zentrierung). */
@@ -560,11 +564,11 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-16"></script>
+<script src="search.js?v=20261015-17"></script>
 <!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
      antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
-<script src="operator.js?v=20261015-16"></script>
-<script src="live.js?v=20261015-16"></script>
+<script src="operator.js?v=20261015-17"></script>
+<script src="live.js?v=20261015-17"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -941,7 +945,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-16';
+  const APP_V = '20261015-17';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {

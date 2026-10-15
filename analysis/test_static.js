@@ -104,7 +104,10 @@ function run(check, log = console.log) {
   // hängt sie über dem genauen Punkt, der Ankerpunkt darunter markiert ihn.
   check('below z15 markers are dots, not pills wider than a city block',
     /classList\.toggle\('dots', zoomNow < 15\)/.test(liveNow) &&
-    /#markers\.dots \.mk \{[^}]*width: 11px[^}]*border-radius: 50%/.test(css) &&
+    /#markers\.dots \.mk \{[^}]*padding: 0[^}]*width: 12px[^}]*box-sizing: border-box[^}]*border-radius: 50%/.test(css) &&
+    // Reihenfolge ist Teil der Regel: nach '#markers.scaled .mk' muss die Punktregel kommen,
+    // sonst überschreibt deren padding die Breite und der Punkt wird zum Oval.
+    css.indexOf('#markers.dots .mk {') > css.indexOf('#markers.scaled .mk {') &&
     /#markers\.dots \.mk svg, #markers\.dots \.mk span \{ display: none; \}/.test(css) &&
     /#markers\.dots \.mk\.focus \{[^}]*width: auto/.test(css));
   check('from z15 the pill hangs above the exact point, with a dot marking it',
