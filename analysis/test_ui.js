@@ -684,13 +684,13 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('Haltestellen sind Kreise mit einem Buchstaben', stops.length > 0);
   const stopTexts = () => host.children.filter(n => n.classList.contains('stopmk')).map(n => n.textContent);
   sandbox.I18N.set('en');
-  check('englisch: „S" im Kreis', stopTexts().every(t => t === 'S'));
+  check('englisch: „H" im Kreis (Haltestelle, nicht „S" für S-Bahn)', stopTexts().every(t => t === 'H'));
   sandbox.I18N.set('de');
   L.setLang();                                            // Sprachwechsel im laufenden Betrieb
   check('deutsch: „H" im Kreis — ohne Neuladen', stopTexts().every(t => t === 'H'));
   sandbox.I18N.set('en');
   L.setLang();
-  check('zurück auf englisch: wieder „S"', stopTexts().every(t => t === 'S'));
+  check('zurück auf englisch: wieder „H"', stopTexts().every(t => t === 'H'));
   check('Linienlänge = alle Halte der Fahrt (auch die schon durchfahrenen)',
     JSON.stringify(L._test.tripChain({ from: { lat: 1, lon: 1 }, intermediateStops: [{ lat: 2, lon: 2 }, { lat: 3, lon: 3 }], to: { lat: 4, lon: 4 } })) ===
     JSON.stringify([[1, 1], [2, 2], [3, 3], [4, 4]]));

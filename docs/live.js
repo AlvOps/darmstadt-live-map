@@ -416,7 +416,7 @@
     const host = markerHost();
     if (!host) return;
     host.classList.toggle('scaled', ctx.map.getZoom() < 12.5);
-    const letter = T('stopMark');                       // H im Deutschen, S im Englischen
+    const letter = T('stopMark');                       // "H" in beiden Sprachen (Haltestelle)
     // Zuerst aufräumen: alles, was nicht mehr dazugehört, verschwindet. Über die Kinder im DOM, damit
     // auch nach einem Modul-Neustart keine Waisen stehen bleiben (nicht nur über den Pool).
     const wanted = new Set();

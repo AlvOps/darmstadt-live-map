@@ -261,10 +261,9 @@ function run(check, log = console.log) {
   check('stops are deduped per stop, not per platform',
     /normStopName\(s\.name\)\}\|\$\{s\.lat\.toFixed\(2\)\}/.test(liveSrc) &&
     /const better = \(!prev\.stopId && cand\.stopId\)/.test(liveSrc));
-  // Haltestelle als Kreis mit Buchstabe: im Deutschen „H" (Haltestelle), im Englischen „S" (station).
-  check('stop letter is localised (H in German, S in English)',
-    /stopMark: 'S'/.test(i18nSrc) && /stopMark: 'H'/.test(i18nSrc) &&
-    i18nSrc.indexOf("stopMark: 'S'") < i18nSrc.indexOf("stopMark: 'H'"));
+  // Haltestelle als Kreis mit Buchstabe: „H" in beiden Sprachen (ein englisches „S" würde als S-Bahn gelesen).
+  check('stop letter is "H" in both languages (never "S")',
+    /stopMark: 'H'/.test(i18nSrc) && !/stopMark: 'S'/.test(i18nSrc));
   // Volle Länge der Linie beim Klick auf eine Marke, in der Farbe des Betreibers.
   check('clicking a vehicle draws the whole run of its line in the line colour',
     /function tripChain\(leg\)/.test(liveSrc) && /id: 'live-line-chain'/.test(liveSrc) &&

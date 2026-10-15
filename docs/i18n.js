@@ -35,7 +35,8 @@
       attributionPosition: 'Positions are derived from realtime stop prognoses — the open feed carries no GPS. Data older than 45 s is marked stale, older than 2 min is dropped.',
       attribLabel: 'Data sources',
       langGroup: 'Language',
-      stopMark: 'S',                       // englische Beschriftung der Haltestelle
+      stopMark: 'H',                       // Beschriftung der Haltestelle — bewusst in beiden Sprachen "H",
+                                           // damit ein englisches "S" nicht als S-Bahn gelesen wird
       loading: 'Loading …',
       bannerUnreachable: 'Realtime data unreachable ({err}) — showing extrapolated positions from the last successful fetch, retrying.',
       bannerBlip: 'Realtime data: brief interruption, retrying …',
