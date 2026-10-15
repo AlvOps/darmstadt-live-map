@@ -306,6 +306,23 @@ function run(check, log = console.log) {
     /function decodePolyline\(str, factor\)/.test(liveSrc));
   // Betreiberpositionen sind zurück — aber EINE QUELLE JE LINIE statt Fahrzeugpaarung, und nur im
   // Hybridbetrieb. Das alte Modul, das je Fahrzeug zusammenführte, bleibt entfernt.
+  // Der Abruf bestimmt nur, wie spät eine neue Meldung ankommt: 10 s statt 30 s, und der letzte
+  // Abruf wird gemerkt, damit live.js zwischen zwei Meldungen gleiten kann.
+  // Das Verhalten (Gleitweg, Lücken, Haltezeit) prüft test_ui an operator.js selbst; hier nur die Verdrahtung.
+  const opSrc = fs.readFileSync(path.join(DOCS, 'operator.js'), 'utf8');
+  check('operator feed polls faster and remembers the previous fix (for the glide)',
+    /const REFRESH_MS = 10000;/.test(opSrc) && /function parse\(data, prev, nowMs\)/.test(opSrc) &&
+    /parse\(await res\.json\(\), list, Date\.now\(\)\)/.test(opSrc) &&
+    /function opPosAt\(v, t\)/.test(liveSrc) && /if \(isOp\(v\)\) return opPosAt\(v, t\);/.test(liveSrc) &&
+    /const op = opPosAt\(v, t\);/.test(liveSrc));
+  // Die veröffentlichte Seite verspricht nirgends GPS: auch der Ersatztext im Markup (vor I18N.init,
+  // ohne JS) der Schlüssel, die nur der Hybridbetrieb umstellt, nennt nur die abgeleitete Quelle.
+  check('published markup fallback text never claims GPS for the hybrid-swapped keys',
+    ['subtitle', 'modeLive', 'attributionPosition', 'welcomeBody'].every(k => {
+      const m = html.match(new RegExp('data-i18n="' + k + '"[^>]*>([^<]*)<'));
+      return !!m && !/(?<!no )GPS|operator['’]s own/i.test(m[1]);
+    }));
+
   check('operator positions are a gated, per-line feature (no vehicle pairing again)',
     fs.existsSync(path.join(DOCS, 'operator.js')) && /DarmstadtOperator/.test(liveSrc) &&
     /const HYBRID_ON =/.test(liveSrc) && /!HYBRID_ON \? null/.test(liveSrc) &&

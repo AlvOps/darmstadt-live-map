@@ -53,7 +53,7 @@ const MODE_RGB = { tram: [255, 107, 107], bus: [46, 196, 182], rail: [199, 125, 
 class Layer { constructor(p) { Object.assign(this, p); } }
 
 const store = {};
-const net = { calls: [], hold: null };   // zählt echte Abrufe; hold = Promise, auf das /trip-Antworten warten
+const net = { calls: [], hold: null, mapTrips: null };   // zählt echte Abrufe; hold = Promise, auf das /trip-Antworten warten
 const realFetch = (url, opts) => fetch(url, { ...(opts || {}), headers: { ...((opts && opts.headers) || {}), 'User-Agent': 'hermes-darmstadt-ui-test/1.0' } });
 const sandbox = {
   console, Math, JSON, Date, Number, String, Array, Object, Map, Set, parseInt, parseFloat, isNaN, isFinite,
@@ -67,6 +67,20 @@ const sandbox = {
       agencyName: '<img src=x onerror=alert(1)>', from: { name: '<b>A</b>' }, to: { name: 'Z\"><script>x</script>' },
       startTime: new Date(Date.now() + 60000).toISOString(), endTime: new Date(Date.now() + 600000).toISOString(),
       scheduledStartTime: 'garbage', intermediateStops: [{ name: '<svg onload=1>', departure: new Date(Date.now() + 120000).toISOString() }] }] }) };
+    // Betreiberkarte: die Fahrt derselben Linie aus dem offenen Strom (Fixture, kein Netz)
+    if (url.includes('/api/v1/map/trips')) {
+      if (!net.mapTrips) return realFetch(url, opts);
+      return { ok: true, status: 200, json: async () => net.mapTrips };
+    }
+    if (url.includes('tripId=__optrip1__')) return { ok: true, status: 200, json: async () => ({ legs: [
+      { tripId: '__optrip1__', routeShortName: '4E', headsign: 'Reinheim (Odw.) Bahnhof',
+        from: { name: 'Darmstadt Luisenplatz', lat: 49.8728, lon: 8.6512 },
+        to: { name: 'Reinheim Bahnhof', lat: 49.8262, lon: 8.8359 },
+        startTime: new Date(Date.now() + 60000).toISOString(), endTime: new Date(Date.now() + 900000).toISOString(),
+        scheduledStartTime: new Date(Date.now() + 60000).toISOString(),
+        intermediateStops: [
+          { name: 'Darmstadt Schloss', lat: 49.8745, lon: 8.6567, departure: new Date(Date.now() + 120000).toISOString() },
+          { name: 'Darmstadt Böllenfalltor', lat: 49.8555, lon: 8.6809, departure: new Date(Date.now() + 300000).toISOString() }] }] }) };
     if (net.hold && url.includes('/api/v1/trip?')) await net.hold;
     return realFetch(url, opts);
   },
@@ -770,9 +784,21 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     X.HYBRID_ON === false && L.HYBRID_ON === false && typeof X.activateHybridCopy === 'function' &&
     X.activateHybridCopy() === false);       // ohne Schalter auch keine Wortlautumstellung
 
-  check('the dismissed module is not consulted when the hybrid is off',
-    X.selectSources([openVeh('bus', '4E', ...HB)], [opVeh('4', ...HB)], { now: NOW, posOf }).list
-      .length === 1);
+  // Echte Sperre statt Tautologie: ein Spion-Modul darf bei ausgeschaltetem Hybridbetrieb weder
+  // gefragt noch gestartet werden, und im ganzen Lauf geht kein Abruf an den Betreiber.
+  {
+    let spy = 0;
+    const prevMod = sandbox.window.DarmstadtOperator;
+    sandbox.window.DarmstadtOperator = { start() { spy++; }, stop() { spy++; }, tick() { spy++; },
+      health() { spy++; return { on: true, lastOk: NOW, lastErr: null, startedAt: NOW, calls: 1, stale: false }; },
+      vehicles() { spy++; return [{ mode: 'bus', line: '4', lat: HB[1], lon: HB[0], at: NOW, vehicleId: 's' }]; } };
+    X.reselect();
+    const leaked = X.drawn().some(v => v.source === 'operator');
+    sandbox.window.DarmstadtOperator = prevMod;
+    X.reselect();
+    check('the dismissed module is not consulted when the hybrid is off',
+      spy === 0 && !leaked && !net.calls.some(u => /ivanto/.test(String(u))), 'spy calls ' + spy);
+  }
 
   check('SEV alias: operator BUS 4 belongs to open BUS 4E (and 8 to 8E)',
     X.opKey('bus', '4') === X.lineKey('bus', '4E') && X.opKey('bus', '8') === X.lineKey('bus', '8E') &&
@@ -812,6 +838,60 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     r5.fallback === false && r5.list.length === 1 && r5.counts.operator === 0);
 
   const m = X.opModel({ mode: 'bus', line: '4', lat: 49.87, lon: 8.65, at: NOW, vehicleId: 'vx' });
+  // Gleiten zwischen zwei echten Meldungen (der Grund, warum die Betreiberpunkte überhaupt wandern):
+  // der Punkt liegt immer ZWISCHEN zwei gemeldeten Positionen, nie darüber hinaus.
+  // seenAt = Empfang der neuen Meldung (2 s nach ihrer Meldezeit); abgespielt wird ab dort über 20 s.
+  const gv = { source: 'operator', prevLon: 8.0, prevLat: 49.0, prevAt: 1000,
+               lon: 8.01, lat: 49.01, at: 21000, seenAt: 23000 };
+  const mid = X.opPosAt(gv, 33000), end = X.opPosAt(gv, 43000), late = X.opPosAt(gv, 90000);
+  const near = (p, lon, lat) => p && Math.abs(p[0] - lon) < 1e-9 && Math.abs(p[1] - lat) < 1e-9;
+  check('operator dots glide between the last two reports (movement without fresher data)',
+    near(mid, 8.005, 49.005));
+  check('the glide never runs past the newest report (no predicted position)',
+    near(end, 8.01, 49.01) && near(late, 8.01, 49.01));
+  check('without a previous report the dot sits exactly on the reported position',
+    near(X.opPosAt({ source: 'operator', lon: 8.02, lat: 49.02, at: 5000, prevAt: null }, 6000), 8.02, 49.02));
+  // Eine Lücke (Fahrzeug minutenlang weg, Abrufe ausgefallen) wird NICHT minutenlang abgekrochen, und
+  // ein GPS-Sprung über Kilometer wird nicht quer durch die Stadt gezogen: sofort die neueste Meldung.
+  const gap = Object.assign({}, gv, { prevAt: 21000 - 5 * 60000 });
+  const jump = Object.assign({}, gv, { prevLon: 7.9, prevLat: 48.9 });
+  check('a gap or a far jump between reports is not glided (dot goes straight to the newest report)',
+    near(X.opPosAt(gap, 21000 + 1000), 8.01, 49.01) && near(X.opPosAt(jump, 21000 + 1000), 8.01, 49.01));
+  check('glide never yields NaN on broken fields (zero span, missing times, NaN clock)',
+    [Object.assign({}, gv, { prevAt: gv.at }), Object.assign({}, gv, { seenAt: undefined }),
+     Object.assign({}, gv, { prevLon: NaN })].every(x => near(X.opPosAt(x, 21000 + 1000), 8.01, 49.01)) &&
+    near(X.opPosAt(gv, NaN), 8.01, 49.01) && X.opPosAt({ source: 'operator', lon: NaN, lat: 49 }, 0) === null);
+
+  // operator.js selbst (eigener Kontext, kein Netz): Folge echter Abrufe -> Gleitweg -> Punkt.
+  {
+    const oc = { Date, Number, String, Array, Map, isFinite, Math, setTimeout, clearTimeout, setInterval, clearInterval };
+    oc.window = oc; vm.createContext(oc);
+    vm.runInContext(fs.readFileSync(path.join(DOCS, 'operator.js'), 'utf8'), oc);
+    const P = oc.DarmstadtOperator._test.parse;
+    const T0 = Date.parse('2026-10-15T09:00:00Z');
+    const raw = (lat, lon, at) => ({ vehicles: [{ vehicleId: 7, category: 1, status: 1, line: '4', direction: 'Kranichstein',
+      latitude: lat, longitude: lon, date: new Date(at).toISOString(), offline: false }] });
+    const l1 = P(raw(49.870, 8.650, T0), [], T0 + 2000);                      // erster Abruf: nichts zum Gleiten
+    const l2 = P(raw(49.871, 8.651, T0 + 20000), l1, T0 + 22000);             // neue Meldung, gemessen 2 s alt
+    const l3 = P(raw(49.871, 8.651, T0 + 20000), l2, T0 + 32000);             // derselbe Stand 10 s später
+    const v2 = X.opModel(l2[0]), v3 = X.opModel(l3[0]);
+    check('operator.js: the first poll has nothing to glide from',
+      l1.length === 1 && l1[0].prevAt === null && near(X.opPosAt(X.opModel(l1[0]), T0 + 3000), 8.650, 49.870));
+    check('operator.js -> live.js: a new report is replayed from its reception, so the glide is actually visible',
+      v2.prevAt === T0 && v2.seenAt === T0 + 22000 &&
+      near(X.opPosAt(v2, T0 + 32000), 8.6505, 49.8705) &&       // halber Meldeabstand nach Empfang
+      near(X.opPosAt(v2, T0 + 22000), 8.650, 49.870) &&          // Start: der vorige gemeldete Ort
+      near(X.opPosAt(v2, T0 + 60000), 8.651, 49.871));           // danach: steht auf der neuesten
+    check('operator.js: an unchanged report keeps the running glide (no snap on the next 10 s poll)',
+      v3.prevAt === T0 && v3.seenAt === T0 + 22000 && near(X.opPosAt(v3, T0 + 32000), 8.6505, 49.8705));
+    const l4 = P(raw(49.880, 8.660, T0 + 400000), l3, T0 + 402000);           // nach Minuten wieder da
+    check('operator.js: a vehicle back after a long gap jumps to its report instead of crawling for minutes',
+      near(X.opPosAt(X.opModel(l4[0]), T0 + 410000), 8.660, 49.880));
+    check('operator.js: report age is judged against the reception time it is given',
+      P(raw(49.87, 8.65, T0), [], T0 + oc.DarmstadtOperator.MAX_AGE_MS + 1).length === 0 &&
+      P(raw(49.87, 8.65, T0), [], T0 + 1000).length === 1 && P(raw(49.87, 8.65, T0), 12345, T0 + 1000).length === 1);
+  }
+
   check('an operator dot carries its provenance and never claims a delay',
     m.source === 'operator' && m.delayMin === null && /^op:/.test(m.tripId) &&
     typeof m.key === 'string');
@@ -820,6 +900,60 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       return ['subtitle', 'modeLive', 'attributionPosition', 'welcomeBody']
         .every(k => (s.match(new RegExp(k + ': ', 'g')) || []).length === 2 &&
                     (s.match(new RegExp(k + 'Operator: ', 'g')) || []).length === 2); })());
+
+  // ---------- GPS-Pille: Linie und Halte aus dem offenen Strom (nur Namen) ----------
+  const opLine = X.opModel({ mode: 'bus', line: '4', lat: 49.8728, lon: 8.6512, at: NOW, vehicleId: 'opv1',
+    bearing: 90, dest: 'Reinheim (Odw.) Bahnhof' });
+  check('a GPS pill maps onto the SEV line in the open feed (operator BUS 4 -> 4E)',
+    X.opKey(opLine.mode, opLine.lineName) === X.lineKey('bus', '4E'));
+
+  const legStub = {
+    from: { name: 'Darmstadt Luisenplatz', lat: 49.8728, lon: 8.6512 },
+    to: { name: 'Reinheim Bahnhof', lat: 49.8262, lon: 8.8359 },
+    intermediateStops: [
+      { name: 'Darmstadt Schloss', lat: 49.8745, lon: 8.6567, departure: new Date(NOW + 120000).toISOString() },
+      { name: 'Darmstadt Böllenfalltor', lat: 49.8555, lon: 8.6809, departure: new Date(NOW + 300000).toISOString() }],
+    legGeometry: null,
+  };
+  const ahead = X.legStopsAhead(legStub, opLine, 25);
+  check('stations for a GPS pill run from its own position onward, names only and no times',
+    ahead.length === 4 && ahead[0].full === 'Darmstadt Luisenplatz' &&
+    ahead[3].full === 'Reinheim Bahnhof' &&
+    ahead.every(s => s.name && s.full && !('time' in s) && !('inMin' in s) && !('delay' in s)));
+
+  const opCard = X.opShell(opLine, { operator: true, loading: false, stops: ahead });
+  check('the operator card lists the stations and names their source, without clock or delay columns',
+    ahead.every(s => opCard.includes(s.name)) &&
+    opCard.includes('st-name') && !opCard.includes('st-clock') && !opCard.includes('st-dly') &&
+    /open timetable feed/i.test(opCard));
+  check('without a resolvable line the operator card still says so honestly (no empty box)',
+    /no stop list/i.test(X.opShell(opLine, { operator: true, loading: false })));
+
+  // Über die Alias-Schlüssel die richtige Fahrt wählen: die Köderlinie 671 darf nicht genommen werden.
+  const decoy = { mode: 'BUS', realTime: true,
+    from: { name: 'Darmstadt Nord', lat: 49.8900, lon: 8.6600 },
+    trips: [{ tripId: '__decoy__', routeShortName: '671', headsign: 'Reinheim (Odw.) Bahnhof' }] };
+  const wanted = { mode: 'BUS', realTime: true,
+    from: { name: 'Darmstadt Luisenplatz', lat: 49.8728, lon: 8.6512 },
+    trips: [{ tripId: '__optrip1__', routeShortName: '4E', headsign: 'Reinheim (Odw.) Bahnhof' }] };
+  net.mapTrips = [decoy, wanted];
+  L.openPopup(opLine);
+  for (let i = 0; i < 60 && !(X.chain() && X.chain().length); i++) await wait(50);
+  const opHtml = el('popup').innerHTML;
+  const ch = X.chain();
+  check('tapping a GPS pill draws its route like the prognosis pills do',
+    ch.length === 1 && ch[0].length >= 3 && !net.calls.some(u => u.includes('__decoy__')));
+  check('and its card lists the stations with no clock or delay columns at all',
+    /Böllenfalltor/.test(opHtml) &&
+    !opHtml.includes('st-clock') && !opHtml.includes('st-dly'));
+
+  net.mapTrips = [];
+  const opLine2 = X.opModel({ mode: 'bus', line: '4', lat: 49.8728, lon: 8.6512, at: NOW, vehicleId: 'opv2',
+    bearing: 90, dest: 'Reinheim (Odw.) Bahnhof' });
+  L.openPopup(opLine2);
+  for (let i = 0; i < 60 && !/no stop list/i.test(el('popup').innerHTML); i++) await wait(50);
+  check('an unresolvable line leaves no route on the map and keeps the honest card',
+    X.chain().length === 0 && /no stop list/i.test(el('popup').innerHTML));
 
   require('./test_static').run(check);
 

@@ -29,13 +29,17 @@
  * aus dem offenen Strom, genau wie ohne dieses Modul.
  *
  * Kein User-Agent-Kopf möglich: Browser verbieten `User-Agent` bei fetch (forbidden header). Wir pollen
- * deshalb höflich (30 s, die App selbst aktualisiert ~20 s) und ohne zusätzliche Kopfzeilen.
+ * deshalb ohne zusätzliche Kopfzeilen, alle 10 s (die App selbst fragt jede Sekunde; je Fahrzeug kommt
+ * etwa alle 20 s eine neue Meldung), und nur bei sichtbarem Tab.
  */
 (function () {
   'use strict';
 
   const URL = 'https://service.ivanto.de/srs/api/v1/vehiclelivedata?tenant=heag';
-  const REFRESH_MS = 30000;
+  // 10 s statt 30 s: die Meldung je Fahrzeug frischt ohnehin nur alle ~20 s auf (gemessen), aber der
+  // Abruf bestimmt, wie spät eine neue Meldung bei uns ankommt. Gemessen: ~49 kB je Antwort, also
+  // ~17 MB/Stunde. 2 s wären 86 MB/Stunde und 68 % der Antworten wären inhaltsgleich — zu teuer.
+  const REFRESH_MS = 10000;
   const MAX_AGE_MS = 120000;              // älter -> nicht mehr als Live-Position zeichnen
   const STALE_MS = 90000;                 // so lange ohne erfolgreiche Antwort -> live.js fällt zurück
   const TIMEOUT_MS = 12000;               // Frist je Abruf (wie in live.js)
@@ -48,7 +52,15 @@
   const MODE_BY_CATEGORY = { 1: 'tram', 5: 'bus' };   // gemessen: 1 = Straßenbahn, 5 = Bus
 
   // Reine Rechnung (testbar): Rohantwort -> geprüfte Fahrzeuge. Alles Unbrauchbare fliegt raus.
-  function parse(data, nowMs) {
+  // `prev` = die Liste des letzten Abrufs. Je Fahrzeug wird gemerkt, wo es zuletzt gemeldet wurde,
+  // damit live.js zwischen zwei echten Meldungen gleiten kann (so wie die Betreiber-App ihren
+  // encodedPath über 20 s abspielt) — ohne je über die neueste Meldung hinauszurechnen.
+  // `nowMs` = Empfangszeit (Vorgabe: jetzt); sie ist auch der Startpunkt des Gleitwegs (`seenAt`).
+  function parse(data, prev, nowMs) {
+    const before = new Map();
+    for (const p of (Array.isArray(prev) ? prev : [])) {
+      if (p && p.vehicleId) before.set(p.vehicleId, p);
+    }
     const raw = (data && Array.isArray(data.vehicles)) ? data.vehicles : [];
     const t = typeof nowMs === 'number' ? nowMs : Date.now();
     const out = [];
@@ -65,8 +77,22 @@
       const at = v.date ? Date.parse(v.date) : NaN;
       if (!isFinite(at)) continue;                                 // ohne Meldezeit kein Alter -> nicht live
       if (t - at > MAX_AGE_MS) continue;                           // zu alt: nicht als live zeigen
+      const was = before.get(v.vehicleId == null ? '' : String(v.vehicleId));
+      // Neue Meldung mit neuem Ort: Gleitweg vom letzten gemeldeten Ort, Start = jetzt (Empfang).
+      // Dieselbe Meldung wie beim letzten Abruf (~68 % der Abrufe): den laufenden Gleitweg BEHALTEN —
+      // sonst spränge der Punkt beim nächsten 10-s-Abruf mitten im Weg ans Ende.
+      // Die Meldezeiten liegen beim Empfang schon 1–4 s zurück (gemessen); ein Gleiten im Zeitraum
+      // [prevAt, at] wäre deshalb nie sichtbar. Abgespielt wird darum ab dem Empfang (seenAt).
+      let g = null;
+      if (was && Number.isFinite(was.at) && was.at < at && (was.lat !== lat || was.lon !== lon)) {
+        g = { prevLat: was.lat, prevLon: was.lon, prevAt: was.at, seenAt: t };
+      } else if (was && was.at === at && was.lat === lat && was.lon === lon && was.prevAt != null) {
+        g = { prevLat: was.prevLat, prevLon: was.prevLon, prevAt: was.prevAt, seenAt: was.seenAt };
+      }
       out.push({
         line, mode, lat, lon,
+        prevLat: g ? g.prevLat : null, prevLon: g ? g.prevLon : null,
+        prevAt: g ? g.prevAt : null, seenAt: g ? g.seenAt : null,
         bearing: Number.isFinite(num(v.bearing)) ? num(v.bearing) : null,
         vehicleId: v.vehicleId == null ? '' : String(v.vehicleId),
         dest: String(v.direction || ''),
@@ -85,7 +111,7 @@
     try {
       const res = await fetch(URL, ctrl ? { cache: 'no-store', signal: ctrl.signal } : { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      const next = parse(await res.json());
+      const next = parse(await res.json(), list, Date.now());   // list = letzter Abruf, für den Gleitweg
       if (!next.length) throw new Error('empty');
       list = next;
       lastOk = Date.now();

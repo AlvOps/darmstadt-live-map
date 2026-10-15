@@ -81,6 +81,9 @@
   const OP_STALE_MS = 90000;       // so lange ohne erfolgreiche Betreiberantwort -> globaler Rückfall
   const OP_MAX_AGE_MS = 120000;    // ältere Betreibermeldung wird nicht mehr gezeichnet
   const OP_CARD_MS = 5000;         // Karte eines Betreiberfahrzeugs: Alter der Meldung nachführen
+  const OP_GLIDE_MAX_MS = 45000;   // Gleiten nur zwischen zwei Meldungen mit höchstens so viel Abstand
+                                   // (~20 s Takt, eine verpasste Meldung erlaubt) — sonst springen
+  const OP_GLIDE_MAX_M = 1500;     // ... und höchstens so weit auseinander (GPS-Sprung, Depot, neue Fahrt)
   const SELECT_MS = 5000;          // Auswahl spätestens so oft neu (Haltezeit/Rückfall laufen ab)
   // Betreiber-Name -> Name im offenen Strom (gemessen: die SEV-Busse heißen dort 4E/8E, Zwillinge
   // 60–540 m auseinander). Nur in diese Richtung: ein Bus „4" des offenen Stroms (Offenbach) bleibt 4.
@@ -346,6 +349,8 @@
       source: 'operator', key, mode: e.mode,
       lineName: e.line, headsign: e.dest, dest: e.dest, fromName: '',
       lon: e.lon, lat: e.lat, at: e.at, bearing: e.bearing, vehicleId: e.vehicleId,
+      prevLon: e.prevLon == null ? null : e.prevLon, prevLat: e.prevLat == null ? null : e.prevLat,
+      prevAt: e.prevAt == null ? null : e.prevAt, seenAt: e.seenAt == null ? null : e.seenAt,
       delayMin: null, realTime: true, routeColor: '',
       // Farbe/Linienfokus über den Namen im offenen Strom: so gehört der SEV-Bus 4 zur selben Linie wie 4E
       lineIdx: matchLine(key.slice(key.indexOf('|') + 1), e.mode),
@@ -408,6 +413,71 @@
     const opKeep = ops.filter(v => covered.has(v.key || opKey(v.mode, v.lineName)));
     return { list: keep.concat(opKeep), seen, fallback: false, covered,
              counts: { operator: opKeep.length, open: keep.length, suppressed, covered: covered.size } };
+  }
+
+  // ---------- Linie und Halte für ein Betreiberfahrzeug (nur Namen, keine Zeiten) ----------
+  // Der Betreiberstrom hat keine Halteliste. Für die Karte holen wir eine Fahrt DERSELBEN Linie aus dem
+  // offenen Strom — über die Alias-Schlüssel, damit die SEV-Läufe zusammenfinden (Betreiber BUS 4 = offen
+  // 4E). Zeiten werden bewusst NICHT übernommen: der Betreiber meldet keine, und fremde Zeiten als seine
+  // auszugeben wäre genau die Vermischung, die dieses Projekt vermeidet.
+  const OP_TRIP_BOX = 0.035;               // rund ±3,5 km um das Fahrzeug
+  const OP_TRIP_TTL = 60000;               // so lange gilt ein Treffer weiter (Karte wird oft neu gebaut)
+  let opTripCache = new Map();             // Fahrzeugkennung -> { at, leg }
+
+  function legStopsAhead(leg, v, limit) {
+    if (!leg || leg.error) return [];
+    const seq = [];
+    if (leg.from) seq.push(leg.from);
+    (leg.intermediateStops || []).forEach(s => seq.push(s));
+    if (leg.to) seq.push(leg.to);
+    const pts = seq.filter(s => s && Number.isFinite(s.lat) && Number.isFinite(s.lon));
+    if (!pts.length || !Number.isFinite(v.lat) || !Number.isFinite(v.lon)) return [];
+    let idx = 0, best = Infinity;
+    for (let i = 0; i < pts.length; i++) {                 // ab dem nächstgelegenen Halt in Fahrtrichtung
+      const d = metres([v.lon, v.lat], [pts[i].lon, pts[i].lat]);
+      if (d < best) { best = d; idx = i; }
+    }
+    return pts.slice(idx, idx + (limit || CARD_STOPS))
+      .map(s => ({ name: ss(s.name), full: s.name, lat: s.lat, lon: s.lon }));
+  }
+
+  async function opTripFor(v) {
+    const key = v.tripId || 'op';
+    const hit = opTripCache.get(key);
+    if (hit && Date.now() - hit.at < OP_TRIP_TTL) return hit.leg;
+    if (!Number.isFinite(v.lat) || !Number.isFinite(v.lon)) return null;
+    const want = opKey(v.mode, v.lineName);
+    const s = v.lat - OP_TRIP_BOX, w = v.lon - OP_TRIP_BOX;
+    const now = new Date(), end = new Date(Date.now() + 30 * 60000);
+    let arr = [];
+    try {
+      const res = await timedFetch(`${API}?min=${s},${w}&max=${v.lat + OP_TRIP_BOX},${v.lon + OP_TRIP_BOX}&zoom=14` +
+        `&startTime=${encodeURIComponent(now.toISOString())}&endTime=${encodeURIComponent(end.toISOString())}`,
+        { cache: 'no-store' });
+      if (!res.ok) return null;
+      const json = await res.json();
+      arr = Array.isArray(json) ? json : (json && Array.isArray(json.trips) ? json.trips : []);
+    } catch (_) { return null; }
+    let best = null;
+    for (const t of arr) {
+      if (!t || t.realTime !== true) continue;
+      const tr = (t.trips && t.trips[0]) || {};
+      if (!tr.tripId) continue;
+      if (lineKey(MODE_MAP[t.mode] || t.mode, tr.routeShortName) !== want) continue;   // genau dieselbe Linie
+      const fr = t.from || {};
+      const d = Number.isFinite(fr.lat) && Number.isFinite(fr.lon) ? metres([v.lon, v.lat], [fr.lon, fr.lat]) : 1e9;
+      const same = v.headsign && tr.headsign && normLine(v.headsign) === normLine(tr.headsign);
+      const score = d + (same ? 0 : 1500);               // gleiche Richtung deutlich bevorzugt
+      if (!best || score < best.score) best = { tripId: tr.tripId, score };
+    }
+    if (!best) { opTripCache.set(key, { at: Date.now(), leg: null }); return null; }
+    let leg = null;
+    try {
+      const r2 = await timedFetch(`${API_TRIP}?tripId=${encodeURIComponent(best.tripId)}`, { cache: 'no-store' });
+      if (r2.ok) leg = pickLeg(await r2.json(), { tripId: best.tripId, lineName: '' });
+    } catch (_) { leg = null; }
+    opTripCache.set(key, { at: Date.now(), leg });
+    return leg;
   }
 
   function inBox(box, pos, pad) {
@@ -494,10 +564,12 @@
     const out = [];
     for (const v of drawn) {
       if (isOp(v)) {
-        // Betreiberfahrzeug: genau die gemeldete Position, nicht interpoliert und nicht vorausgerechnet.
-        // Der Punkt springt deshalb mit jeder Meldung (~20–30 s) — gleitende Bewegung wäre erfunden.
+        // Betreiberfahrzeug: nie vorausgerechnet. Zwischen zwei Meldungen gleitet der Punkt auf der
+        // Geraden zwischen beiden gemeldeten Orten (opPosAt), danach steht er auf der neuesten.
         if (t - v.at > OP_MAX_AGE_MS) continue;
-        out.push({ v, pos: [v.lon, v.lat], rest: [], u: 0 });
+        const op = opPosAt(v, t);            // gleitet zwischen zwei Meldungen, steht danach still
+        if (!op) continue;
+        out.push({ v, pos: op, rest: [], u: 0 });
         continue;
       }
       if (t > v.arr + LEG_GRACE_MS) continue;   // Daten zu alt: nicht als Live-Position zeigen
@@ -885,7 +957,7 @@
 
   // Karte eines Betreiberfahrzeugs: was der Betreiber meldet (Linie, Ziel, Alter der Meldung) — und
   // ausdrücklich, was er NICHT meldet (Verspätung, Halte). Kein Wort davon ist abgeleitet.
-  function opShell(v) {
+  function opShell(v, leg) {
     const age = Number.isFinite(v.at) ? Math.max(0, Math.round((Date.now() - v.at) / 1000)) : null;
     const sub = [T('popup.sourceOperator')];
     if (age !== null) sub.push(T('popup.reportAge', { s: age }));
@@ -898,12 +970,25 @@
       </div>
       <div class="pop-delay unknown">${esc(T('popup.delayNotReported'))}</div>
       <div class="pop-sub pop-src-op">${esc(sub.join(' · '))}</div>
-      <div class="pop-sub">${esc(T('popup.noStopsOperator'))}</div>
+      ${(() => {
+        const list = (leg && leg.stops) || [];
+        if (list.length) {
+          const rows = list.map((s, i) => {
+            const go = Number.isFinite(s.lat) && Number.isFinite(s.lon);
+            return `<li${go ? ` class="st-go" data-i="${i}"` : ''}><span class="st-name">${esc(s.name)}</span></li>`;
+          }).join('');
+          return `<ul class="pop-stops">${rows}</ul>` +
+            `<div class="pop-sub pop-src-feed">${esc(T('popup.stopsFromFeed'))}</div>`;
+        }
+        return leg && leg.loading
+          ? `<div class="pop-sub">${esc(T('popup.stopsLoading'))}</div>`
+          : `<div class="pop-sub">${esc(T('popup.noStopsOperator'))}</div>`;
+      })()}
       <div class="pop-note note-gps">${esc(T('popup.positionNoteOperator'))}</div>`;
   }
 
   function popupShell(v, leg, loading) {
-    if (isOp(v)) { popupStopList = []; return opShell(v); }
+    if (isOp(v)) { popupStopList = (leg && leg.stops) || []; return opShell(v, leg); }
     const stops = leg && !leg.error ? nextStops(leg, CARD_STOPS) : null;
     popupStopList = stops || [];                 // Klick-Ziele im Popup (Index -> Halt)
     const rows = stops ? stops.map((s, i) => {
@@ -985,10 +1070,31 @@
 
   // Position des Fahrzeugs zu einem Zeitpunkt — dieselbe Interpolation wie die Kartenpunkte
   function vehiclePosAt(v, t) {
-    if (isOp(v)) return Number.isFinite(v.lon) && Number.isFinite(v.lat) ? [v.lon, v.lat] : null;   // gemeldet, nicht gerechnet
+    if (isOp(v)) return opPosAt(v, t);
     if (!v || !v.path || !v.cd || !(v.arr > v.dep)) return null;
     const u = Math.min(1, Math.max(0, (t - v.dep) / (v.arr - v.dep)));
     return posAt(v.path, v.cd)(u * v.total);
+  }
+
+  // Betreiberposition zum Zeitpunkt t. Der Weg von der vorletzten zur letzten Meldung wird entlang
+  // der GERADEN zwischen beiden gemeldeten Punkten abgespielt (bei ~20 s Abstand ~100–250 m Straße) —
+  // dieselbe Idee wie in der Betreiber-App, die ihren encodedPath über 20 s abspielt. Abgespielt wird
+  // ab dem EMPFANG der neuen Meldung (seenAt) über deren Abstand (at - prevAt): die Meldezeiten liegen
+  // beim Empfang schon in der Vergangenheit, ein Gleiten im Zeitraum [prevAt, at] wäre nie zu sehen.
+  // Der Punkt liegt also immer zwischen zwei echten Meldungen (höchstens einen Meldeabstand hinter der
+  // neuesten), nie darüber hinaus. Lücken (Fahrzeug minutenlang weg, Abruf ausgefallen) und Sprünge
+  // über OP_GLIDE_MAX_M werden nicht abgespielt: der Punkt steht dann sofort auf der neuesten Meldung.
+  function opPosAt(v, t) {
+    if (!v || !Number.isFinite(v.lon) || !Number.isFinite(v.lat)) return null;
+    const a = v.prevAt, b = v.at, s = v.seenAt, span = b - a;
+    if (Number.isFinite(a) && Number.isFinite(b) && Number.isFinite(s) && Number.isFinite(t) &&
+        span > 0 && span <= OP_GLIDE_MAX_MS && t < s + span &&
+        Number.isFinite(v.prevLon) && Number.isFinite(v.prevLat) &&
+        metres([v.prevLon, v.prevLat], [v.lon, v.lat]) <= OP_GLIDE_MAX_M) {
+      const u = Math.max(0, (t - s) / span);
+      return [v.prevLon + (v.lon - v.prevLon) * u, v.prevLat + (v.lat - v.prevLat) * u];
+    }
+    return [v.lon, v.lat];                   // gemeldet, nicht gerechnet
   }
 
   // Reine Rechnung, wohin die Karte kommt (ohne DOM, damit testbar): bevorzugt rechts über dem Punkt,
@@ -1354,8 +1460,23 @@
     // Betreiberfahrzeug: es gibt keine Fahrt im offenen Strom, also keinen Fahrtabruf, keine Halte und
     // keine Linienlänge. Die Karte wird nur häufiger neu beschriftet, damit das Alter der Meldung stimmt.
     if (isOp(v)) {
-      popupLeg = { operator: true };
+      // Betreiberfahrzeug: keine Fahrt im offenen Strom. Karte sofort zeigen und die Linie samt Halten
+      // nachreichen (nur Namen) — dieselbe Linienlänge, die die Prognosepillen zeichnen.
+      popupLeg = { operator: true, loading: true };
       popupChain = null; chainCache = [];
+      const mine = v.tripId;
+      opTripFor(v).then(leg => {
+        if (seq !== popupSeq || !popupVehicle || !isOp(popupVehicle) || popupVehicle.tripId !== mine) return;
+        popupLeg = { operator: true, loading: false };
+        if (leg) {
+          popupLeg.stops = legStopsAhead(leg, v, CARD_STOPS);
+          popupLeg.chain = tripChain(leg);
+          popupChain = popupLeg.chain;
+          chainCache = popupChain ? [popupChain] : [];
+        }
+        paintPopup(false);
+      }).catch(() => { /* ohne Linie weiter, die Karte bleibt */ });
+      paintPopup(false);
       popupTimer = setTimeout(popupTick, OP_CARD_MS);
       return;
     }
@@ -1617,8 +1738,8 @@
       };
     },
     _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; reselect(false); }, popupShell,
-             HYBRID_ON, activateHybridCopy, selectSources, opModel, opKey, lineKey, OP_ALIAS, reselect: () => reselect(true), drawn: () => drawn,
-             OP_FRESH_MS, OP_HOLD_MS, OP_SCOPE_M, OP_STALE_MS, OP_MAX_AGE_MS, resetOperator() { opSeen = new Map(); },
+             HYBRID_ON, activateHybridCopy, selectSources, opPosAt, opTripFor, legStopsAhead, opShell, opModel, opKey, lineKey, OP_ALIAS, reselect: () => reselect(true), drawn: () => drawn,
+             OP_FRESH_MS, OP_HOLD_MS, OP_SCOPE_M, OP_STALE_MS, OP_MAX_AGE_MS, OP_GLIDE_MAX_MS, OP_GLIDE_MAX_M, resetOperator() { opSeen = new Map(); },
              departureRow, stationShell, freshness, focusLine, focusLineWide, CITY_BOX,
              dedupeStops, markers: () => markerLog, markerNode: () => markerBox, markerHtml,
              syncMarkers: () => syncMarkerPositions(), decodePolyline,
