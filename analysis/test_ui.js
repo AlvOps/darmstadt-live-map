@@ -838,58 +838,163 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     r5.fallback === false && r5.list.length === 1 && r5.counts.operator === 0);
 
   const m = X.opModel({ mode: 'bus', line: '4', lat: 49.87, lon: 8.65, at: NOW, vehicleId: 'vx' });
-  // Gleiten zwischen zwei echten Meldungen (der Grund, warum die Betreiberpunkte überhaupt wandern):
-  // der Punkt liegt immer ZWISCHEN zwei gemeldeten Positionen, nie darüber hinaus.
-  // seenAt = Empfang der neuen Meldung (2 s nach ihrer Meldezeit); abgespielt wird ab dort über 20 s.
-  const gv = { source: 'operator', prevLon: 8.0, prevLat: 49.0, prevAt: 1000,
-               lon: 8.01, lat: 49.01, at: 21000, seenAt: 23000 };
-  const mid = X.opPosAt(gv, 33000), end = X.opPosAt(gv, 43000), late = X.opPosAt(gv, 90000);
-  const near = (p, lon, lat) => p && Math.abs(p[0] - lon) < 1e-9 && Math.abs(p[1] - lat) < 1e-9;
-  check('operator dots glide between the last two reports (movement without fresher data)',
-    near(mid, 8.005, 49.005));
-  check('the glide never runs past the newest report (no predicted position)',
-    near(end, 8.01, 49.01) && near(late, 8.01, 49.01));
-  check('without a previous report the dot sits exactly on the reported position',
-    near(X.opPosAt({ source: 'operator', lon: 8.02, lat: 49.02, at: 5000, prevAt: null }, 6000), 8.02, 49.02));
-  // Eine Lücke (Fahrzeug minutenlang weg, Abrufe ausgefallen) wird NICHT minutenlang abgekrochen, und
-  // ein GPS-Sprung über Kilometer wird nicht quer durch die Stadt gezogen: sofort die neueste Meldung.
-  const gap = Object.assign({}, gv, { prevAt: 21000 - 5 * 60000 });
-  const jump = Object.assign({}, gv, { prevLon: 7.9, prevLat: 48.9 });
-  check('a gap or a far jump between reports is not glided (dot goes straight to the newest report)',
-    near(X.opPosAt(gap, 21000 + 1000), 8.01, 49.01) && near(X.opPosAt(jump, 21000 + 1000), 8.01, 49.01));
-  check('glide never yields NaN on broken fields (zero span, missing times, NaN clock)',
-    [Object.assign({}, gv, { prevAt: gv.at }), Object.assign({}, gv, { seenAt: undefined }),
-     Object.assign({}, gv, { prevLon: NaN })].every(x => near(X.opPosAt(x, 21000 + 1000), 8.01, 49.01)) &&
-    near(X.opPosAt(gv, NaN), 8.01, 49.01) && X.opPosAt({ source: 'operator', lon: NaN, lat: 49 }, 0) === null);
+  // ---------- GPS-Punkte: Abspielen des gefahrenen Wegs (encodedPath) wie in der Betreiber-App ----------
+  // Früher: Gerade zwischen zwei Meldungen -> an einer Ecke quer durch die Häuser (Linie DG). Jetzt:
+  // Sekundenschritte entlang des dekodierten Pfads, Anteil = Schritt / 20 s, am Ende genau die Meldung.
+  const near = (p, lon, lat, eps) => !!p && Math.abs(p[0] - lon) < (eps || 1e-9) && Math.abs(p[1] - lat) < (eps || 1e-9);
+  const encP = pts => {                     // Google-Polyline-Kodierung (lat, lon), Genauigkeit 1e5
+    let out = '', pl = 0, pn = 0;
+    const e = v => { v = v < 0 ? ~(v << 1) : v << 1; let r = ''; while (v >= 0x20) { r += String.fromCharCode((0x20 | (v & 0x1f)) + 63); v >>= 5; } return r + String.fromCharCode(v + 63); };
+    for (const [la, lo] of pts) { const x = Math.round(la * 1e5), y = Math.round(lo * 1e5); out += e(x - pl) + e(y - pn); pl = x; pn = y; }
+    return out;
+  };
+  const mXY = (q, ref) => [(q[0] - ref[0]) * 111320 * Math.cos(ref[1] * Math.PI / 180), (q[1] - ref[1]) * 110540];
+  // Abstand Punkt -> Strecke in Metern (lokal eben) und Bogenlänge bis zum Fußpunkt.
+  const segDist = (p, a, b) => {
+    const P = mXY(p, a), B = mXY(b, a), L2 = B[0] * B[0] + B[1] * B[1];
+    const u = L2 > 0 ? Math.max(0, Math.min(1, (P[0] * B[0] + P[1] * B[1]) / L2)) : 0;
+    return { d: Math.hypot(P[0] - u * B[0], P[1] - u * B[1]), along: u * Math.sqrt(L2) };
+  };
+  const onPath = (p, pts) => {              // kleinster Abstand zum Pfad + Bogenlänge dort
+    let best = { d: Infinity, arc: NaN }, acc = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const r = segDist(p, pts[i - 1], pts[i]);
+      if (r.d < best.d - 1e-6) best = { d: r.d, arc: acc + r.along };
+      const B = mXY(pts[i], pts[i - 1]); acc += Math.hypot(B[0], B[1]);
+    }
+    return best;
+  };
+  // Pfad mit 90°-Ecke: erst ~143 m nach Osten, dann ~221 m nach Norden; die Meldung = Pfadende.
+  const CORNER = [[49.870, 8.650], [49.870, 8.651], [49.870, 8.652], [49.871, 8.652], [49.872, 8.652]];
+  const CPTS = CORNER.map(([la, lo]) => [lo, la]);                         // [lon, lat]
+  const CEND = CPTS[CPTS.length - 1], CSTART = CPTS[0];
+  const S0 = Date.parse('2026-10-15T08:00:00Z');                           // Empfang der Meldung
+  const cv = X.opModel({ mode: 'bus', line: 'DG', lat: CEND[1], lon: CEND[0], at: S0 - 2000, seenAt: S0,
+    vehicleId: 'dg1', bearing: 0, dest: 'Darmstadt Mathildenplatz', encodedPath: encP(CORNER) });
+  const decoded = X.decodePolyline(cv.encodedPath, 1e5);
+  check('fixture: the corner path decodes to its five points (lon, lat) via the shared decoder',
+    decoded.length === 5 && decoded.every((q, i) => near(q, CPTS[i][0], CPTS[i][1], 1e-9)));
+  const samples = [];
+  for (let ms = 0; ms <= 30000; ms += 250) samples.push({ ms, p: X.opPosAt(cv, S0 + ms) });
+  const geo = samples.map(x => Object.assign({ ms: x.ms }, onPath(x.p, CPTS), { chord: segDist(x.p, CSTART, CEND).d }));
+  check('GPS pill: every drawn position lies ON the travelled path (within 5 cm of one of its segments)',
+    geo.every(g => g.d < 0.05), 'max off-path ' + Math.max(...geo.map(g => g.d)).toFixed(3) + ' m');
+  // Der Kern des Fehlerberichts: nach der Ecke liegt der Punkt NICHT auf der Geraden Start–Ende.
+  const past = geo.filter(g => g.ms >= 8000 && g.ms < 18000);   // Bogenlänge ~40–90 % -> hinter der Ecke
+  check('GPS pill follows the 90° corner instead of cutting it (far from the straight start–end line)',
+    past.length > 0 && past.every(g => g.chord > 25), 'min chord dist ' + Math.min(...past.map(g => g.chord)).toFixed(1) + ' m');
+  check('GPS pill actually moves along the path (start of the path first, not parked on the report)',
+    near(samples[0].p, CSTART[0], CSTART[1], 1e-9) && !near(X.opPosAt(cv, S0 + 10000), CEND[0], CEND[1], 1e-6));
+  const arcs = geo.map(g => g.arc), total = onPath(CEND, CPTS).arc;
+  check('arc length along the path never decreases over time and never exceeds the path',
+    arcs.every((x, i) => i === 0 || x >= arcs[i - 1] - 1e-6) && arcs.every(x => x <= total + 1e-6) &&
+    arcs[arcs.length - 1] > arcs[0]);
+  // Die App misst mit Haversine (Erdradius 6371 km); hier unabhängig nachgerechnet.
+  const hav = (a, b) => { const r = Math.PI / 180, x = Math.sin((b[1] - a[1]) * r / 2) ** 2 +
+    Math.cos(a[1] * r) * Math.cos(b[1] * r) * Math.sin((b[0] - a[0]) * r / 2) ** 2; return 2 * 6371000 * Math.asin(Math.sqrt(x)); };
+  const havArc = q => { let acc = 0, best = null;
+    for (let i = 1; i < CPTS.length; i++) {
+      if (segDist(q, CPTS[i - 1], CPTS[i]).d < 0.05 && best === null) best = acc + hav(CPTS[i - 1], q);
+      acc += hav(CPTS[i - 1], CPTS[i]);
+    }
+    return { arc: best, total: acc }; };
+  check('replay time maps linearly onto arc length like the reference (step/20 s of the haversine length)',
+    [0, 2000, 7000, 13000, 19000].every(ms => { const h = havArc(X.opPosAt(cv, S0 + ms));
+      return h.arc !== null && Math.abs(h.arc - h.total * ms / 20000) < 0.05; }));
+  check('discrete 1 s steps like the reference (setInterval 1e3): same position within one second',
+    near(X.opPosAt(cv, S0 + 5000), ...X.opPosAt(cv, S0 + 5999)) && !near(X.opPosAt(cv, S0 + 5999), ...X.opPosAt(cv, S0 + 6000)));
+  check('replay ends exactly on the reported position and stays there (never beyond it)',
+    [20000, 20500, 25000, 60000, 119000].every(ms => near(X.opPosAt(cv, S0 + ms), CEND[0], CEND[1], 1e-12)) &&
+    near(X.opPosAt(cv, S0 + 19000), ...X.opPosAt(cv, S0 + 19999)) && !near(X.opPosAt(cv, S0 + 19999), CEND[0], CEND[1], 1e-7));
 
-  // operator.js selbst (eigener Kontext, kein Netz): Folge echter Abrufe -> Gleitweg -> Punkt.
+  // Rückfall: alles Unsichere zeigt genau die gemeldete Position (still), nie eine Schätzung.
+  const fb = o => X.opModel(Object.assign({ mode: 'bus', line: 'DG', lat: CEND[1], lon: CEND[0], at: S0 - 2000,
+    seenAt: S0, vehicleId: 'fb', dest: 'X', encodedPath: encP(CORNER) }, o));
+  const MID = S0 + 10000;
+  const isStatic = (v, t) => near(X.opPosAt(v, t), CEND[0], CEND[1], 1e-12);
+  const farCorner = CORNER.map(([la, lo]) => [la - 0.02, lo]).concat([CORNER[CORNER.length - 1]]);  // >2 km
+  const cases = {
+    'no path': fb({ encodedPath: '' }), 'path missing': fb({ encodedPath: undefined }),
+    'malformed (bad characters)': fb({ encodedPath: '!!*&%$' }), 'malformed (truncated)': fb({ encodedPath: encP(CORNER).slice(0, -3) }),
+    'single point': fb({ encodedPath: encP([CORNER[4]]) }), 'zero length': fb({ encodedPath: encP([CORNER[4], CORNER[4]]) }),
+    'path not ending at the report': fb({ encodedPath: encP(CORNER.slice(0, 3)) }), 'implausibly long path': fb({ encodedPath: encP(farCorner) }),
+    'stale report': fb({ at: S0 - 60000 }), 'clock skew (report from the future)': fb({ at: S0 + 60000 }),
+    'no reception time': fb({ seenAt: undefined }), 'NaN reception time': fb({ seenAt: NaN }),
+  };
+  const bad = Object.keys(cases).filter(k => !isStatic(cases[k], MID));
+  check('static fallback: no / malformed / single-point / stale / skewed paths show exactly the report', bad.length === 0, bad.join(', '));
+  check('static fallback: NaN clock or a clock before the reception shows exactly the report',
+    isStatic(cv, NaN) && isStatic(cv, S0 - 5000) && isStatic(cv, undefined));
+  check('GPS pill with a broken position is not drawn at all (no NaN)',
+    X.opPosAt(fb({ lon: NaN }), MID) === null && X.opPosAt(null, MID) === null);
+
+  // operator.js selbst (eigener Kontext, kein Netz): echte Abruffolge -> Pfad + Empfang -> Punkt.
   {
     const oc = { Date, Number, String, Array, Map, isFinite, Math, setTimeout, clearTimeout, setInterval, clearInterval };
     oc.window = oc; vm.createContext(oc);
     vm.runInContext(fs.readFileSync(path.join(DOCS, 'operator.js'), 'utf8'), oc);
     const P = oc.DarmstadtOperator._test.parse;
     const T0 = Date.parse('2026-10-15T09:00:00Z');
-    const raw = (lat, lon, at) => ({ vehicles: [{ vehicleId: 7, category: 1, status: 1, line: '4', direction: 'Kranichstein',
-      latitude: lat, longitude: lon, date: new Date(at).toISOString(), offline: false }] });
-    const l1 = P(raw(49.870, 8.650, T0), [], T0 + 2000);                      // erster Abruf: nichts zum Gleiten
-    const l2 = P(raw(49.871, 8.651, T0 + 20000), l1, T0 + 22000);             // neue Meldung, gemessen 2 s alt
-    const l3 = P(raw(49.871, 8.651, T0 + 20000), l2, T0 + 32000);             // derselbe Stand 10 s später
-    const v2 = X.opModel(l2[0]), v3 = X.opModel(l3[0]);
-    check('operator.js: the first poll has nothing to glide from',
-      l1.length === 1 && l1[0].prevAt === null && near(X.opPosAt(X.opModel(l1[0]), T0 + 3000), 8.650, 49.870));
-    check('operator.js -> live.js: a new report is replayed from its reception, so the glide is actually visible',
-      v2.prevAt === T0 && v2.seenAt === T0 + 22000 &&
-      near(X.opPosAt(v2, T0 + 32000), 8.6505, 49.8705) &&       // halber Meldeabstand nach Empfang
-      near(X.opPosAt(v2, T0 + 22000), 8.650, 49.870) &&          // Start: der vorige gemeldete Ort
-      near(X.opPosAt(v2, T0 + 60000), 8.651, 49.871));           // danach: steht auf der neuesten
-    check('operator.js: an unchanged report keeps the running glide (no snap on the next 10 s poll)',
-      v3.prevAt === T0 && v3.seenAt === T0 + 22000 && near(X.opPosAt(v3, T0 + 32000), 8.6505, 49.8705));
-    const l4 = P(raw(49.880, 8.660, T0 + 400000), l3, T0 + 402000);           // nach Minuten wieder da
-    check('operator.js: a vehicle back after a long gap jumps to its report instead of crawling for minutes',
-      near(X.opPosAt(X.opModel(l4[0]), T0 + 410000), 8.660, 49.880));
+    const raw = (lat, lon, at, ep) => ({ vehicles: [{ vehicleId: 7, category: 5, status: 1, line: 'DG', direction: 'Mathildenplatz',
+      latitude: lat, longitude: lon, date: new Date(at).toISOString(), offline: false, encodedPath: ep }] });
+    // Zwei Meldungen an beiden Enden der Ecke — genau der Fall, den die alte Gerade quer abkürzte.
+    const l1 = P(raw(CORNER[0][0], CORNER[0][1], T0, encP([CORNER[0]])), [], T0 + 2000);
+    const l2 = P(raw(CEND[1], CEND[0], T0 + 20000, encP(CORNER)), l1, T0 + 22000);
+    const l3 = P(raw(CEND[1], CEND[0], T0 + 20000, encP(CORNER)), l2, T0 + 32000);   // derselbe Stand 10 s später
+    const v1 = X.opModel(l1[0]), v2 = X.opModel(l2[0]), v3 = X.opModel(l3[0]);
+    check('operator.js keeps the raw encodedPath and the reception time, no straight-line glide fields',
+      l2[0].encodedPath === encP(CORNER) && l2[0].seenAt === T0 + 22000 && !('prevLat' in l2[0]) && !('prevAt' in l2[0]) &&
+      v2.encodedPath === encP(CORNER) && v2.seenAt === T0 + 22000);
+    check('operator.js: a single-point path stays exactly on the report',
+      near(X.opPosAt(v1, T0 + 12000), CORNER[0][1], CORNER[0][0]));
+    const walk = [];
+    for (let ms = 0; ms <= 22000; ms += 1000) walk.push(X.opPosAt(v2, T0 + 22000 + ms));
+    check('operator.js -> live.js: two reports around a corner are walked along the path, never along the chord',
+      walk.every(q => onPath(q, CPTS).d < 0.05) && walk.filter(q => segDist(q, CSTART, CEND).d > 25).length >= 6 &&
+      near(walk[walk.length - 1], CEND[0], CEND[1], 1e-12));
+    check('operator.js: an unchanged report keeps its reception time (no restart on the next 10 s poll)',
+      l3[0].seenAt === T0 + 22000 && near(X.opPosAt(v3, T0 + 32000), ...X.opPosAt(v2, T0 + 32000)));
+    const l4 = P(raw(CEND[1], CEND[0], T0 + 40000, encP([CORNER[4], CORNER[4]])), l3, T0 + 42000);
+    check('operator.js: a new report restarts the clock at its reception',
+      l4[0].seenAt === T0 + 42000 && near(X.opPosAt(X.opModel(l4[0]), T0 + 50000), CEND[0], CEND[1]));
     check('operator.js: report age is judged against the reception time it is given',
       P(raw(49.87, 8.65, T0), [], T0 + oc.DarmstadtOperator.MAX_AGE_MS + 1).length === 0 &&
-      P(raw(49.87, 8.65, T0), [], T0 + 1000).length === 1 && P(raw(49.87, 8.65, T0), 12345, T0 + 1000).length === 1);
+      P(raw(49.87, 8.65, T0), [], T0 + 1000).length === 1 && P(raw(49.87, 8.65, T0), 12345, T0 + 1000).length === 1 &&
+      P(raw(49.87, 8.65, T0), [], T0 + 1000)[0].encodedPath === '');
+  }
+
+  // Prognose-Punkte unberührt: ohne Betreiberstrom (Hybrid aus = kein Modul, Strom geschlossen) kommt
+  // ihre Position weiter aus der Interpolation entlang der Abschnittsgeometrie — auch wenn ein
+  // Datensatz zufällig Felder wie encodedPath/seenAt trüge.
+  {
+    const HOP = [[49.872, 8.650], [49.873, 8.655], [49.874, 8.660]];
+    const nowP = Date.now();
+    const recP = { mode: 'TRAM', realTime: true, polyline: encP(HOP),
+      departure: new Date(nowP - 30000).toISOString(), arrival: new Date(nowP + 60000).toISOString(),
+      scheduledDeparture: new Date(nowP - 90000).toISOString(), from: { name: 'Darmstadt Schloss', stopId: 's1' },
+      to: { name: 'Darmstadt Luisenplatz' }, trips: [{ tripId: 'prog-1', routeShortName: '4' }] };
+    const pv = X.buildVehicles([recP])[0];
+    if (pv) { pv.encodedPath = encP(CORNER); pv.seenAt = nowP; }        // Köder: darf nichts bewirken
+    X.setVehicles(pv ? [pv] : []);
+    const hp = HOP.map(([la, lo]) => [lo, la]);
+    const cdE = [0];
+    for (let i = 1; i < hp.length; i++) {
+      const kx = 111320 * Math.cos((hp[i - 1][1] + hp[i][1]) / 2 * Math.PI / 180);
+      cdE.push(cdE[i - 1] + Math.hypot((hp[i][0] - hp[i - 1][0]) * kx, (hp[i][1] - hp[i - 1][1]) * 110540));
+    }
+    const expectAt = t => {                 // unabhängige Rechnung: Anteil der Fahrzeit -> Bogenlänge
+      const u = Math.min(1, Math.max(0, (t - pv.dep) / (pv.arr - pv.dep))), d = u * cdE[cdE.length - 1];
+      let j = 0; while (j < cdE.length - 2 && cdE[j + 1] < d) j++;
+      const f = (d - cdE[j]) / (cdE[j + 1] - cdE[j]);
+      return [hp[j][0] + f * (hp[j + 1][0] - hp[j][0]), hp[j][1] + f * (hp[j + 1][1] - hp[j][1])];
+    };
+    const ts = [nowP, nowP + 333, nowP + 20000, nowP + 45000];
+    const got = ts.map(t => { const r = X.vehiclesAt(t).find(c => c.v.tripId === pv.tripId); return r && r.pos; });
+    check('prognosis pills (operator feed closed) still interpolate smoothly along their hop geometry',
+      !!pv && pv.source === 'open' && X.drawn().every(v => v.source !== 'operator') &&
+      got.every((q, i) => near(q, ...expectAt(ts[i]), 1e-9)) && !near(got[0], ...got[1], 1e-9),
+      got.map(q => q && q.map(x => x.toFixed(6)).join(',')).join(' | '));
+    X.setVehicles([]);
   }
 
   check('an operator dot carries its provenance and never claims a delay',

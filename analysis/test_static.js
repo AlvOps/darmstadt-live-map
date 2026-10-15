@@ -316,15 +316,18 @@ function run(check, log = console.log) {
     /function decodePolyline\(str, factor\)/.test(liveSrc));
   // Betreiberpositionen sind zurück — aber EINE QUELLE JE LINIE statt Fahrzeugpaarung, und nur im
   // Hybridbetrieb. Das alte Modul, das je Fahrzeug zusammenführte, bleibt entfernt.
-  // Der Abruf bestimmt nur, wie spät eine neue Meldung ankommt: 10 s statt 30 s, und der letzte
-  // Abruf wird gemerkt, damit live.js zwischen zwei Meldungen gleiten kann.
-  // Das Verhalten (Gleitweg, Lücken, Haltezeit) prüft test_ui an operator.js selbst; hier nur die Verdrahtung.
+  // Der Abruf bestimmt nur, wie spät eine neue Meldung ankommt: 10 s statt 30 s. Je Meldung gehen der
+  // rohe encodedPath und die Empfangszeit an live.js, das den Pfad wie die Betreiber-App abspielt.
+  // Das Verhalten (Pfad, Ecke, Rückfall) prüft test_ui an operator.js selbst; hier nur die Verdrahtung.
   const opSrc = fs.readFileSync(path.join(DOCS, 'operator.js'), 'utf8');
-  check('operator feed polls faster and remembers the previous fix (for the glide)',
+  check('operator feed polls every 10 s and hands the travelled path + reception time to live.js',
     /const REFRESH_MS = 10000;/.test(opSrc) && /function parse\(data, prev, nowMs\)/.test(opSrc) &&
     /parse\(await res\.json\(\), list, Date\.now\(\)\)/.test(opSrc) &&
+    /encodedPath: path, seenAt: same \? was\.seenAt : t,/.test(opSrc) && !/prevLat|prevAt/.test(opSrc + liveSrc) &&
     /function opPosAt\(v, t\)/.test(liveSrc) && /if \(isOp\(v\)\) return opPosAt\(v, t\);/.test(liveSrc) &&
-    /const op = opPosAt\(v, t\);/.test(liveSrc));
+    /const op = opPosAt\(v, t\);/.test(liveSrc) && /decodePolyline\(enc, 1e5\)/.test(liveSrc) &&
+    /const OP_TICK_MS = 1000;/.test(liveSrc) && /const OP_REPLAY_MS = 20000;/.test(liveSrc));
+
   // Die veröffentlichte Seite verspricht nirgends GPS: auch der Ersatztext im Markup (vor I18N.init,
   // ohne JS) der Schlüssel, die nur der Hybridbetrieb umstellt, nennt nur die abgeleitete Quelle.
   check('published markup fallback text never claims GPS for the hybrid-swapped keys',

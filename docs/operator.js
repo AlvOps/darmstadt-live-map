@@ -52,10 +52,10 @@
   const MODE_BY_CATEGORY = { 1: 'tram', 5: 'bus' };   // gemessen: 1 = Straßenbahn, 5 = Bus
 
   // Reine Rechnung (testbar): Rohantwort -> geprüfte Fahrzeuge. Alles Unbrauchbare fliegt raus.
-  // `prev` = die Liste des letzten Abrufs. Je Fahrzeug wird gemerkt, wo es zuletzt gemeldet wurde,
-  // damit live.js zwischen zwei echten Meldungen gleiten kann (so wie die Betreiber-App ihren
-  // encodedPath über 20 s abspielt) — ohne je über die neueste Meldung hinauszurechnen.
-  // `nowMs` = Empfangszeit (Vorgabe: jetzt); sie ist auch der Startpunkt des Gleitwegs (`seenAt`).
+  // Je Fahrzeug wird der rohe `encodedPath` mitgegeben (das zuletzt gefahrene Stück, endet an der
+  // gemeldeten Position) und die Empfangszeit dieser Meldung (`seenAt`): live.js spielt den Pfad ab
+  // dort ab, so wie die Betreiber-App (Abspiellogik und Herleitung stehen bei opPosAt in live.js).
+  // `prev` = die Liste des letzten Abrufs, `nowMs` = Empfangszeit (Vorgabe: jetzt).
   function parse(data, prev, nowMs) {
     const before = new Map();
     for (const p of (Array.isArray(prev) ? prev : [])) {
@@ -77,24 +77,19 @@
       const at = v.date ? Date.parse(v.date) : NaN;
       if (!isFinite(at)) continue;                                 // ohne Meldezeit kein Alter -> nicht live
       if (t - at > MAX_AGE_MS) continue;                           // zu alt: nicht als live zeigen
-      const was = before.get(v.vehicleId == null ? '' : String(v.vehicleId));
-      // Neue Meldung mit neuem Ort: Gleitweg vom letzten gemeldeten Ort, Start = jetzt (Empfang).
-      // Dieselbe Meldung wie beim letzten Abruf (~68 % der Abrufe): den laufenden Gleitweg BEHALTEN —
-      // sonst spränge der Punkt beim nächsten 10-s-Abruf mitten im Weg ans Ende.
-      // Die Meldezeiten liegen beim Empfang schon 1–4 s zurück (gemessen); ein Gleiten im Zeitraum
-      // [prevAt, at] wäre deshalb nie sichtbar. Abgespielt wird darum ab dem Empfang (seenAt).
-      let g = null;
-      if (was && Number.isFinite(was.at) && was.at < at && (was.lat !== lat || was.lon !== lon)) {
-        g = { prevLat: was.lat, prevLon: was.lon, prevAt: was.at, seenAt: t };
-      } else if (was && was.at === at && was.lat === lat && was.lon === lon && was.prevAt != null) {
-        g = { prevLat: was.prevLat, prevLon: was.prevLon, prevAt: was.prevAt, seenAt: was.seenAt };
-      }
+      const path = typeof v.encodedPath === 'string' ? v.encodedPath : '';
+      const vid = v.vehicleId == null ? '' : String(v.vehicleId);
+      const was = before.get(vid);
+      // Dieselbe Meldung wie beim letzten Abruf (~68 % der Abrufe, gleiche Zeit, gleicher Ort, gleicher
+      // Pfad): die Empfangszeit BEHALTEN, sonst finge das Abspielen bei jedem 10-s-Abruf von vorn an.
+      // Neue Meldung (oder erstes Mal gesehen): Empfang = jetzt.
+      const same = !!was && was.at === at && was.lat === lat && was.lon === lon && was.encodedPath === path &&
+        Number.isFinite(was.seenAt);
       out.push({
         line, mode, lat, lon,
-        prevLat: g ? g.prevLat : null, prevLon: g ? g.prevLon : null,
-        prevAt: g ? g.prevAt : null, seenAt: g ? g.seenAt : null,
+        encodedPath: path, seenAt: same ? was.seenAt : t,
         bearing: Number.isFinite(num(v.bearing)) ? num(v.bearing) : null,
-        vehicleId: v.vehicleId == null ? '' : String(v.vehicleId),
+        vehicleId: vid,
         dest: String(v.direction || ''),
         at,
       });
@@ -111,7 +106,7 @@
     try {
       const res = await fetch(URL, ctrl ? { cache: 'no-store', signal: ctrl.signal } : { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      const next = parse(await res.json(), list, Date.now());   // list = letzter Abruf, für den Gleitweg
+      const next = parse(await res.json(), list, Date.now());   // list = letzter Abruf (Empfangszeit je Meldung)
       if (!next.length) throw new Error('empty');
       list = next;
       lastOk = Date.now();

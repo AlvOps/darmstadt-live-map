@@ -69,7 +69,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261015-07';
+  const VERSION = '20261015-08';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -81,9 +81,13 @@
   const OP_STALE_MS = 90000;       // so lange ohne erfolgreiche Betreiberantwort -> globaler Rückfall
   const OP_MAX_AGE_MS = 120000;    // ältere Betreibermeldung wird nicht mehr gezeichnet
   const OP_CARD_MS = 5000;         // Karte eines Betreiberfahrzeugs: Alter der Meldung nachführen
-  const OP_GLIDE_MAX_MS = 45000;   // Gleiten nur zwischen zwei Meldungen mit höchstens so viel Abstand
-                                   // (~20 s Takt, eine verpasste Meldung erlaubt) — sonst springen
-  const OP_GLIDE_MAX_M = 1500;     // ... und höchstens so weit auseinander (GPS-Sprung, Depot, neue Fahrt)
+  // Abspielen des Betreiberpfads (encodedPath) wie in der Betreiber-App — Herleitung bei opPosAt.
+  const OP_TICK_MS = 1000;         // Schritt: die App setzt die Marken einmal je Sekunde (setInterval 1e3)
+  const OP_REPLAY_MS = 20000;      // Abspieldauer: die App teilt die Zeit seit der Meldung durch 20 s
+  const OP_PATH_END_M = 10;        // Pfadende so nah an der gemeldeten Position, sonst nicht abspielen
+  const OP_PATH_MAX_M = 1500;      // längerer Pfad (GPS-Sprung, Depot) wird nicht abgespielt
+  const OP_REPLAY_LAG_MS = 45000;  // Meldung beim Empfang schon älter -> nicht abspielen (veraltet)
+  const OP_SKEW_MS = 30000;        // Meldung beim Empfang so weit „in der Zukunft" -> Uhren uneins
   const SELECT_MS = 5000;          // Auswahl spätestens so oft neu (Haltezeit/Rückfall laufen ab)
   // Betreiber-Name -> Name im offenen Strom (gemessen: die SEV-Busse heißen dort 4E/8E, Zwillinge
   // 60–540 m auseinander). Nur in diese Richtung: ein Bus „4" des offenen Stroms (Offenbach) bleibt 4.
@@ -349,8 +353,9 @@
       source: 'operator', key, mode: e.mode,
       lineName: e.line, headsign: e.dest, dest: e.dest, fromName: '',
       lon: e.lon, lat: e.lat, at: e.at, bearing: e.bearing, vehicleId: e.vehicleId,
-      prevLon: e.prevLon == null ? null : e.prevLon, prevLat: e.prevLat == null ? null : e.prevLat,
-      prevAt: e.prevAt == null ? null : e.prevAt, seenAt: e.seenAt == null ? null : e.seenAt,
+      // Gefahrener Weg (roh, kodiert) und Empfang der Meldung: daraus spielt opPosAt die Bewegung ab.
+      encodedPath: typeof e.encodedPath === 'string' ? e.encodedPath : '',
+      seenAt: Number.isFinite(e.seenAt) ? e.seenAt : null,
       delayMin: null, realTime: true, routeColor: '',
       // Farbe/Linienfokus über den Namen im offenen Strom: so gehört der SEV-Bus 4 zur selben Linie wie 4E
       lineIdx: matchLine(key.slice(key.indexOf('|') + 1), e.mode),
@@ -564,10 +569,10 @@
     const out = [];
     for (const v of drawn) {
       if (isOp(v)) {
-        // Betreiberfahrzeug: nie vorausgerechnet. Zwischen zwei Meldungen gleitet der Punkt auf der
-        // Geraden zwischen beiden gemeldeten Orten (opPosAt), danach steht er auf der neuesten.
+        // Betreiberfahrzeug: nie vorausgerechnet. Der Punkt läuft im Sekundentakt den gemeldeten,
+        // tatsächlich gefahrenen Weg (encodedPath) ab und steht danach auf der neuesten Meldung (opPosAt).
         if (t - v.at > OP_MAX_AGE_MS) continue;
-        const op = opPosAt(v, t);            // gleitet zwischen zwei Meldungen, steht danach still
+        const op = opPosAt(v, t);            // Punkt auf dem gefahrenen Weg, nie daneben, nie davor
         if (!op) continue;
         out.push({ v, pos: op, rest: [], u: 0 });
         continue;
@@ -1076,25 +1081,79 @@
     return posAt(v.path, v.cd)(u * v.total);
   }
 
-  // Betreiberposition zum Zeitpunkt t. Der Weg von der vorletzten zur letzten Meldung wird entlang
-  // der GERADEN zwischen beiden gemeldeten Punkten abgespielt (bei ~20 s Abstand ~100–250 m Straße) —
-  // dieselbe Idee wie in der Betreiber-App, die ihren encodedPath über 20 s abspielt. Abgespielt wird
-  // ab dem EMPFANG der neuen Meldung (seenAt) über deren Abstand (at - prevAt): die Meldezeiten liegen
-  // beim Empfang schon in der Vergangenheit, ein Gleiten im Zeitraum [prevAt, at] wäre nie zu sehen.
-  // Der Punkt liegt also immer zwischen zwei echten Meldungen (höchstens einen Meldeabstand hinter der
-  // neuesten), nie darüber hinaus. Lücken (Fahrzeug minutenlang weg, Abruf ausgefallen) und Sprünge
-  // über OP_GLIDE_MAX_M werden nicht abgespielt: der Punkt steht dann sofort auf der neuesten Meldung.
+  // Betreiberposition zum Zeitpunkt t — eine Kopie der Betreiber-App (heagmobilo-live.geomobile.de,
+  // bundle.261d6da9.js), nur für GPS-Punkte. Dort steht (gekürzt, minifiziert):
+  //   setInterval(function(){ … t.updateMarkers() }, 1e3)                  // Marken einmal je Sekunde
+  //   i = b.duration(n.diff(e)).asSeconds()/20*100; i>100&&(i=100)        // e = Antwort-`timestamp`
+  //   n = M.default.getLocationAtPercentage(e.encodedPath, i)             // Punkt bei i % der Pfadlänge
+  // getLocationAtPercentage dekodiert den Pfad, misst ihn (Haversine), sucht das Teilstück, in dem
+  // i % der Länge liegen, und halbiert es bis zu 100-mal am Großkreis-Mittelpunkt — also der Punkt
+  // auf diesem Teilstück nach Bogenlänge. Bei 100 % das letzte Pfadstück = die gemeldete Position.
+  // Die App springt also im Sekundentakt den zuletzt gefahrenen Weg entlang (~20 s lang) und kommt
+  // 20 s nach der Meldung genau an der gemeldeten Position an; danach steht sie still. Weder Gerade
+  // zwischen zwei Meldungen noch Vorausrechnung — nur Punkte auf dem gemeldeten Weg.
+  //
+  // Unsere Umsetzung, dieselbe Rechnung: Anteil = (Sekundenschritt seit Empfang) / OP_REPLAY_MS,
+  // gedeckelt bei 1; der Punkt liegt bei diesem Anteil der Bogenlänge auf dem dekodierten Pfad
+  // (Haversine wie dort, innerhalb eines Teilstücks linear — bei Teilstücken von Metern bis wenigen
+  // hundert Metern ist der Unterschied zum Großkreis unter einem Millimeter). Bei 1 die gemeldete
+  // Position selbst.
+  // Eine bewusste Abweichung: die App rechnet ab dem `timestamp` der Antwort (Serveruhr, wechselt
+  // alle ~20 s) und fragt jede Sekunde — eine neue Meldung ist bei ihr also nach <= 1 s sichtbar und
+  // läuft fast von Anfang an. Wir fragen nur alle 10 s (Datenmenge, siehe operator.js); ab dem
+  // Server-`timestamp` gerechnet sprängen unsere Punkte beim Empfang bis zu 10 s = halben Weg nach
+  // vorn, und eine falsch gehende Geräteuhr verschöbe alles. Darum zählen wir ab dem EMPFANG der
+  // Meldung (seenAt, Geräteuhr gegen Geräteuhr): derselbe Ablauf wie dort (Pfadanfang -> gemeldete
+  // Position in 20 s, Sekundenschritte), nur höchstens eine Abrufperiode später. Da die Meldungen
+  // alle ~20 s = 2 Abrufperioden kommen, ist das Abspielen fertig, wenn die nächste ankommt, und deren
+  // Pfad beginnt dort, wo der alte endet — durchgehend, ohne Sprung.
+  // Alles Unsichere zeigt genau die gemeldete Position (still) statt einer Schätzung: kein oder
+  // kaputter Pfad, weniger als 2 Punkte, Länge 0 oder über OP_PATH_MAX_M, Pfadende weiter als
+  // OP_PATH_END_M von der Meldung, beim Empfang schon veraltete Meldung, Uhren uneins, NaN.
+  function havM(a, b) {                         // [lon, lat] -> Meter, Formel wie in der App
+    const r = 0.017453292519943295, c = Math.cos;
+    const x = 0.5 - c((b[1] - a[1]) * r) / 2 + c(a[1] * r) * c(b[1] * r) * (1 - c((b[0] - a[0]) * r)) / 2;
+    return 12742000 * Math.asin(Math.sqrt(x));
+  }
+
+  // Dekodierter, geprüfter Pfad eines Betreiberfahrzeugs ({ pts, cd, total }) oder null. Am Modell
+  // zwischengespeichert, weil opPosAt in jedem Bild läuft.
+  function opTrack(v) {
+    if (!v) return null;
+    const enc = v.encodedPath;
+    if (v._trackSrc === enc && v._trackLat === v.lat && v._trackLon === v.lon) return v._track;
+    let tr = null;
+    if (typeof enc === 'string' && /^[\x3f-\x7e]+$/.test(enc)) {
+      const pts = decodePolyline(enc, 1e5);
+      const ok = pts.length >= 2 && pts.every(q => Number.isFinite(q[0]) && Number.isFinite(q[1]) &&
+        Math.abs(q[0]) <= 180 && Math.abs(q[1]) <= 90);
+      if (ok && Number.isFinite(v.lon) && Number.isFinite(v.lat) &&
+          havM(pts[pts.length - 1], [v.lon, v.lat]) <= OP_PATH_END_M) {
+        const cd = new Float64Array(pts.length);
+        for (let i = 1; i < pts.length; i++) cd[i] = cd[i - 1] + havM(pts[i - 1], pts[i]);
+        const total = cd[pts.length - 1];
+        if (total > 0 && total <= OP_PATH_MAX_M) tr = { pts, cd, total };
+      }
+    }
+    v._trackSrc = enc; v._trackLat = v.lat; v._trackLon = v.lon; v._track = tr;
+    return tr;
+  }
+
   function opPosAt(v, t) {
     if (!v || !Number.isFinite(v.lon) || !Number.isFinite(v.lat)) return null;
-    const a = v.prevAt, b = v.at, s = v.seenAt, span = b - a;
-    if (Number.isFinite(a) && Number.isFinite(b) && Number.isFinite(s) && Number.isFinite(t) &&
-        span > 0 && span <= OP_GLIDE_MAX_MS && t < s + span &&
-        Number.isFinite(v.prevLon) && Number.isFinite(v.prevLat) &&
-        metres([v.prevLon, v.prevLat], [v.lon, v.lat]) <= OP_GLIDE_MAX_M) {
-      const u = Math.max(0, (t - s) / span);
-      return [v.prevLon + (v.lon - v.prevLon) * u, v.prevLat + (v.lat - v.prevLat) * u];
-    }
-    return [v.lon, v.lat];                   // gemeldet, nicht gerechnet
+    const here = [v.lon, v.lat];             // gemeldet, nicht gerechnet
+    const s = v.seenAt, lag = s - v.at;
+    if (!Number.isFinite(t) || !Number.isFinite(s) || !Number.isFinite(lag) ||
+        lag > OP_REPLAY_LAG_MS || lag < -OP_SKEW_MS || t < s) return here;
+    const tr = opTrack(v);
+    if (!tr) return here;
+    const step = Math.floor((t - s) / OP_TICK_MS) * OP_TICK_MS;   // Sekundenschritte wie die App
+    if (!(step < OP_REPLAY_MS)) return here;                        // 100 %: genau die Meldung
+    const d = tr.total * step / OP_REPLAY_MS;
+    const j = Math.max(1, lowerBound(tr.cd, d));                    // erstes Teilstück, das d erreicht
+    const a = tr.pts[j - 1], b = tr.pts[j], seg = tr.cd[j] - tr.cd[j - 1];
+    const f = seg > 0 ? Math.min(1, Math.max(0, (d - tr.cd[j - 1]) / seg)) : 0;
+    return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
   }
 
   // Reine Rechnung, wohin die Karte kommt (ohne DOM, damit testbar): bevorzugt rechts über dem Punkt,
@@ -1739,7 +1798,7 @@
     },
     _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; reselect(false); }, popupShell,
              HYBRID_ON, activateHybridCopy, selectSources, opPosAt, opTripFor, legStopsAhead, opShell, opModel, opKey, lineKey, OP_ALIAS, reselect: () => reselect(true), drawn: () => drawn,
-             OP_FRESH_MS, OP_HOLD_MS, OP_SCOPE_M, OP_STALE_MS, OP_MAX_AGE_MS, OP_GLIDE_MAX_MS, OP_GLIDE_MAX_M, resetOperator() { opSeen = new Map(); },
+             OP_FRESH_MS, OP_HOLD_MS, OP_SCOPE_M, OP_STALE_MS, OP_MAX_AGE_MS, OP_TICK_MS, OP_REPLAY_MS, OP_PATH_END_M, OP_PATH_MAX_M, opTrack, havM, resetOperator() { opSeen = new Map(); },
              departureRow, stationShell, freshness, focusLine, focusLineWide, CITY_BOX,
              dedupeStops, markers: () => markerLog, markerNode: () => markerBox, markerHtml,
              syncMarkers: () => syncMarkerPositions(), decodePolyline,
