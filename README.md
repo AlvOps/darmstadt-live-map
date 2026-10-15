@@ -17,6 +17,14 @@ Repository: `AlvOps/darmstadt-live-map` — an **independent repository**, not a
 of any fork network. It was rebuilt as a standalone repository on 2026-10-15 (the earlier fork lives on
 as the archived `AlvOps/darmstadt-nahverkehr-fork`).
 
+**Custom domain.** `darmstadtmap.com` was bought for this map and its Cloudflare zone exists, but the
+apex/`www` DNS records are still missing, so the domain does not resolve. While the `CNAME` was in place,
+GitHub 301-redirected the `github.io` URLs to that dead domain and the map was briefly unreachable; the
+domain is therefore parked until the records exist. Records to add (Cloudflare, **DNS only** — the
+orange proxy blocks GitHub's certificate issuance): `A @` → 185.199.108.153, 185.199.109.153,
+185.199.110.153, 185.199.111.153; `AAAA @` → 2606:50c0:8000::153 … `::8003::153`; `CNAME www` →
+`alvops.github.io`. After that: re-add `docs/CNAME`, set the domain in Pages and enforce HTTPS.
+
 **Branches.** `main` is the only production branch, and it is what GitHub Pages serves (`main` / `docs`).
 `stable` is kept as the rollback point. The former working branches `master` and `operator-hybrid` were
 deleted on 2026-10-15: the hybrid view is a **query parameter on the same page**, not a separate branch,
