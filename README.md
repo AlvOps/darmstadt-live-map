@@ -10,10 +10,18 @@ The timetable simulation (and its data files) was removed on 2026-10-14: the sit
 vehicles only, so nothing on the map is ever derived from a schedule.
 
 Live: https://alvops.github.io/darmstadt-live-map/
+Hybrid build — same page, plus the operator's own GPS vehicles for the HEAG fleet:
+https://alvops.github.io/darmstadt-live-map/?hybrid=1 (short link: `/hybrid/`)
 
 Repository: `AlvOps/darmstadt-live-map` — an **independent repository**, not a GitHub fork and not part
 of any fork network. It was rebuilt as a standalone repository on 2026-10-15 (the earlier fork lives on
-as the archived `AlvOps/darmstadt-nahverkehr-fork`). Pages serves from `master` / `docs`.
+as the archived `AlvOps/darmstadt-nahverkehr-fork`).
+
+**Branches.** `main` is the only production branch, and it is what GitHub Pages serves (`main` / `docs`).
+`stable` is kept as the rollback point. The former working branches `master` and `operator-hybrid` were
+deleted on 2026-10-15: the hybrid view is a **query parameter on the same page**, not a separate branch,
+so nothing had to live on a branch of its own. A private mirror of the whole repository exists at
+`AlvOps/darmstadt-live-map-backup`.
 
 ## What the selection does
 
@@ -23,7 +31,7 @@ The map answers the question "where is *my* bus?" instead of drowning it in dots
 |-----------|----------|-------|
 | none | all lines, coloured | all live stops |
 | **a line** (chip in the panel) | **only that line**, camera swings to it | hidden — after **10 s without any interaction** they come back, so the stripped view is never a dead end |
-| **a vehicle** (clicked on the map, or a stop in its card) | that vehicle highlighted, the rest faded | **only that vehicle's own next stops** |
+| **a vehicle** (clicked on the map, or a stop in its card) | **only that vehicle, plus its route line** — every other vehicle and every foreign stop disappears, there is no quiet-timer that brings them back, and zooming out does not undo it | **only that vehicle's own next stops** |
 
 Any **tap on the map** or Escape clears the selection and restores the full view; a **drag** only
 restarts the quiet timer (`state.selAt`, shared by `index.html` and `live.js`), so a highlight is never
@@ -35,6 +43,12 @@ still yields smooth movement.
 
 ## Features
 
+- **The night map is always the first thing you see.** The dark vector basemap is the start state on
+  every load, and a previously chosen view is deliberately **not** restored (the stored preference is
+  discarded). The toggle — hybrid build only — cycles normal → satellite → light cartographic OSM and
+  works within the session. Tram tracks are drawn from our own `docs/data/meta.json` (`tram_tracks`,
+  399 polylines) as a thin layer under the markers, because the dark basemap carries no transit layer
+  at all, and the map zooms to z17 so a marker and the street beneath it can be told apart.
 - **Stop search.** The field beside the pane switcher searches the stops we ship plus the live stops
   of the current view: umlaut- and case-folded, ranked name-start > word-start > mid-name, duplicates
   dropped, capped at 7. Picking a hit jumps the camera to that stop instantly and opens its card (the

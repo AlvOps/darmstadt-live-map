@@ -135,7 +135,8 @@ const sandbox = {
   console, Math, JSON, Date, Number, String, Array, Object, Map, Set, parseInt, parseFloat, isNaN, isFinite,
   setTimeout, clearTimeout, setInterval, clearInterval, Promise, Float64Array, Error, Uint16Array, CustomEvent: class {},
   navigator: { language: 'en-GB' },
-  localStorage: { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
+  localStorage: { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); },
+                  removeItem: k => { delete store[k]; } },
   fetch: async (url) => {
     net.calls.push(url);
     if (net.hold && url.includes('/api/v1/map/trips')) await net.hold;
@@ -233,7 +234,8 @@ function openPage(seedFavs, opts = {}) {
     setTimeout, clearTimeout, setInterval, clearInterval, Promise, Float64Array, Uint16Array, Error,
     CustomEvent: class { constructor(t) { this.type = t; } },
     navigator: { language: 'en-GB', geolocation: { getCurrentPosition() {}, watchPosition: () => 1, clearWatch() {} } },
-    localStorage: { getItem: k => (k in pstore ? pstore[k] : null), setItem: (k, v) => { pstore[k] = String(v); } },
+    localStorage: { getItem: k => (k in pstore ? pstore[k] : null), setItem: (k, v) => { pstore[k] = String(v); },
+                    removeItem: k => { delete pstore[k]; } },
     sessionStorage: { getItem: () => null, setItem() {} },
     location: { pathname: '/darmstadt-live-map/', replace() {} },
     fetch: async url => ({ ok: true, status: 200, json: async () => (String(url).includes('meta.json') ? META : {}) }),
@@ -591,10 +593,11 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
       desk.setStyleCalls.length === 1 && desk.style.sources.carto.maxzoom === 14 && !desk.style.sources.carto.url);
     desk.style.layers.push({ id: 'me-dot', type: 'circle', source: 'me' });   // „Wo bin ich?“ ist an
     btn.onclick();
-    check('toggling switches visibility of the two basemaps and persists the choice',
+    // Die Wahl wird bewusst NICHT gemerkt: beim nächsten Laden beginnt es wieder mit der Nachtkarte.
+    check('toggling switches visibility of the two basemaps without memorising the choice',
       desk.sb.basemap() === 'satellite' && vis(desk, 'sat') === 'visible' &&
       ['background', 'water', 'roads', 'hidden-by-style'].every(id => vis(desk, id) === 'none') &&
-      desk.store['dlm-basemap'] === 'satellite');
+      !('dlm-basemap' in desk.store));
     check('satellite mode flags <html> (credit line + pill outline) and presses the button',
       desk.sb.document.documentElement.dataset.basemap === 'satellite' && btn.attrs['aria-pressed'] === 'true' &&
       btn.attrs['data-i18n-title'] === 'basemapToMap');
@@ -603,7 +606,7 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     check('the second click shows the light cartographic map, style layers still hidden',
       desk.sb.basemap() === 'carto' && vis(desk, 'cartoimg') === 'visible' && vis(desk, 'sat') === 'none' &&
       vis(desk, 'roads') === 'none' && vis(desk, 'water') === 'none' &&
-      desk.store['dlm-basemap'] === 'carto' &&
+      !('dlm-basemap' in desk.store) &&
       desk.sb.document.documentElement.dataset.basemap === 'carto' &&
       btn.attrs['aria-pressed'] === 'true' && btn.attrs['data-i18n-title'] === 'basemapToNormal');
     check('the cartographic state is flagged for pill contrast but is not the satellite state',
@@ -612,30 +615,24 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     check('the third click returns to the standard dark map with every style layer as the style had it',
       desk.sb.basemap() === 'normal' && vis(desk, 'sat') === 'none' && vis(desk, 'cartoimg') === 'none' &&
       vis(desk, 'water') === 'visible' && vis(desk, 'roads') === 'visible' &&
-      vis(desk, 'hidden-by-style') === 'none' && desk.store['dlm-basemap'] === 'normal' &&
+      vis(desk, 'hidden-by-style') === 'none' && !('dlm-basemap' in desk.store) &&
       desk.sb.document.documentElement.dataset.basemap === 'normal' &&
       btn.attrs['aria-pressed'] === 'false' && btn.attrs['data-i18n-title'] === 'basemapToSatellite');
 
-    const stored = openPage(null, { hybrid: true, store: { 'dlm-basemap': 'satellite' } });
-    await stored.ready;
-    const sbtn = (stored.controls.find(c => c.name === 'BasemapButton') || {}).el;
-    check('a stored satellite choice is flagged before the style loads',
-      stored.sb.basemap() === 'satellite' && stored.sb.document.documentElement.dataset.basemap === 'satellite' &&
-      !!sbtn && sbtn.attrs['aria-pressed'] === 'true');
-    stored.mapFire('style.load'); stored.mapFire('style.load');
-    check('a stored satellite choice is applied at boot',
-      vis(stored, 'sat') === 'visible' && vis(stored, 'cartoimg') === 'none' && vis(stored, 'roads') === 'none');
-
-    const storedCarto = openPage(null, { hybrid: true, store: { 'dlm-basemap': 'carto' } });
-    await storedCarto.ready;
-    storedCarto.mapFire('style.load'); storedCarto.mapFire('style.load');
-    check('a stored cartographic choice is applied at boot',
-      storedCarto.sb.basemap() === 'carto' && vis(storedCarto, 'cartoimg') === 'visible' &&
-      vis(storedCarto, 'sat') === 'none' && vis(storedCarto, 'roads') === 'none');
-    const legacy = openPage(null, { hybrid: true, store: { 'dlm-basemap': 'map' } });
-    await legacy.ready;
-    check('the legacy stored value "map" migrates to the standard dark view',
-      legacy.sb.basemap() === 'normal');
+    // Wunsch des Betreibers (2026-10-15): die Nachtkarte ist IMMER der Startzustand. Eine früher
+    // gewählte Grundkarte wird nicht wiederhergestellt, und ein alter Merker wird sogar entfernt.
+    for (const saved of ['satellite', 'carto', 'map']) {
+      const p = openPage(null, { hybrid: true, store: { 'dlm-basemap': saved } });
+      await p.ready;
+      const b = (p.controls.find(c => c.name === 'BasemapButton') || {}).el;
+      check(`a stored choice ("${saved}") never overrides the night map at boot`,
+        p.sb.basemap() === 'normal' && p.sb.document.documentElement.dataset.basemap === 'normal' &&
+        !!b && b.attrs['aria-pressed'] === 'false');
+      p.mapFire('style.load'); p.mapFire('style.load');
+      check(`the layers stay on the night view ("${saved}")`,
+        vis(p, 'sat') === 'none' && vis(p, 'cartoimg') === 'none' && vis(p, 'roads') !== 'none');
+      check(`the stale preference is cleared ("${saved}")`, p.store['dlm-basemap'] === undefined);
+    }
 
     console.log('\n=== Bas: Suche oben rechts, Telefon hinter der Lupe ===');
     const prod = openPage(null), prodPhone = openPage(null, { touch: true });
