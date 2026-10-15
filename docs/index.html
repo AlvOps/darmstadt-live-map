@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-09"></script>
+<script src="i18n.js?v=20261015-10"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -254,8 +254,8 @@
   .mk.dim { opacity: .55; }
   /* Über hellem Luftbild verschwimmen die hellen Pillen — nur im Satellitenmodus ein dunkler Saum.
      Der Fokusring bleibt dabei erhalten (eigene Regel, sonst überschriebe der Saum ihn). */
-  html[data-basemap="satellite"] .mk { box-shadow: 0 0 0 1.5px rgba(0,0,0,.55), 0 1px 5px rgba(0, 0, 0, .5); }
-  html[data-basemap="satellite"] .mk.focus { box-shadow: 0 0 0 1.5px rgba(0,0,0,.55), 0 0 0 4px var(--accent), 0 1px 5px rgba(0, 0, 0, .5); }
+  html:not([data-basemap="normal"]) .mk { box-shadow: 0 0 0 1.5px rgba(0,0,0,.55), 0 1px 5px rgba(0, 0, 0, .5); }
+  html:not([data-basemap="normal"]) .mk.focus { box-shadow: 0 0 0 1.5px rgba(0,0,0,.55), 0 0 0 4px var(--accent), 0 1px 5px rgba(0, 0, 0, .5); }
   #markers.scaled .mk { font-size: 11px; padding: 2px 7px 2px 6px; }
   #markers.scaled .mk svg { width: 12px; height: 12px; }
   /* Haltestelle: weißer Kreis mit großem Buchstaben (H = Haltestelle, S = station) */
@@ -507,11 +507,11 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-09"></script>
+<script src="search.js?v=20261015-10"></script>
 <!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
      antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
-<script src="operator.js?v=20261015-09"></script>
-<script src="live.js?v=20261015-09"></script>
+<script src="operator.js?v=20261015-10"></script>
+<script src="live.js?v=20261015-10"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -537,10 +537,22 @@ const TILE_MAXZOOM = 14;
 // würfe Quellen/Ebenen weg, holte den Stil neu und käme der deck.gl-Ebene und der Kachelgrenze oben in die Quere.
 const SAT_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 const SAT_MAXZOOM = 18;                                  // gemessen bis z18; die Karte selbst endet bei 16
-const OWN_LAYERS = new Set(['sat', 'me-acc', 'me-dot']); // gehören nicht zur Grundkarte, bleiben beim Umschalten stehen
+// Karte: CARTOs Rasterkarte „Voyager" MIT Straßennamen (schlüssellos; am 2026-10-15 als 256-px-PNG
+// mit Inhalt gemessen). Sie ist der dritte Zustand und ersetzt bewusst nicht den dunklen Vektorstil.
+const CARTO_TILES = 'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
+const CARTO_MAXZOOM = 20;
+// Drei Zustände: 'normal' = dunkler Vektorstil (wie bisher), 'satellite' = Luftbild,
+// 'carto' = helle Straßenkarte. Der Betreiber wollte ausdrücklich alle drei.
+const BASEMAPS = ['normal', 'satellite', 'carto'];
+const OWN_LAYERS = new Set(['sat', 'cartoimg', 'me-acc', 'me-dot']);   // nicht Grundkarte: bleiben stehen
 const BASE_VIS = new Map();                              // ursprüngliche Sichtbarkeit je Stil-Ebene
-let BASEMAP = 'map', basemapBtn = null;
-try { if (localStorage.getItem('dlm-basemap') === 'satellite') BASEMAP = 'satellite'; } catch (_) { /* Privatmodus */ }
+let BASEMAP = 'normal', basemapBtn = null;
+try {
+  const saved = localStorage.getItem('dlm-basemap');
+  // Altbestand: 'map' war früher der dunkle Zustand, heißt jetzt 'normal'.
+  if (saved === 'map') BASEMAP = 'normal';
+  else if (BASEMAPS.includes(saved)) BASEMAP = saved;
+} catch (_) { /* Privatmodus */ }
 function basemap() { return BASEMAP; }
 function inlineTileSource() {
   const style = map.getStyle();
@@ -569,44 +581,59 @@ const map = new maplibregl.Map({
 });
 // Satellitenquelle einhängen: verborgen, als unterste Ebene (unter allem, was der Stil zeichnet, und
 // unter „Wo bin ich?“). Läuft vor dem Kachel-Patch: dessen getStyle() nimmt sie dann einfach mit.
-function addSatellite() {
-  if (map.getSource('sat')) return;
-  const layers = (map.getStyle() || {}).layers || [];
-  const firstStyleLayerId = layers.length ? layers[0].id : undefined;
-  map.addSource('sat', {
-    type: 'raster', tiles: [SAT_TILES], tileSize: 256, maxzoom: SAT_MAXZOOM,
-    attribution: window.I18N.t('attributionSatellite'),
-  });
-  map.addLayer({ id: 'sat', type: 'raster', source: 'sat', layout: { visibility: 'none' } }, firstStyleLayerId);
+// Beide Rasterbilder werden OBEN angehängt (ohne beforeId). Der Stil beginnt mit einer
+// background-Ebene, die die ganze Fläche malt — darunter eingehängt wäre ein Raster unsichtbar.
+// Da im Luftbild- und im Kartenzustand alle Stil-Ebenen versteckt werden, stört die Reihenfolge nicht.
+function addRasters() {
+  const L = (map.getStyle() || {}).layers || [];
+  if (!map.getSource('sat')) {
+    map.addSource('sat', {
+      type: 'raster', tiles: [SAT_TILES], tileSize: 256, maxzoom: SAT_MAXZOOM,
+      attribution: window.I18N.t('attributionSatellite'),
+    });
+    map.addLayer({ id: 'sat', type: 'raster', source: 'sat', layout: { visibility: 'none' } });
+  }
+  if (!map.getSource('cartoimg')) {
+    map.addSource('cartoimg', {
+      type: 'raster', tiles: [CARTO_TILES], tileSize: 256, maxzoom: CARTO_MAXZOOM,
+      attribution: window.I18N.t('attributionMap'),
+    });
+    map.addLayer({ id: 'cartoimg', type: 'raster', source: 'cartoimg', layout: { visibility: 'none' } });
+  }
 }
 // Grundkarte anwenden: nur Sichtbarkeit umschalten. Vor dem Laden des Stils greift nur das Kennzeichen
 // am <html> (Quellenangabe, Pillen-Saum); die Ebenen folgen beim style.load.
 function applyBasemap() {
-  const sat = BASEMAP === 'satellite';
-  document.documentElement.dataset.basemap = BASEMAP;       // Hooks für CSS (Pillen-Kontrast, Quellenangabe)
+  const normal = BASEMAP === 'normal';
+  document.documentElement.dataset.basemap = BASEMAP;   // Hooks für CSS (Pillen-Kontrast, Quellenangabe)
   if (basemapBtn) {
-    basemapBtn.setAttribute('aria-pressed', String(sat));
-    const key = sat ? 'basemapToMap' : 'basemapToSatellite';
+    // Der Knopf zeigt immer, was der NÄCHSTE Klick bringt.
+    const next = BASEMAPS[(BASEMAPS.indexOf(BASEMAP) + 1) % BASEMAPS.length];
+    const key = next === 'satellite' ? 'basemapToSatellite' : next === 'carto' ? 'basemapToMap' : 'basemapToNormal';
+    basemapBtn.setAttribute('aria-pressed', String(!normal));
     basemapBtn.setAttribute('data-i18n-title', key);
     basemapBtn.title = window.I18N.t(key);
   }
   let layers = [];
   try { layers = (map.getStyle() || {}).layers || []; } catch (_) { /* Stil noch nicht geladen */ }
   for (const l of layers) {
-    if (l.id === 'sat') { try { map.setLayoutProperty('sat', 'visibility', sat ? 'visible' : 'none'); } catch (_) {} continue; }
     if (OWN_LAYERS.has(l.id)) continue;
     if (!BASE_VIS.has(l.id)) BASE_VIS.set(l.id, (l.layout && l.layout.visibility) || 'visible');
-    try { map.setLayoutProperty(l.id, 'visibility', sat ? 'none' : BASE_VIS.get(l.id)); } catch (_) {}
+    try { map.setLayoutProperty(l.id, 'visibility', normal ? BASE_VIS.get(l.id) : 'none'); } catch (_) {}
+  }
+  const show = BASEMAP === 'satellite' ? 'sat' : BASEMAP === 'carto' ? 'cartoimg' : null;
+  for (const id of ['sat', 'cartoimg']) {
+    try { map.setLayoutProperty(id, 'visibility', id === show ? 'visible' : 'none'); } catch (_) {}
   }
 }
 function setBasemap(which) {
-  BASEMAP = which === 'satellite' ? 'satellite' : 'map';
+  BASEMAP = BASEMAPS.includes(which) ? which : 'normal';
   try { localStorage.setItem('dlm-basemap', BASEMAP); } catch (_) { /* Privatmodus: gilt nur für diesen Besuch */ }
   applyBasemap();
 }
 let basemapCapped = false;
 map.on('style.load', () => {            // Satellit bei jedem Laden sicherstellen, Kachelgrenze nur einmal
-  try { addSatellite(); applyBasemap(); }
+  try { addRasters(); applyBasemap(); }
   catch (err) { console.warn('satellite-layer-failed', err); }
   if (basemapCapped) return;
   try { basemapCapped = inlineTileSource(); }
@@ -651,7 +678,7 @@ class BasemapButton {
     b.setAttribute('data-i18n-aria', 'basemapTitle');
     b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="#333">' +
       '<path d="M12 2 1.5 7.5 12 13l10.5-5.5L12 2zm-8.3 9.3L1.5 12.5 12 18l10.5-5.5-2.2-1.2L12 15.7l-8.3-4.4zm0 5L1.5 17.5 12 23l10.5-5.5-2.2-1.2L12 20.7l-8.3-4.4z"/></svg>';
-    b.onclick = () => setBasemap(basemap() === 'map' ? 'satellite' : 'map');
+    b.onclick = () => setBasemap(BASEMAPS[(BASEMAPS.indexOf(basemap()) + 1) % BASEMAPS.length]);
     basemapBtn = b;
     this.el = b;
     applyBasemap();                        // Zustand und Titel sofort richtig, auch bei gemerktem Satellit
@@ -851,7 +878,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-09';
+  const APP_V = '20261015-10';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {

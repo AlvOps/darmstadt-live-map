@@ -498,9 +498,9 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     const desk = openPage(null), phone = openPage(null, { touch: true });
     await desk.ready; await phone.ready;
     const dn = names(desk), pn = names(phone);
-    check('a basemap toggle is registered and starts on the map view',
-      dn.includes('BasemapButton') && desk.sb.basemap() === 'map' &&
-      desk.sb.document.documentElement.dataset.basemap === 'map', dn.join(' > '));
+    check('a basemap toggle is registered and starts on the standard dark view',
+      dn.includes('BasemapButton') && desk.sb.basemap() === 'normal' &&
+      desk.sb.document.documentElement.dataset.basemap === 'normal', dn.join(' > '));
     check('the basemap toggle is registered directly before the tilt button (renders above it)',
       dn.indexOf('BasemapButton') >= 0 && dn.indexOf('TiltButton') === dn.indexOf('BasemapButton') + 1);
     check('the locate control is registered on desktop as well (no touch gate)', dn.includes('LocateButton'));
@@ -515,10 +515,14 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     const vis = (p, id) => { const l = p.style.layers.find(x => x.id === id); return l ? ((l.layout && l.layout.visibility) || 'visible') : 'missing'; };
     desk.mapFire('style.load');                        // erstes Laden: Satellit + Kachel-Patch
     desk.mapFire('style.load');                        // gepatchter Stil
-    const sat = desk.style.sources.sat;
-    check('satellite source is the keyless Esri raster, hidden, below every style layer',
+    const sat = desk.style.sources.sat, cim = desk.style.sources.cartoimg;
+    check('both basemap rasters exist, hidden, and sit ABOVE the style layers (never under its background)',
       !!sat && sat.type === 'raster' && /World_Imagery\/MapServer\/tile\/\{z\}\/\{y\}\/\{x\}$/.test(sat.tiles[0]) &&
-      desk.style.layers[0].id === 'sat' && vis(desk, 'sat') === 'none' && desk.style.layers.filter(l => l.id === 'sat').length === 1,
+      !!cim && cim.type === 'raster' && /rastertiles\/voyager\/\{z\}\/\{x\}\/\{y\}\.png$/.test(cim.tiles[0]) &&
+      vis(desk, 'sat') === 'none' && vis(desk, 'cartoimg') === 'none' &&
+      desk.style.layers.filter(l => l.id === 'sat').length === 1 &&
+      desk.style.layers.filter(l => l.id === 'cartoimg').length === 1 &&
+      desk.style.layers[0].id !== 'sat',
       desk.style.layers.map(l => l.id).join(','));
     check('the tile cap still runs exactly once (one setStyle, from the patch)',
       desk.setStyleCalls.length === 1 && desk.style.sources.carto.maxzoom === 14 && !desk.style.sources.carto.url);
@@ -533,10 +537,21 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
       btn.attrs['data-i18n-title'] === 'basemapToMap');
     check('the own location dot is never hidden by the switch', vis(desk, 'me-dot') === 'visible');
     btn.onclick();
-    check('back to the map restores every style layer as the style had it',
-      desk.sb.basemap() === 'map' && vis(desk, 'sat') === 'none' && vis(desk, 'water') === 'visible' &&
-      vis(desk, 'roads') === 'visible' && vis(desk, 'hidden-by-style') === 'none' && desk.store['dlm-basemap'] === 'map' &&
-      desk.sb.document.documentElement.dataset.basemap === 'map');
+    check('the second click shows the light cartographic map, style layers still hidden',
+      desk.sb.basemap() === 'carto' && vis(desk, 'cartoimg') === 'visible' && vis(desk, 'sat') === 'none' &&
+      vis(desk, 'roads') === 'none' && vis(desk, 'water') === 'none' &&
+      desk.store['dlm-basemap'] === 'carto' &&
+      desk.sb.document.documentElement.dataset.basemap === 'carto' &&
+      btn.attrs['aria-pressed'] === 'true' && btn.attrs['data-i18n-title'] === 'basemapToNormal');
+    check('the cartographic state is flagged for pill contrast but is not the satellite state',
+      desk.sb.document.documentElement.dataset.basemap === 'carto');
+    btn.onclick();
+    check('the third click returns to the standard dark map with every style layer as the style had it',
+      desk.sb.basemap() === 'normal' && vis(desk, 'sat') === 'none' && vis(desk, 'cartoimg') === 'none' &&
+      vis(desk, 'water') === 'visible' && vis(desk, 'roads') === 'visible' &&
+      vis(desk, 'hidden-by-style') === 'none' && desk.store['dlm-basemap'] === 'normal' &&
+      desk.sb.document.documentElement.dataset.basemap === 'normal' &&
+      btn.attrs['aria-pressed'] === 'false' && btn.attrs['data-i18n-title'] === 'basemapToSatellite');
 
     const stored = openPage(null, { store: { 'dlm-basemap': 'satellite' } });
     await stored.ready;
@@ -546,7 +561,18 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
       !!sbtn && sbtn.attrs['aria-pressed'] === 'true');
     stored.mapFire('style.load'); stored.mapFire('style.load');
     check('a stored satellite choice is applied at boot',
-      vis(stored, 'sat') === 'visible' && vis(stored, 'roads') === 'none');
+      vis(stored, 'sat') === 'visible' && vis(stored, 'cartoimg') === 'none' && vis(stored, 'roads') === 'none');
+
+    const storedCarto = openPage(null, { store: { 'dlm-basemap': 'carto' } });
+    await storedCarto.ready;
+    storedCarto.mapFire('style.load'); storedCarto.mapFire('style.load');
+    check('a stored cartographic choice is applied at boot',
+      storedCarto.sb.basemap() === 'carto' && vis(storedCarto, 'cartoimg') === 'visible' &&
+      vis(storedCarto, 'sat') === 'none' && vis(storedCarto, 'roads') === 'none');
+    const legacy = openPage(null, { store: { 'dlm-basemap': 'map' } });
+    await legacy.ready;
+    check('the legacy stored value "map" migrates to the standard dark view',
+      legacy.sb.basemap() === 'normal');
 
     console.log('\n=== Bas: Suche oben rechts, Telefon hinter der Lupe ===');
     const bar = phone.el('searchbar'), open = phone.el('searchopen'), input = phone.el('search'), res = phone.el('results');

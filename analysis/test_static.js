@@ -407,13 +407,22 @@ function run(check, log = console.log) {
   const chipMin = parseFloat(((rule('.chip') || '').match(/min-height:\s*([\d.]+)px/) || [])[1] || '0');
   check(`line chips are big enough to hit (${chipMin}px >= 26px)`, chipMin >= 26);
 
-  // Karte ⇄ Satellit (Wunsch 2026-10-15): Raster-Ebene neben dem Vektorstil, nur Sichtbarkeit
+  // Drei Grundkarten (Wunsch 2026-10-15): dunkler Vektorstil, Luftbild, helle Straßenkarte.
   check('satellite raster source is configured but starts hidden',
     /SAT_TILES = 'https:\/\/server\.arcgisonline\.com\/ArcGIS\/rest\/services\/World_Imagery\/MapServer\/tile\/\{z\}\/\{y\}\/\{x\}'/.test(html) &&
     /id: 'sat', type: 'raster'/.test(html) && /layout: \{ visibility: 'none' \}/.test(html) &&
     /const SAT_MAXZOOM = 1[89];/.test(html) && /maxzoom: SAT_MAXZOOM/.test(html));
-  check('satellite layer goes below the first style layer', /firstStyleLayerId = layers\.length \? layers\[0\]\.id/.test(html) &&
-    /map\.addLayer\(\{ id: 'sat'[^\n]*\}, firstStyleLayerId\)/.test(html));
+  // Beide Raster werden OBEN angehängt: der Stil beginnt mit einer background-Ebene, die die ganze
+  // Fläche malt — darunter eingehängt wäre ein Raster unsichtbar.
+  check('three basemaps exist, both rasters start hidden and sit above the style layers',
+    /CARTO_TILES = 'https:\/\/basemaps\.cartocdn\.com\/rastertiles\/voyager\/\{z\}\/\{x\}\/\{y\}\.png'/.test(html) &&
+    /const CARTO_MAXZOOM = 20;/.test(html) && /id: 'cartoimg', type: 'raster'/.test(html) &&
+    /const BASEMAPS = \['normal', 'satellite', 'carto'\]/.test(html) &&
+    /map\.addLayer\(\{ id: 'sat'[^\n]*\}\);/.test(html) && /map\.addLayer\(\{ id: 'cartoimg'[^\n]*\}\);/.test(html) &&
+    !/firstStyleLayerId/.test(html));
+  check('the three basemap titles exist in EN and DE',
+    ['basemapToSatellite: ', 'basemapToMap: ', 'basemapToNormal: '].every(k =>
+      (i18nSrc.match(new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length === 2));
   check('the basemap switch never swaps the style (layer visibility only)',
     /function applyBasemap\(\)[\s\S]*?setLayoutProperty\(l\.id, 'visibility'/.test(html) &&
     !/function (setBasemap|applyBasemap)\([^)]*\) \{[^}]*setStyle\(/.test(html) &&
@@ -429,9 +438,9 @@ function run(check, log = console.log) {
     /#attribbox \.attrib-sat \{ display: none; \}/.test(css) &&
     /html\[data-basemap="satellite"\] #attribbox \.attrib-sat \{ display: block; \}/.test(css) &&
     /attributionSatellite: 'Satellite imagery: Esri, Maxar, Earthstar Geographics'/.test(fs.readFileSync(path.join(DOCS, 'i18n.js'), 'utf8')));
-  check('marker pills get a dark outline only in satellite mode (focus ring kept)',
-    /html\[data-basemap="satellite"\] \.mk \{ box-shadow: 0 0 0 1\.5px rgba\(0,0,0,\.55\)/.test(css) &&
-    /html\[data-basemap="satellite"\] \.mk\.focus \{ box-shadow:[^}]*var\(--accent\)/.test(css) &&
+  check('marker pills get a dark outline on the two light basemaps (focus ring kept)',
+    /html:not\(\[data-basemap="normal"\]\) \.mk \{ box-shadow: 0 0 0 1\.5px rgba\(0,0,0,\.55\)/.test(css) &&
+    /html:not\(\[data-basemap="normal"\]\) \.mk\.focus \{ box-shadow:[^}]*var\(--accent\)/.test(css) &&
     !/(^|\n)\s*\.mk \{[^}]*rgba\(0,0,0,\.55\)/.test(css));
 
   // Suche oben rechts neben EN/DE (Wunsch 2026-10-15), Telefon: hinter der Lupe
