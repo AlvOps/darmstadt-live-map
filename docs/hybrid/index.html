@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Darmstadt Live Map — hybrid test page</title>
+<!--
+  Testseite für den Hybridbetrieb: eine Quelle je Linie (Betreiber-GPS für die gemeldeten Linien,
+  offener Strom mit Prognosen für alles andere). Sie ist absichtlich nur eine Weiterleitung: die
+  Anwendung selbst wird NICHT kopiert, damit es keine zweite Fassung gibt, die auseinanderläuft.
+  Der Schalter `hybrid=1` bleibt in der Adresse, live.js liest ihn und startet dann das
+  Betreibermodul. Die veröffentlichte Seite unter / bleibt unverändert (dort ist der Schalter aus).
+-->
+<meta http-equiv="refresh" content="0; url=../?hybrid=1">
+<script>location.replace('../?hybrid=1');</script>
+<style>
+  body { margin: 0; background: #10131a; color: #e8eaf0;
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 34rem; margin: 18vh auto 0; padding: 0 1.25rem; }
+  a { color: #78dca0; }
+  p.note { color: #9aa3b2; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Hybrid test page</h1>
+  <p>Opening the map with operator positions enabled…</p>
+  <p class="note">
+    This is the experimental build: on the lines the operator reports, a dot is the operator’s own
+    live position; every other dot stays derived from realtime stop prognoses.
+    <strong>Not</strong> the published map.
+  </p>
+  <p><a href="../?hybrid=1" id="go">Continue to the hybrid map</a></p>
+  <p class="note"><a href="../">Back to the published map (prognoses only)</a></p>
+</main>
+</body>
+</html>

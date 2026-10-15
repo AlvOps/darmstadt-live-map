@@ -756,6 +756,71 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   require('./test_i18n').run(check);
 
   console.log('\n=== Statische Prüfungen: CSS, Kontrast, Icons ===');
+  // ---------- Hybridbetrieb: EINE QUELLE JE LINIE (synthetische Daten, kein Netz) ----------
+  const NOW = Date.now();
+  const openVeh = (mode, line, lon, lat) => ({ tripId: 'open:' + line + lon, source: 'open',
+    mode, lineName: line, lon, lat, dep: NOW, arr: NOW + 600000 });
+  const posOf = v => [v.lon, v.lat];
+  const opVeh = (line, lon, lat) => X.opModel({ mode: 'bus', line, lat, lon, at: NOW,
+    vehicleId: 'v' + line, bearing: 90, dest: 'Reinheim' });
+  const HB = [8.6512, 49.8728];              // Darmstadt
+  const OFFENBACH = [8.76, 50.10];           // ~35 km weg, dieselbe Linie 4
+
+  check('hybrid is off unless switched on (the published page never calls the operator)',
+    X.HYBRID_ON === false && L.HYBRID_ON === false && typeof X.activateHybridCopy === 'function' &&
+    X.activateHybridCopy() === false);       // ohne Schalter auch keine Wortlautumstellung
+
+  check('the dismissed module is not consulted when the hybrid is off',
+    X.selectSources([openVeh('bus', '4E', ...HB)], [opVeh('4', ...HB)], { now: NOW, posOf }).list
+      .length === 1);
+
+  check('SEV alias: operator BUS 4 belongs to open BUS 4E (and 8 to 8E)',
+    X.opKey('bus', '4') === X.lineKey('bus', '4E') && X.opKey('bus', '8') === X.lineKey('bus', '8E') &&
+    X.OP_ALIAS['bus|4'] === 'bus|4e');
+
+  const r1 = X.selectSources([openVeh('bus', '4E', ...HB)], [opVeh('4', ...HB)],
+    { now: NOW, posOf, health: { lastOk: NOW, lastErr: null, startedAt: NOW - 1000 } });
+  check('one source per line: the derived dot of a covered line is dropped, one dot remains',
+    r1.list.length === 1 && r1.list[0].source === 'operator' && r1.counts.suppressed === 1 &&
+    r1.counts.operator === 1 && r1.fallback === false);
+
+  const r2 = X.selectSources([openVeh('bus', '4E', ...OFFENBACH)], [opVeh('4', ...HB)],
+    { now: NOW, posOf, health: { lastOk: NOW, lastErr: null, startedAt: NOW - 1000 } });
+  check('the scope gate leaves the same line 35 km away alone (Offenbach keeps its dots)',
+    r2.list.length === 2 && r2.counts.suppressed === 0 &&
+    r2.list.filter(v => v.source === 'open').length === 1);
+
+  const holdStart = { now: NOW - 300000, posOf, health: { lastOk: NOW - 300000, lastErr: null, startedAt: NOW - 600000 } };
+  const r3a = X.selectSources([openVeh('bus', '4E', ...HB)], [opVeh('4', ...HB)], holdStart);
+  const r3b = X.selectSources([openVeh('bus', '4E', ...HB)], [],                    // ein Abruf ohne die Linie
+    { now: NOW, posOf, health: { lastOk: NOW, lastErr: null, startedAt: NOW - 600000 }, seen: r3a.seen });
+  check('coverage holds over a poll the operator misses (line stays covered)',
+    r3b.counts.suppressed === 1 && r3b.counts.covered === 1);
+  const r3c = X.selectSources([openVeh('bus', '4E', ...HB)], [],
+    { now: NOW + X.OP_HOLD_MS + 1000, posOf, health: { lastOk: NOW, lastErr: null, startedAt: NOW },
+      seen: r3b.seen });
+  check('coverage expires after the hold time', r3c.counts.suppressed === 0 && r3c.counts.covered === 0);
+
+  const r4 = X.selectSources([openVeh('bus', '4E', ...HB)], [opVeh('4', ...HB)],
+    { now: NOW, posOf, health: { lastOk: NOW - X.OP_STALE_MS - 1, lastErr: null, startedAt: NOW - 600000 } });
+  check('a stale operator feed falls back globally (everything from the open feed, flag set)',
+    r4.fallback === true && r4.list.length === 1 && r4.list[0].source === 'open' &&
+    r4.counts.operator === 0 && r4.counts.suppressed === 0);
+
+  const r5 = X.selectSources([openVeh('bus', '4E', ...HB)], [opVeh('4', ...HB)], { now: NOW, posOf });
+  check('without the operator module nothing changes (no banner, nothing suppressed)',
+    r5.fallback === false && r5.list.length === 1 && r5.counts.operator === 0);
+
+  const m = X.opModel({ mode: 'bus', line: '4', lat: 49.87, lon: 8.65, at: NOW, vehicleId: 'vx' });
+  check('an operator dot carries its provenance and never claims a delay',
+    m.source === 'operator' && m.delayMin === null && /^op:/.test(m.tripId) &&
+    typeof m.key === 'string');
+  check('the hybrid wording exists in EN and DE (and differs from the published wording)',
+    (() => { const s = fs.readFileSync(path.join(DOCS, 'i18n.js'), 'utf8');
+      return ['subtitle', 'modeLive', 'attributionPosition', 'welcomeBody']
+        .every(k => (s.match(new RegExp(k + ': ', 'g')) || []).length === 2 &&
+                    (s.match(new RegExp(k + 'Operator: ', 'g')) || []).length === 2); })());
+
   require('./test_static').run(check);
 
   console.log(`\nRESULT: ${fails === 0 ? 'PASS' : 'FAIL (' + fails + ')'}`);

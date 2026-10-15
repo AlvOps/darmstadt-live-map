@@ -212,8 +212,12 @@ function run(check, log = console.log) {
     /following: \(\) => !!followTrip/.test(liveSrc));
   check('stale HTML heals itself (version compared against the freshly loaded live.js)',
     /const APP_V = '\d{8}-\d+'/.test(html) && /DarmstadtLive\.VERSION/.test(html) &&
-    /location\.replace\(location\.pathname \+ '\?v='/.test(html) &&
+    /new URLSearchParams\(location\.search\)/.test(html) &&
+    /location\.replace\(location\.pathname \+ '\?' \+ qs\.toString\(\)\)/.test(html) &&
     /sessionStorage/.test(html));
+  // Die Selbstheilung darf den Hybridschalter nicht verlieren, sonst landet man beim Neuladen der
+  // versionierten Seite plötzlich auf der Fassung ohne Betreiberpositionen.
+  check('self-healing keeps the hybrid switch in the URL', /qs\.set\('v', fresh\)/.test(html));
   // Ruckeln: die Animation lief mit 5 Bildern/s, weil pro Fahrzeug und Frame linear gesucht und ein
   // neues Pfad-Array geschnitten wurde. Jetzt ~30/s, Karte entkoppelt, Suche logarithmisch.
   check('animation runs near display rate (not the old 5 fps)', /const FRAME_MS = 3[0-9];/.test(liveSrc));
@@ -300,11 +304,24 @@ function run(check, log = console.log) {
     /leg\.legGeometry && leg\.legGeometry\.points/.test(liveSrc) &&
     /const pts = decodePolyline\(g, 1e7\)/.test(liveSrc) &&
     /function decodePolyline\(str, factor\)/.test(liveSrc));
-  check('the operator feed is gone (it could not be merged without duplicates)',
-    !/heag/i.test(liveSrc) && !/heag\.js/.test(html) && !fs.existsSync(path.join(DOCS, 'heag.js')));
-  check('credits state the single source again (derived positions only)',
-    /attributionPosition: '/.test(i18nSrc) && !/attributionOperator/.test(i18nSrc) &&
-    !/positionOperator/.test(i18nSrc) && /<p class="note-warn" data-i18n="attributionPosition">/.test(html));
+  // Betreiberpositionen sind zurück — aber EINE QUELLE JE LINIE statt Fahrzeugpaarung, und nur im
+  // Hybridbetrieb. Das alte Modul, das je Fahrzeug zusammenführte, bleibt entfernt.
+  check('operator positions are a gated, per-line feature (no vehicle pairing again)',
+    fs.existsSync(path.join(DOCS, 'operator.js')) && /DarmstadtOperator/.test(liveSrc) &&
+    /const HYBRID_ON =/.test(liveSrc) && /!HYBRID_ON \? null/.test(liveSrc) &&
+    /function selectSources\(/.test(liveSrc) && /OP_ALIAS/.test(liveSrc) &&
+    !/matchTwin|pairTwin|mergeTwin/.test(liveSrc) &&
+    !/heag\.js/.test(html) && !fs.existsSync(path.join(DOCS, 'heag.js')) &&
+    /DarmstadtLive\.activateHybridCopy\(\)/.test(html));
+  // Zwei Wortlaute: die veröffentlichte Seite nennt weiter nur die abgeleitete Quelle, der
+  // Hybridbetrieb nennt zusätzlich die Betreiberpositionen. Getauscht wird im Skript, nicht im Markup.
+  check('credits know both sources while the published page states the derived one',
+    /attributionPosition: '/.test(i18nSrc) && /attributionPositionOperator: '/.test(i18nSrc) &&
+    /<p class="note-warn" data-i18n="attributionPosition">/.test(html) &&
+    /<p class="attrib-op" data-i18n="attributionOperator">/.test(html) &&
+    /#attribbox \.attrib-op \{ display: none; \}/.test(html) &&
+    /html\[data-hybrid="1"\] #attribbox \.attrib-op \{ display: block; \}/.test(html) &&
+    !/data-i18n="attributionPositionOperator"/.test(html));
   // Eine Suche von außerhalb des Ausschnitts muss trotzdem Abfahrten zeigen: der Halt wird über den
   // Namen nachgeschlagen, statt auf die Halte des aktuellen Ausschnitts zu hoffen ("mal ja, mal nein").
   check('a stop outside the current view is looked up by name (departures are no longer hit-and-miss)',

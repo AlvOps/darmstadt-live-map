@@ -23,6 +23,24 @@
  *       entlang dessen echter Geometrie (dieselbe Methode nutzt die Transitous-Karte).
  *     - Das Popup weist diese Ableitung ausdrücklich aus, damit nichts als GPS missverstanden wird.
  *
+ * Zweite Quelle: die Live-Positionen des Betreibers (operator.js, IVANTO SRS) — echtes GPS, aber
+ *   nur für die Linien, die dort gemeldet werden. Regel: EINE QUELLE JE LINIE (selectSources):
+ *     - Linienschlüssel = Verkehrsart + normalisierte Liniennummer; Betreiber-Bus 4/8 heißt im offenen
+ *       Strom 4E/8E (SEV) -> Aliastabelle OP_ALIAS, sonst stünden je Linie 4–6 Punkte doppelt da.
+ *     - Eine Linie gilt als abgedeckt, wenn in den letzten 10 Min. ein frisches (<= 90 s altes)
+ *       Betreiberfahrzeug dafür gemeldet wurde. Die Haltezeit fängt Linien ab, die für einen Abruf
+ *       verschwinden (gemessen: GU3, OR1 — Linien mit nur einem Fahrzeug).
+ *     - Abgeleitete Punkte einer abgedeckten Linie entfallen NUR im Betriebsgebiet, d. h. im Umkreis
+ *       von 2 km um ein Betreiberfahrzeug derselben Linie. Die Offenbacher Busse 1/3/4/6/8 (~35 km
+ *       entfernt, gleiche Namen) bleiben so sichtbar.
+ *     - Keine Antwort des Betreibers seit 90 s -> Betreiberdaten komplett ignorieren, alles aus dem
+ *       offenen Strom zeichnen und ein Banner zeigen (Rückfall global, nicht je Linie).
+ *     - Kein Abgleich einzelner Fahrzeuge, nirgends: das ist ein früherer, gescheiterter Versuch
+ *       (Zwillinge im Median 250–290 m, im p90 bis 1,4 km auseinander; Commit 6d649d8 hat ihn entfernt).
+ *   Jedes Fahrzeug trägt `source` ('operator' | 'open'); Karte, Tooltip und Quellenangabe nennen die
+ *   Herkunft. Betreiberfahrzeuge haben keine Verspätung (das Feld ist dort immer null) — sie wird als
+ *   „nicht gemeldet" gezeigt, nie als 0.
+ *
  * API-Eigenheiten:
  *   - bbox-Reihenfolge ist min=lat,lon&max=lat,lon (umgekehrt -> leere Liste)
  *   - zoom, startTime, endTime sind Pflicht; zu große bbox kann HTTP 422 liefern (bbox wird geklemmt)
@@ -51,11 +69,22 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261015-04';
+  const VERSION = '20261015-05';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
                                    // Die Karten-Platzierung läuft davon entkoppelt in jedem Frame (tick).
+  // Eine Quelle je Linie (siehe Kopf): Schwellen der Auswahl zwischen Betreiber-GPS und offenem Strom.
+  const OP_FRESH_MS = 90000;       // Meldung höchstens so alt -> zählt als „Linie wird gemeldet"
+  const OP_HOLD_MS = 600000;       // so lange bleibt eine Linie abgedeckt, auch wenn sie kurz fehlt
+  const OP_SCOPE_M = 2000;         // Betriebsgebiet: so nah an einem Betreiberfahrzeug derselben Linie
+  const OP_STALE_MS = 90000;       // so lange ohne erfolgreiche Betreiberantwort -> globaler Rückfall
+  const OP_MAX_AGE_MS = 120000;    // ältere Betreibermeldung wird nicht mehr gezeichnet
+  const OP_CARD_MS = 5000;         // Karte eines Betreiberfahrzeugs: Alter der Meldung nachführen
+  const SELECT_MS = 5000;          // Auswahl spätestens so oft neu (Haltezeit/Rückfall laufen ab)
+  // Betreiber-Name -> Name im offenen Strom (gemessen: die SEV-Busse heißen dort 4E/8E, Zwillinge
+  // 60–540 m auseinander). Nur in diese Richtung: ein Bus „4" des offenen Stroms (Offenbach) bleibt 4.
+  const OP_ALIAS = { 'bus|4': 'bus|4e', 'bus|8': 'bus|8e' };
 
   // Nur Nahverkehr (kein ICE/IC, keine Fernbusse, keine Flugzeuge) — sonst hängen Abschnitte
   // mit mehreren tausend Geometriepunkten bis Stuttgart/Nürnberg in der Karte.
@@ -69,7 +98,11 @@
   const T = (key, vars) => (window.I18N ? window.I18N.t(key, vars) : key);
 
   let ctx = null;
-  let vehicles = [];
+  let vehicles = [];                     // Fahrzeuge aus dem offenen Strom (abgeleitete Positionen)
+  let drawn = [];                        // Auswahl je Linie: das wird gezeichnet, gezählt, angetippt
+  let opSeen = new Map();                // Linienschlüssel -> { at, pts } (Abdeckung + Haltezeit)
+  let opFallback = false, opPresent = false, lastSelect = 0, feedBanner = null, shownBanner = null;
+  let selCounts = { operator: 0, open: 0, suppressed: 0, covered: 0 };
   let lastOk = 0, lastErr = null, failures = 0, lastPaint = 0;
   let pollTimer = null, refreshTimer = null, refreshInFlight = false, pendingRefresh = false;
   let lineIndex = null, viewBox = null;
@@ -219,10 +252,7 @@
       if (built.length || failures === 0) {      // leere Antwort nicht als Erfolg überbügeln
         vehicles = built;
         lastOk = Date.now();
-        if (popupVehicle) {                      // offenes Popup am Fahrzeug halten
-          const again = vehicles.find(x => x.tripId === popupVehicle.tripId);
-          if (again) popupVehicle = again; else closePopup();   // Fahrt ist beendet
-        }
+        reselect(true);                          // Quelle je Linie neu wählen, offenes Popup nachziehen
       }
       lastErr = null; failures = 0;
       setBanner(null);
@@ -283,7 +313,7 @@
       const sched = t.scheduledDeparture ? num(t.scheduledDeparture) : NaN;
       const delayMin = Number.isFinite(sched) ? Math.round((dep - sched) / 60000) : null;  // null = unbekannt
       byTrip.set(tid, {
-        tripId: tid, mode, running, holding,
+        tripId: tid, mode, running, holding, source: 'open',
         lineName: String(tr.routeShortName || '?'),
         headsign: String(tr.headsign || ''),
         dest: String((t.to && t.to.name) || ''),
@@ -294,6 +324,149 @@
       });
     }
     return Array.from(byTrip.values()).filter(v => v.running || v.holding);   // fahrend oder am Halt wartend
+  }
+
+  // ---------- Eine Quelle je Linie: Betreiber-GPS oder offener Strom
+  const isOp = v => !!v && v.source === 'operator';
+  const lineKey = (mode, name) => mode + '|' + normLine(name);
+  // Schlüssel eines Betreiberfahrzeugs im Namensraum des offenen Stroms (Alias 4 -> 4E, 8 -> 8E)
+  function opKey(mode, name) { const k = lineKey(mode, name); return OP_ALIAS[k] || k; }
+
+  function metres(a, b) {                       // [lon, lat] -> Meter (äquirektangulär, reicht für 2 km)
+    const kx = 111320 * Math.cos((a[1] + b[1]) / 2 * Math.PI / 180);
+    return Math.hypot((a[0] - b[0]) * kx, (a[1] - b[1]) * 110540);
+  }
+
+  // Eintrag aus operator.js -> dasselbe Fahrzeugmodell, das Karte, Tipp, Linienfokus und Zähler
+  // benutzen. Keine Verspätung (null = nicht gemeldet), keine Fahrt-Kennung, keine Halteliste.
+  function opModel(e) {
+    const key = opKey(e.mode, e.line);
+    return {
+      tripId: 'op:' + (e.vehicleId || (e.line + '@' + e.lat.toFixed(5) + ',' + e.lon.toFixed(5))),
+      source: 'operator', key, mode: e.mode,
+      lineName: e.line, headsign: e.dest, dest: e.dest, fromName: '',
+      lon: e.lon, lat: e.lat, at: e.at, bearing: e.bearing, vehicleId: e.vehicleId,
+      delayMin: null, realTime: true, routeColor: '',
+      // Farbe/Linienfokus über den Namen im offenen Strom: so gehört der SEV-Bus 4 zur selben Linie wie 4E
+      lineIdx: matchLine(key.slice(key.indexOf('|') + 1), e.mode),
+    };
+  }
+
+  // Die Auswahl als reine Rechnung (ohne DOM, ohne Netz — die Tests geben synthetische Daten hinein).
+  //   open    Fahrzeuge des offenen Stroms (abgeleitet)
+  //   op      Fahrzeuge des Betreibers (opModel)
+  //   o.now, o.seen (bisherige Abdeckung), o.health (operator.health() oder null = Modul fehlt),
+  //   o.posOf (Position eines offenen Fahrzeugs; Vorgabe: dieselbe Interpolation wie die Karte)
+  // Ergebnis: { list, seen, fallback, covered, counts } — `seen` ist neu, die Eingabe bleibt unberührt.
+  function selectSources(open, op, o) {
+    const opt = o || {};
+    const now = typeof opt.now === 'number' ? opt.now : Date.now();
+    const posOf = opt.posOf || (v => vehiclePosAt(v, now));
+    const openList = (open || []).filter(Boolean);
+    const h = opt.health || null;
+    // Modul fehlt: genau das Verhalten von vorher, ohne Banner.
+    if (!h) return { list: openList, seen: new Map(), fallback: false, covered: new Set(),
+                     counts: { operator: 0, open: openList.length, suppressed: 0, covered: 0 } };
+    // Globaler Rückfall: seit OP_STALE_MS keine erfolgreiche Antwort (oder der erste Abruf ist
+    // gescheitert / nach OP_STALE_MS noch keiner gelungen) -> Betreiberdaten komplett ignorieren.
+    const fallback = h.lastOk ? now - h.lastOk > OP_STALE_MS
+      : (!!h.lastErr || (h.startedAt > 0 && now - h.startedAt > OP_STALE_MS));
+    if (fallback) return { list: openList, seen: new Map(), fallback: true, covered: new Set(),
+                           counts: { operator: 0, open: openList.length, suppressed: 0, covered: 0 } };
+    // Abdeckung: frische Meldung (<= 90 s) frischt die Linie auf; sie bleibt OP_HOLD_MS abgedeckt.
+    // Neben dem Zeitpunkt merkt sich jede Linie die letzten Orte ihrer Fahrzeuge — das ist das
+    // Betriebsgebiet für die Gebietsprüfung, auch während die Linie für einen Abruf fehlt.
+    const seen = new Map();
+    for (const [k, e] of (opt.seen || new Map())) {
+      if (now - e.at > OP_HOLD_MS) continue;
+      seen.set(k, { at: e.at, pts: e.pts.filter(p => now - p.at <= OP_HOLD_MS) });
+    }
+    const ops = (op || []).filter(v => v && Number.isFinite(v.lon) && Number.isFinite(v.lat) &&
+      Number.isFinite(v.at) && now - v.at <= OP_MAX_AGE_MS);
+    for (const v of ops) {
+      if (now - v.at > OP_FRESH_MS) continue;
+      const k = v.key || opKey(v.mode, v.lineName);
+      const e = seen.get(k) || { at: 0, pts: [] };
+      e.at = now;
+      e.pts = e.pts.filter(p => p.id !== v.tripId).concat([{ id: v.tripId, lon: v.lon, lat: v.lat, at: now }]);
+      seen.set(k, e);
+    }
+    const covered = new Set(seen.keys());
+    // Offener Strom: nur unterdrücken, wenn die Linie abgedeckt ist UND das Fahrzeug im Gebiet liegt.
+    let suppressed = 0;
+    const keep = [];
+    for (const v of openList) {
+      const k = lineKey(v.mode, v.lineName);
+      const e = covered.has(k) ? seen.get(k) : null;
+      if (e) {
+        const p = posOf(v);
+        if (p && e.pts.some(q => metres(p, [q.lon, q.lat]) <= OP_SCOPE_M)) { suppressed++; continue; }
+      }
+      keep.push(v);
+    }
+    // Betreiberfahrzeuge: nur abgedeckte Linien (frisch oder in der Haltezeit) — praktisch alle.
+    const opKeep = ops.filter(v => covered.has(v.key || opKey(v.mode, v.lineName)));
+    return { list: keep.concat(opKeep), seen, fallback: false, covered,
+             counts: { operator: opKeep.length, open: keep.length, suppressed, covered: covered.size } };
+  }
+
+  function inBox(box, pos, pad) {
+    if (!box || !pos) return true;
+    const pl = (box.n - box.s) * pad, pw = (box.e - box.w) * pad;
+    return pos[1] >= box.s - pl && pos[1] <= box.n + pl && pos[0] >= box.w - pw && pos[0] <= box.e + pw;
+  }
+
+  // Hybridbetrieb: Betreiberpositionen sind eine Testfunktion. Standardmäßig AUS, damit die
+  // veröffentlichte Seite unverändert bleibt (nur der offene Strom, keine Betreiberabrufe). An über
+  // ?hybrid=1 oder window.DLM_OPERATOR = true — die Testseite /hybrid/ setzt genau das.
+  const HYBRID_ON = typeof window !== 'undefined' && !!window &&
+    (window.DLM_OPERATOR === true ||
+     /[?&]hybrid=1(?:&|$)/.test(String((window.location && window.location.search) || '')));
+
+  // EINZIGER Einstieg zum Betreibermodul: ohne Hybridbetrieb null, damit Start, Stopp, Rückfall und
+  // Fahrzeugabruf gar nicht erst stattfinden.
+  const operatorModule = () => (!HYBRID_ON ? null
+    : (window.DarmstadtOperator && typeof window.DarmstadtOperator.vehicles === 'function'
+      ? window.DarmstadtOperator : null));
+
+  function operatorInput() {
+    const O = operatorModule();
+    if (!O) return { health: null, op: [] };
+    let health = null, op = [];
+    try {
+      health = O.health();
+      op = (O.vehicles() || []).filter(e => e && e.mode && e.line).map(opModel);
+    } catch (_) { health = null; op = []; }   // kaputtes Modul -> wie ohne Modul
+    return { health, op };
+  }
+
+  // Auswahl anwenden: was gezeichnet wird, Zähler, Banner und das offene Popup. closeMissing: nur nach
+  // neuen Daten schließt sich eine Karte, deren Fahrzeug weg ist (wie bisher beim Abruf) — die
+  // regelmäßige Neuauswahl im Bildtakt zieht sie nur nach.
+  function reselect(closeMissing) {
+    const now = Date.now();
+    const inp = operatorInput();
+    opPresent = !!inp.health;
+    const r = selectSources(vehicles, inp.op, { now, seen: opSeen, health: inp.health });
+    opSeen = r.seen;
+    opFallback = r.fallback;
+    // Betreiberfahrzeuge kommen netzweit: wie der offene Strom nur im (erweiterten) Ausschnitt zeigen.
+    drawn = r.list.filter(v => !isOp(v) || inBox(viewBox, [v.lon, v.lat], 0.25));
+    const nOp = drawn.filter(isOp).length;
+    selCounts = { operator: nOp, open: drawn.length - nOp, suppressed: r.counts.suppressed, covered: r.counts.covered };
+    lastSelect = now;
+    if (popupVehicle) {                        // offenes Popup am Fahrzeug halten
+      const again = drawn.find(x => x.tripId === popupVehicle.tripId);
+      if (again) popupVehicle = again;
+      else if (closeMissing) closePopup();     // Fahrt beendet oder Linie wechselt die Quelle
+    }
+    paintBanner(false);
+  }
+
+  function onOperatorChange() {
+    if (!ctx || !active) return;
+    reselect(true);
+    updateStat();
   }
 
   // Der Feed liefert je Bahnsteig/Kante einen Eintrag. Am Hauptbahnhof waren das 16 Einträge für
@@ -319,7 +492,14 @@
 
   function vehiclesAt(t) {
     const out = [];
-    for (const v of vehicles) {
+    for (const v of drawn) {
+      if (isOp(v)) {
+        // Betreiberfahrzeug: genau die gemeldete Position, nicht interpoliert und nicht vorausgerechnet.
+        // Der Punkt springt deshalb mit jeder Meldung (~20–30 s) — gleitende Bewegung wäre erfunden.
+        if (t - v.at > OP_MAX_AGE_MS) continue;
+        out.push({ v, pos: [v.lon, v.lat], rest: [], u: 0 });
+        continue;
+      }
       if (t > v.arr + LEG_GRACE_MS) continue;   // Daten zu alt: nicht als Live-Position zeigen
       const u = Math.min(1, Math.max(0, (t - v.dep) / (v.arr - v.dep)));
       const d = u * v.total;
@@ -440,6 +620,7 @@
         markerPool.set(id, el);
       }
       el.dataset.mode = v.mode || 'bus';                 // Farbe nach Verkehrsart (wie im Panel)
+      el.dataset.src = isOp(v) ? 'operator' : 'open';    // Herkunft der Position (GPS-Punkt per CSS)
       const html = markerHtml(v.mode, v.lineName);
       if (el.dataset.sig !== html) { el.innerHTML = html; el.dataset.sig = html; }
       el.classList.toggle('focus', id === focusTrip);
@@ -482,6 +663,8 @@
     // weitergezeichnet werden, sonst steht der Punkt still.
     if (!followTrip && ctx.map.isMoving && ctx.map.isMoving()) return;
     const t = Date.now();
+    // Haltezeit und globaler Rückfall laufen auch ohne neue Daten ab: Auswahl regelmäßig neu rechnen.
+    if (t - lastSelect > SELECT_MS) reselect(false);
     const sel = ctx.state.selLine;
     const cur = vehiclesAt(t);
     // Angeklicktes Fahrzeug dauerhaft markieren, damit der Punkt auch nach dem Kamera-Follow zu finden ist
@@ -561,8 +744,10 @@
     }
     if (!info.object.v) { tip.style.display = 'none'; return; }
     const v = info.object.v;
+    const status = isOp(v) ? T('popup.delayNotReported') + ' · ' + T('popup.sourceOperator')
+      : delayText(v.delayMin) + ' · ' + T('popup.realtime');
     tip.innerHTML = `<b>${esc(v.lineName)}</b> → ${esc(ss(v.headsign || v.dest))}<br>` +
-      `<span style="color:var(--muted)">${esc(delayText(v.delayMin))} · ${esc(T('popup.realtime'))}</span>`;
+      `<span style="color:var(--muted)">${esc(status)}</span>`;
     tip.style.display = 'block';
     tip.style.left = info.x + 14 + 'px'; tip.style.top = info.y + 14 + 'px';
   }
@@ -698,7 +883,27 @@
     };
   }
 
+  // Karte eines Betreiberfahrzeugs: was der Betreiber meldet (Linie, Ziel, Alter der Meldung) — und
+  // ausdrücklich, was er NICHT meldet (Verspätung, Halte). Kein Wort davon ist abgeleitet.
+  function opShell(v) {
+    const age = Number.isFinite(v.at) ? Math.max(0, Math.round((Date.now() - v.at) / 1000)) : null;
+    const sub = [T('popup.sourceOperator')];
+    if (age !== null) sub.push(T('popup.reportAge', { s: age }));
+    if (v.vehicleId) sub.push(T('popup.vehicleNo', { id: v.vehicleId }));
+    return `
+      <div class="pop-head">
+        <span class="pop-line" style="background:${cssColor(v)}">${esc(v.lineName)}</span>
+        <span class="pop-title">${esc(ss(v.headsign || v.dest))}</span>
+        <button class="pop-close" aria-label="${esc(T('popup.close'))}">✕</button>
+      </div>
+      <div class="pop-delay unknown">${esc(T('popup.delayNotReported'))}</div>
+      <div class="pop-sub pop-src-op">${esc(sub.join(' · '))}</div>
+      <div class="pop-sub">${esc(T('popup.noStopsOperator'))}</div>
+      <div class="pop-note note-gps">${esc(T('popup.positionNoteOperator'))}</div>`;
+  }
+
   function popupShell(v, leg, loading) {
+    if (isOp(v)) { popupStopList = []; return opShell(v); }
     const stops = leg && !leg.error ? nextStops(leg, CARD_STOPS) : null;
     popupStopList = stops || [];                 // Klick-Ziele im Popup (Index -> Halt)
     const rows = stops ? stops.map((s, i) => {
@@ -724,8 +929,7 @@
     return `
       <div class="pop-head">
         <span class="pop-line" style="background:${cssColor(v)}">${esc(v.lineName)}</span>
-        <span class="pop-title">${v.opOnly ? esc(ss(v.headsign || v.dest))
-          : esc(T('popup.nextStops')) + ' → ' + esc(ss(v.headsign || v.dest))}</span>
+        <span class="pop-title">${esc(T('popup.nextStops')) + ' → ' + esc(ss(v.headsign || v.dest))}</span>
         <button class="pop-close" aria-label="${esc(T('popup.close'))}">✕</button>
       </div>
       <div class="pop-delay ${delayClass(v.delayMin)}">${esc(delayText(v.delayMin))}</div>
@@ -768,7 +972,7 @@
   function followTick() {
     if (!followTrip) return;
     if (Date.now() > followUntil) { stopFollow(); return; }
-    const v = vehicles.find(x => x.tripId === followTrip) || (popupVehicle && popupVehicle.tripId === followTrip ? popupVehicle : null);
+    const v = drawn.find(x => x.tripId === followTrip) || (popupVehicle && popupVehicle.tripId === followTrip ? popupVehicle : null);
     if (!v) { stopFollow(); return; }
     const p = vehiclePosAt(v, Date.now());
     if (!p) { stopFollow(); return; }
@@ -781,6 +985,7 @@
 
   // Position des Fahrzeugs zu einem Zeitpunkt — dieselbe Interpolation wie die Kartenpunkte
   function vehiclePosAt(v, t) {
+    if (isOp(v)) return Number.isFinite(v.lon) && Number.isFinite(v.lat) ? [v.lon, v.lat] : null;   // gemeldet, nicht gerechnet
     if (!v || !v.path || !v.cd || !(v.arr > v.dep)) return null;
     const u = Math.min(1, Math.max(0, (t - v.dep) / (v.arr - v.dep)));
     return posAt(v.path, v.cd)(u * v.total);
@@ -894,8 +1099,15 @@
       const json = await res.json();
       const keep = viewBox;
       viewBox = CITY_BOX;                     // die Ausschnittsprüfung im Aufbau nutzt diese Box
-      const wide = buildVehicles(Array.isArray(json) ? json : []);
+      const wideOpen = buildVehicles(Array.isArray(json) ? json : []);
       viewBox = keep;
+      // Dieselbe Regel wie auf der Karte: eine Quelle je Linie, Betreiberfahrzeuge im weiten Ausschnitt.
+      // (Vorher ging hier die Fahrzeugliste ohne `pos` an focusLine — der Schwenk brach still ab.)
+      const inp = operatorInput(), at = Date.now();
+      const sel = selectSources(wideOpen, inp.op, { now: at, seen: opSeen, health: inp.health });
+      const wide = sel.list.filter(v => !isOp(v) || inBox(CITY_BOX, [v.lon, v.lat], 0))
+        .map(v => ({ v, pos: vehiclePosAt(v, at) }));
+      if (!wide.some(d => d.v.lineIdx === idx)) { focusLine(idx, null); return; }   // weit nichts: wie bisher
       focusLine(idx, wide);
     } catch (_) {
       focusLine(idx, null);                    // im Zweifel mit dem schwenken, was wir schon haben
@@ -1134,15 +1346,21 @@
       popupStation = null; popupAnchor = null; popupDepartures = null;
     }
     else {                                   // aktuellen Datensatz der Fahrt übernehmen (Verspätung ändert sich)
-      const fresh = vehicles.find(x => x.tripId === v.tripId);
+      const fresh = drawn.find(x => x.tripId === v.tripId);
       if (fresh) popupVehicle = fresh;
     }
     el.classList.add('on');
-    paintPopup(!refreshing);
+    paintPopup(!refreshing && !isOp(v));
+    // Betreiberfahrzeug: es gibt keine Fahrt im offenen Strom, also keinen Fahrtabruf, keine Halte und
+    // keine Linienlänge. Die Karte wird nur häufiger neu beschriftet, damit das Alter der Meldung stimmt.
+    if (isOp(v)) {
+      popupLeg = { operator: true };
+      popupChain = null; chainCache = [];
+      popupTimer = setTimeout(popupTick, OP_CARD_MS);
+      return;
+    }
     let leg;
-    if (v.opOnly) {
-      leg = { operator: true };            // nur der Betreiberpunkt: der offene Strom kennt keine Fahrt
-    } else try {
+    try {
       const res = await timedFetch(`${API_TRIP}?tripId=${encodeURIComponent(v.tripId)}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       leg = pickLeg(await res.json(), v) || { error: 'noLegs' };
@@ -1152,14 +1370,6 @@
     // Achtung: eine verspätete Antwort darf die Linie NICHT zeichnen. Vorher wurden popupChain und
     // chainCache vor der Prüfung auf popupSeq gesetzt — eine Antwort für eine schon geschlossene
     // oder ersetzte Karte hinterließ einen Geisterzug auf der Karte.
-    if (v.opOnly) {                          // Betreiberpunkt: kein Fahrtabruf, kein Auffrisch-Timer
-      if (seq !== popupSeq || !popupVehicle) return;
-      popupLeg = leg;
-      popupChain = null; chainCache = [];
-      paintPopup(false);
-      popupTimer = setTimeout(popupTick, POPUP_REFRESH_MS);
-      return;
-    }
     if (seq !== popupSeq || !popupVehicle) return;     // veraltet: Popup zu oder anderes Fahrzeug
     // Volle Länge der Linie: alle Halte dieser Fahrt in Reihenfolge, auch die schon durchfahrenen.
     // Nur bei brauchbarer Antwort neu setzen — ein Aussetzer behält Liste und Linie.
@@ -1270,29 +1480,48 @@
     const badge = document.getElementById('livebadge');
     if (badge && badge.dataset) badge.dataset.state = state;
     if (!el) return;
+    // Herkunft auch in der Statuszeile: wie viele Punkte Betreiber-GPS sind, oder dass gerade alles
+    // abgeleitet ist, weil der Betreiber nicht antwortet.
+    const src = !opPresent ? '' : opFallback ? ' · ' + T('statOperatorDown')
+      : selCounts.operator ? ' · ' + T('statOperator', { n: selCounts.operator }) : '';
     el.textContent = age === null ? T('waiting')
       : T('fetchedAgo', { s: age }) + (state === 'expired' ? ' · ' + T('expired') : state === 'stale' ? ' · ' + T('stale') : '') +
-        (failures ? ' · ' + T('failedAttempts', { n: failures }) : '');
+        (failures ? ' · ' + T('failedAttempts', { n: failures }) : '') + src;
   }
 
-  function setBanner(msg) {
+  // Ein Banner, zwei Anlässe: Störung des offenen Stroms (Vorrang) oder globaler Rückfall, weil der
+  // Betreiber nicht antwortet. force=true schreibt immer (wie bisher bei jedem Abruf); sonst nur bei
+  // Änderung, damit kurze Hinweise aus index.html (Ortung) nicht im Bildtakt überschrieben werden.
+  function paintBanner(force) {
+    const msg = feedBanner || (opFallback ? T('bannerOperatorDown') : null);
+    if (!force && msg === shownBanner) return;
+    shownBanner = msg;
     const b = document.getElementById('banner');
     if (!b) return;
     if (!msg) { b.hidden = true; b.textContent = ''; return; }
     b.hidden = false; b.textContent = msg;
   }
 
+  function setBanner(msg) {
+    feedBanner = msg || null;
+    paintBanner(true);
+  }
+
   // ---------- Steuerung
   function start() {
     stop();
     active = true;
-    if (lastOk && Date.now() - lastOk > STALE_MS) vehicles = [];   // alte Positionen nicht wieder zeigen
+    if (lastOk && Date.now() - lastOk > STALE_MS) { vehicles = []; drawn = []; }   // alte Positionen nicht wieder zeigen
+    const O = operatorModule();
+    if (O && typeof O.start === 'function') { try { O.start(onOperatorChange); } catch (_) { /* dann ohne */ } }
     refresh();
     pollTimer = setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
   }
 
   function stop() {
     active = false;
+    const O = operatorModule();
+    if (O && typeof O.stop === 'function') { try { O.stop(); } catch (_) { /* egal */ } }
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = null;
     if (refreshTimer) clearTimeout(refreshTimer);
@@ -1306,8 +1535,26 @@
     refreshTimer = setTimeout(() => { refreshTimer = null; refresh(); }, delay);
   }
 
+  // Wortlaut für den Hybridbetrieb: dort stehen zwei Quellen, auf der veröffentlichten Seite eine.
+  // Die Schlüsselpaare liegen hier (nicht im HTML), damit die Prüfung auf i18n-Attribute im HTML
+  // keine erfundenen Schlüssel sieht.
+  const HYBRID_COPY = [['subtitle', 'subtitleOperator'], ['modeLive', 'modeLiveOperator'],
+    ['attributionPosition', 'attributionPositionOperator'], ['welcomeBody', 'welcomeBodyOperator']];
+
+  function activateHybridCopy() {
+    if (!HYBRID_ON || typeof document === 'undefined') return false;
+    document.documentElement.dataset.hybrid = '1';
+    for (const pair of HYBRID_COPY) {
+      document.querySelectorAll('[data-i18n="' + pair[0] + '"]')
+        .forEach(el => { el.dataset.i18n = pair[1]; });
+    }
+    return true;
+  }
+
   window.DarmstadtLive = {
     VERSION,
+    HYBRID_ON,
+    activateHybridCopy,
     attach(context) {
       ctx = context;
       lineIndex = null;
@@ -1317,7 +1564,12 @@
       ctx.map.on('dragstart', () => { if (ctx.state) ctx.state.selAt = Date.now(); });   // Ruheuhr neu
       const box = ctx.map.getContainer();
       ['wheel', 'mousedown', 'touchstart'].forEach(ev => box.addEventListener(ev, stopFollow, { passive: true }));
-      document.addEventListener('visibilitychange', () => { if (!document.hidden && active) refresh(); });
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden || !active) return;
+        refresh();
+        const O = operatorModule();                 // auch der Betreiber pausiert im Hintergrund
+        if (O && typeof O.tick === 'function') { try { O.tick(); } catch (_) { /* egal */ } }
+      });
       document.addEventListener('keydown', e => { if (e.key === 'Escape' && popupVehicle) { stopFollow(); closePopup(); } });
     },
     render,
@@ -1336,6 +1588,7 @@
     // Zug der vorher angeklickten Fahrt stehen, während die Linie hervorgehoben wird.
     clearVehicle() { stopFollow(); closePopup(); },
     setLang() {                             // nach Sprachwechsel: Statistik, Histogramm, Popup neu beschriften
+      paintBanner(true);                    // Rückfall-Banner in der neuen Sprache
       if (ctx) render(true);
       if (popupVehicle) paintPopup(false);  // aus dem Zwischenspeicher, kein neuer Abruf
       else if (popupStation) paintStation(false);
@@ -1347,7 +1600,12 @@
     syncMarkers: () => syncMarkerPositions(),   // Marken an die Karte hängen (auch während der Bewegung)
     info() {
       return {
-        active, count: vehicles.length, stops: stops.length, lastOk,
+        active, count: drawn.length, stops: stops.length, lastOk,
+        // Herkunft der gezeichneten Fahrzeuge: operator = Betreiber-GPS, open = abgeleitet,
+        // suppressed = abgeleitete Punkte, deren Linie im Betriebsgebiet vom Betreiber kommt.
+        sources: { operator: selCounts.operator, open: selCounts.open, suppressed: selCounts.suppressed },
+        coveredLines: selCounts.covered, operatorPresent: opPresent, operatorFallback: opFallback,
+        banner: shownBanner,
         lastErr: lastErr ? String(lastErr.message || lastErr) : null, failures,
         polling: !!pollTimer, popupTimer: !!popupTimer,
         popupOpen: !!popupVehicle || !!popupStation,
@@ -1358,7 +1616,9 @@
         popupError: popupLeg && popupLeg.error ? popupLeg.error : null,
       };
     },
-    _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell,
+    _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; reselect(false); }, popupShell,
+             HYBRID_ON, activateHybridCopy, selectSources, opModel, opKey, lineKey, OP_ALIAS, reselect: () => reselect(true), drawn: () => drawn,
+             OP_FRESH_MS, OP_HOLD_MS, OP_SCOPE_M, OP_STALE_MS, OP_MAX_AGE_MS, resetOperator() { opSeen = new Map(); },
              departureRow, stationShell, freshness, focusLine, focusLineWide, CITY_BOX,
              dedupeStops, markers: () => markerLog, markerNode: () => markerBox, markerHtml,
              syncMarkers: () => syncMarkerPositions(), decodePolyline,

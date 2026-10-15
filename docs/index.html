@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-04"></script>
+<script src="i18n.js?v=20261015-05"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -206,6 +206,12 @@
      und soll deshalb auffallen, nicht im Kleingedruckten verschwinden. Steht nach .pop-note,
      damit es dessen Farbe überschreibt. */
   .note-warn { color: var(--accent); font-weight: 700; }
+  /* Gegenstück für Betreiberfahrzeuge: deren Position IST gemessen (GPS) — grün statt gelb, ebenso fett. */
+  .note-gps { color: #78dca0; font-weight: 700; }
+  /* Betreiber-Quellenangabe nur im Hybridbetrieb: auf der veröffentlichten Seite gibt es keine
+     Betreiberpositionen, also darf dort auch keine genannt werden. */
+  #attribbox .attrib-op { display: none; }
+  html[data-hybrid="1"] #attribbox .attrib-op { display: block; }
 
   /* --- Fahrzeugmarken und Haltestellen als DOM-Elemente (nicht als Textlayer) ---
      Grund: deck.gl kann keinen runden Hintergrund und keine eigenen Sinnbilder zeichnen. Als
@@ -222,6 +228,10 @@
   .mk[data-mode="tram"] { background: var(--tram); }
   .mk[data-mode="bus"] { background: var(--bus); }
   .mk[data-mode="rail"] { background: var(--rail); }
+  /* Betreiber-GPS: kleiner grüner Punkt an der Marke, damit gemessene und abgeleitete Punkte auch ohne
+     Karte zu unterscheiden sind (die Karte sagt es ausdrücklich). */
+  .mk[data-src="operator"]::after { content: ""; position: absolute; top: -3px; right: -3px; width: 7px; height: 7px;
+    border-radius: 50%; background: #78dca0; box-shadow: 0 0 0 1.5px #10131a; }
   .mk.focus { border-color: #fff; box-shadow: 0 0 0 2.5px var(--accent), 0 1px 5px rgba(0, 0, 0, .5); }
   .mk.dim { opacity: .55; }
   #markers.scaled .mk { font-size: 11px; padding: 2px 7px 2px 6px; }
@@ -428,9 +438,11 @@
       <div id="attribbox" hidden>
         <p data-i18n="attributionLive">Realtime: DELFI e.V. (CC BY-SA 4.0) via Transitous/MOTIS</p>
         <p data-i18n="attributionMap">Base map: © OpenStreetMap contributors (ODbL) · CARTO</p>
+        <p class="attrib-op" data-i18n="attributionOperator">Live vehicle positions (GPS): HEAG mobilo vehicle data via IVANTO, for the lines it reports</p>
         <!-- Was die Punkte sind (und was nicht): gelb und fett, in beiden Sprachen, direkt in der
-             Quellenangabe — damit die Einordnung dort steht, wo man die Herkunft nachliest. Es gibt
-             genau EINE Quelle (DELFI via Transitous): keine Betreiberpositionen. -->
+             Quellenangabe — damit die Einordnung dort steht, wo man die Herkunft nachliest. Zwei
+             Quellen, eine je Linie: Betreiber-GPS für die Linien, die er meldet, sonst aus den
+             Prognosen des offenen Stroms (DELFI via Transitous) abgeleitet. -->
         <p class="note-warn" data-i18n="attributionPosition">Positions are derived from realtime stop prognoses — the open feed carries no GPS. Data older than 45 s is marked stale, older than 2 min is dropped.</p>
       </div>
     </div>
@@ -446,7 +458,7 @@
 <div id="welcome" role="dialog" aria-modal="true" data-i18n-aria="welcomeDialog" aria-label="Welcome">
   <div class="wcard panel">
     <h2 id="wtitle" data-i18n="welcomeTitle">Work in progress</h2>
-    <p id="wbody" data-i18n="welcomeBody">Vehicle positions are predictions from the operators' realtime feed.</p>
+    <p id="wbody" data-i18n="welcomeBody">Operator GPS on the lines it reports live; every other dot is predicted from realtime stop prognoses.</p>
     <div class="wrow">
       <span id="wstep" class="wstep"></span>
       <button id="wskip" class="wskip" data-i18n="welcomeSkip" hidden>Skip</button>
@@ -455,8 +467,11 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-04"></script>
-<script src="live.js?v=20261015-04"></script>
+<script src="search.js?v=20261015-05"></script>
+<!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
+     antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
+<script src="operator.js?v=20261015-05"></script>
+<script src="live.js?v=20261015-05"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -727,15 +742,20 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-04';
+  const APP_V = '20261015-05';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {
       sessionStorage.setItem('dlm-v', fresh);
-      location.replace(location.pathname + '?v=' + fresh);
+      const qs = new URLSearchParams(location.search);   // hybrid=1 darf nicht verloren gehen
+      qs.set('v', fresh);
+      location.replace(location.pathname + '?' + qs.toString());
       return;
     }
   } catch (_) { /* Privatmodus: dann eben ohne Selbstheilung */ }
+  // Hybridbetrieb: Wortlaut umstellen, BEVOR die Übersetzung greift — sonst verspricht die Seite
+  // GPS, wo keins ist (oder umgekehrt). live.js steht vor diesem Block, das Kennzeichen ist da.
+  if (window.DarmstadtLive) window.DarmstadtLive.activateHybridCopy();
   window.I18N.init();                       // Sprache zuerst: Vorgabe EN, Merker in localStorage
   // meta.json liefert Linien, Farben und Endpunkte für die Linienleiste
   META = await fetch('data/meta.json').then(r => r.json());
