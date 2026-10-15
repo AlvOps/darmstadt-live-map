@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-02"></script>
+<script src="i18n.js?v=20261015-03"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -124,6 +124,11 @@
   #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); z-index: 9; background: var(--bg); }
   .maplibregl-ctrl-attrib { background: rgba(0,0,0,.5) !important; font-size: 10px; }
   .maplibregl-ctrl-attrib a { color: #aaa !important; }
+  /* Eigener 3D-Schalter neben dem Kompass (MapLibres Kompass setzt nur Norden/Pitch zurück, kippt nicht) */
+  .maplibregl-ctrl-group.tilt3d { display: grid; place-items: center; width: 29px; height: 29px; padding: 0; }
+  .maplibregl-ctrl-group.tilt3d svg { display: block; width: 17px; height: 17px; }
+  .maplibregl-ctrl-group.tilt3d[aria-pressed="true"] { background: var(--accent); }
+  .maplibregl-ctrl-group.tilt3d[aria-pressed="true"] svg { fill: #111; }
 
   /* --- Echtzeit --- */
   .livestat { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--muted); margin-top: 8px; }
@@ -231,6 +236,18 @@
   .stopmk.focus { border-color: var(--accent); }
   .map-moving #markers { opacity: .9; }
 
+  /* --- Hinweis + Einführung beim Start (Fade, blockiert bis bestätigt) --- */
+  #welcome { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px;
+    background: rgba(4, 6, 10, .72); opacity: 0; transition: opacity .35s ease; pointer-events: none; }
+  #welcome.on { opacity: 1; pointer-events: auto; }
+  #welcome .wcard { position: relative; max-width: 430px; width: 100%; padding: 18px 18px 14px; }
+  #welcome h2 { margin: 0 0 8px; font-size: 17px; font-weight: 650; }
+  #welcome p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+  .wrow { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  .wstep { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .wnav { margin-left: auto; min-height: 44px; background: rgba(255,209,102,.18);
+    border-color: rgba(255,209,102,.45); color: var(--accent); font-weight: 650; }
+  .wskip { min-height: 44px; color: var(--muted); }
   #banner { position: absolute; z-index: 3; top: 16px; left: 50%; transform: translateX(-50%);
     max-width: min(560px, 90vw); padding: 9px 14px; font-size: 12.5px; background: rgba(255,90,80,.14);
     border: 1px solid rgba(255,90,80,.4); border-radius: 10px; color: #ffd9d6; backdrop-filter: blur(8px); }
@@ -243,14 +260,17 @@
   }
   .panel, #legend, .pop-stops { overscroll-behavior: contain; }
   @supports (scrollbar-width: thin) {
-    .panel, .pop-stops { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+    .panel { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
   }
-  .panel::-webkit-scrollbar, .pop-stops::-webkit-scrollbar { width: 9px; height: 9px; }
-  .panel::-webkit-scrollbar-track, .pop-stops::-webkit-scrollbar-track { background: transparent; }
-  .panel::-webkit-scrollbar-corner, .pop-stops::-webkit-scrollbar-corner { background: transparent; }
-  .panel::-webkit-scrollbar-thumb, .pop-stops::-webkit-scrollbar-thumb {
+  /* Die Halteliste in der Karte scrollt, zeigt aber keinen Balken mehr (Wunsch des Betreibers) */
+  .pop-stops { scrollbar-width: none; -ms-overflow-style: none; }
+  .pop-stops::-webkit-scrollbar { width: 0; height: 0; }
+  .panel::-webkit-scrollbar { width: 9px; height: 9px; }
+  .panel::-webkit-scrollbar-track { background: transparent; }
+  .panel::-webkit-scrollbar-corner { background: transparent; }
+  .panel::-webkit-scrollbar-thumb {
     background: var(--scroll-thumb); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
-  .panel::-webkit-scrollbar-thumb:hover, .pop-stops::-webkit-scrollbar-thumb:hover {
+  .panel::-webkit-scrollbar-thumb:hover {
     background: var(--scroll-thumb-hover); background-clip: padding-box; }
 
   /* --- Telefon/Touch: Linienliste zuerst, eine einzige Scrollfläche, große Ziele --- */
@@ -416,8 +436,22 @@
 <div id="banner" hidden></div>
 <div id="popup" class="panel" role="dialog" data-i18n-aria="popup.dialog" aria-label="Vehicle details"></div>
 
-<script src="search.js?v=20261015-02"></script>
-<script src="live.js?v=20261015-02"></script>
+<!-- Erster Kontakt: Hinweis bei JEDEM Besuch, Einführung nur beim ersten Mal (Wunsch des Betreibers).
+     Fade über CSS; der Hinweis nennt die Herkunft der Positionen, damit nichts als GPS missverstanden wird. -->
+<div id="welcome" role="dialog" aria-modal="true" data-i18n-aria="welcomeDialog" aria-label="Welcome">
+  <div class="wcard panel">
+    <h2 id="wtitle" data-i18n="welcomeTitle">Work in progress</h2>
+    <p id="wbody" data-i18n="welcomeBody">Vehicle positions are predictions from the operators' realtime feed.</p>
+    <div class="wrow">
+      <span id="wstep" class="wstep"></span>
+      <button id="wskip" class="wskip" data-i18n="welcomeSkip" hidden>Skip</button>
+      <button id="wnav" class="wnav" data-i18n="welcomeOk">Got it</button>
+    </div>
+  </div>
+</div>
+
+<script src="search.js?v=20261015-03"></script>
+<script src="live.js?v=20261015-03"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -474,6 +508,31 @@ map.on('style.load', () => {            // einmalig nach dem ersten Laden begren
 const overlay = new deck.MapboxOverlay({ interleaved: false, layers: [] });
 map.addControl(overlay);
 map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
+
+// Eigener 3D-Schalter: MapLibre 4 kennt keinen Kipp-Knopf (der Kompass setzt nur Norden und Neigung
+// zurück), deshalb ein eigenes Bedienelement. Symbol statt Text, damit nichts zu übersetzen ist.
+class TiltButton {
+  onAdd(m) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'maplibregl-ctrl maplibregl-ctrl-group tilt3d';
+    b.setAttribute('aria-pressed', 'false');
+    b.setAttribute('data-i18n-aria', 'tilt3d');
+    b.setAttribute('data-i18n-title', 'tilt3d');
+    b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="#333">' +
+      '<path d="M12 3 3 8v8l9 5 9-5V8l-9-5zm0 2.3 6.5 3.6L12 12.5 5.5 8.9 12 5.3zM5 10.6l6 3.3v6.3l-6-3.3v-6.3zm14 0v6.3l-6 3.3v-6.3l6-3.3z"/></svg>';
+    b.onclick = () => {
+      const on = b.getAttribute('aria-pressed') !== 'true';
+      b.setAttribute('aria-pressed', String(on));
+      m.easeTo({ pitch: on ? 45 : 0, duration: 500 });
+    };
+    m.on('pitchend', () => b.setAttribute('aria-pressed', String(m.getPitch() > 5)));
+    this.el = b;
+    return b;
+  }
+  onRemove() { if (this.el) this.el.remove(); }
+}
+map.addControl(new TiltButton(), 'bottom-right');
 
 const tip = document.getElementById('tip');
 
@@ -588,7 +647,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-02';
+  const APP_V = '20261015-03';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {
@@ -755,15 +814,55 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
     if (panelClose) panelClose.onclick = () => setPanel(false);
     setPanel(true);                        // Start: offen, damit die Linien sofort wählbar sind
   }
-  // Sicherheitsnetz: jede Wahl INNERHALB des Panels (Linie, Favorit) räumt die Schublade weg — auch
-  // wenn der Tipp die Karte nicht erreicht hat. Ohne das blieb das Panel über genau der Linie stehen,
-  // die man gerade sehen wollte.
+  // Sicherheitsnetz: eine Wahl INNERHALB des Panels (Linie, Favorit) räumt die Schublade weg — auch
+  // wenn der Tipp die Karte nicht erreicht hat. Ausdrücklich NICHT bei Gruppen-Köpfen (<summary>):
+  // eine Liste auf- oder zuzuklappen ist kein Auswählen, und das Panel verschwand dabei (Wunsch 2026-10-15).
   const headEl = document.getElementById('head');
   if (headEl) headEl.addEventListener('click', e => {
     if (!touchLayout() || !hidePanelNow) return;
-    if (e.target.closest('.chip, .fav-go, details summary')) hidePanelNow();
+    if (e.target.closest('.chip, .fav-go')) hidePanelNow();
   });
   document.querySelectorAll('#lang button').forEach(b => b.onclick = () => window.I18N.set(b.dataset.lang));
+
+  // Hinweis bei JEDEM Besuch, Einführung nur beim ersten Mal (Wunsch des Betreibers 2026-10-15).
+  // Die Klasse `.on` setzt erst dieses Skript: bricht JavaScript, bleibt die Seite bedienbar.
+  (function welcome() {
+    const box = document.getElementById('welcome');
+    if (!box) return;
+    const el = id => document.getElementById(id);
+    const title = el('wtitle'), body = el('wbody'), step = el('wstep'), skip = el('wskip'), nav = el('wnav');
+    const T = k => window.I18N.t(k);
+    const STEPS = [
+      ['welcomeTitle', 'welcomeBody'],
+      ['tut1Title', 'tut1Body'], ['tut2Title', 'tut2Body'],
+      ['tut3Title', 'tut3Body'], ['tut4Title', 'tut4Body'],
+    ];
+    let seenTour = false;
+    try { seenTour = localStorage.getItem('darmstadt-live-tour') === '1'; } catch (_) { /* Privatmodus */ }
+    let i = 0;
+    const paint = () => {
+      const [tk, bk] = STEPS[i];
+      title.textContent = T(tk); body.textContent = T(bk);
+      const total = STEPS.length - 1;
+      step.textContent = i === 0 ? '' : T('tutStep', { n: i, total });
+      step.hidden = i === 0;
+      skip.hidden = i === 0;                                    // der Hinweis lässt sich nur bestätigen
+      nav.textContent = T(i === 0 ? 'welcomeOk' : (i === STEPS.length - 1 ? 'welcomeDone' : 'welcomeNext'));
+    };
+    const close = () => {
+      box.classList.remove('on');
+      try { localStorage.setItem('darmstadt-live-tour', '1'); } catch (_) { /* egal */ }
+      setTimeout(() => { if (box.parentNode) box.parentNode.removeChild(box); }, 450);
+    };
+    paint();
+    requestAnimationFrame(() => box.classList.add('on'));
+    nav.onclick = () => {
+      if (i === 0 && seenTour) { close(); return; }              // Einführung schon gesehen: nur der Hinweis
+      if (i >= STEPS.length - 1) { close(); return; }
+      i++; paint();
+    };
+    skip.onclick = close;
+  })();
   // Quellenangabe: zugeklappt, bis man den ⓘ antippt; Tipp daneben schließt sie wieder
   const attribBtn = document.getElementById('attribbtn');
   const attribBox = document.getElementById('attribbox');

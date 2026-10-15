@@ -46,11 +46,12 @@
   const HOLD_MS = 150000;          // so lange bleibt ein Fahrzeug an seinem Halt stehen, wenn die
                                    // Abfahrt des nächsten Abschnitts noch aussteht (Abschnittslücke)
   const REQUEST_TIMEOUT_MS = 12000; // Frist je Abruf: ein hängender Abruf darf nicht alles blockieren
-  const NEXT_STOPS = 3;            // das Popup zeigt die nächsten drei Halte (Wunsch des Betreibers)
+  const NEXT_STOPS = 3;            // Fahrzeugkarte in Kurzform (z. B. für Zählwerte/Tooltips)
+  const CARD_STOPS = 25;           // die Karte listet alle kommenden Halte (scrollbar, ohne Balken)
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261015-02';
+  const VERSION = '20261015-03';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -493,7 +494,7 @@
     const relaxed = sel !== null && Date.now() - (ctx.state.selAt || 0) > RELAX_MS;   // 10 s Ruhe
     if (sel !== lastSel) {                 // neue Linie gewählt -> Kamera gleich zu ihren Fahrzeugen
       lastSel = sel;
-      if (sel !== null && !focusTrip) focusLine(sel, cur);
+      if (sel !== null && !focusTrip) focusLineWide(sel);
     }
     const inMode = c => ctx.state.modes[c.v.mode];
     const vis = sel !== null ? cur.filter(c => inMode(c) && c.v.lineIdx === sel) : cur.filter(inMode);
@@ -651,8 +652,9 @@
     return pts.length >= 2 ? pts : null;
   }
 
-  function nextStops(leg) {
+  function nextStops(leg, limit) {
     const now = Date.now();
+    const max = limit || NEXT_STOPS;
     const seq = [];
     if (leg.from) seq.push({ name: leg.from.name, time: leg.startTime, sched: leg.scheduledStartTime, stop: leg.from });
     (leg.intermediateStops || []).forEach(s => seq.push({
@@ -662,7 +664,7 @@
     if (leg.to) seq.push({ name: leg.to.name, time: leg.endTime, sched: leg.scheduledEndTime, stop: leg.to });
     return seq
       .filter(s => s.time && num(s.time) >= now - 45000)
-      .slice(0, NEXT_STOPS)
+      .slice(0, max)
       .map(s => {
         const tm = num(s.time), sc = s.sched ? num(s.sched) : NaN;
         return {
@@ -697,7 +699,7 @@
   }
 
   function popupShell(v, leg, loading) {
-    const stops = leg && !leg.error ? nextStops(leg) : null;
+    const stops = leg && !leg.error ? nextStops(leg, CARD_STOPS) : null;
     popupStopList = stops || [];                 // Klick-Ziele im Popup (Index -> Halt)
     const rows = stops ? stops.map((s, i) => {
       const rel = s.inMin >= 0 && s.inMin <= 60
@@ -873,6 +875,34 @@
   }
 
   // Zur gewählten Linie schwenken: sonst muss man den Bus zwischen allen Punkten suchen
+  // Linienwahl: die Kamera soll ALLE Fahrzeuge der Linie zeigen — auch die außerhalb des aktuellen
+  // Ausschnitts. Der normale Abruf kennt nur die sichtbaren Fahrzeuge, deshalb passierte beim Schwenk
+  // oft gar nichts (Wunsch 2026-10-15: „zoom out und zeig mir alle"). Dafür einmal weit abfragen.
+  const CITY_BOX = { w: 8.560, s: 49.790, e: 8.780, n: 49.950 };   // Darmstadt + Umland
+  let wideFetchAt = 0;
+  async function focusLineWide(idx) {
+    if (!ctx || !ctx.map.fitBounds || typeof fetch !== 'function') { focusLine(idx, null); return; }
+    const now = Date.now();
+    if (now - wideFetchAt < 4000) { focusLine(idx, null); return; }   // nicht bei jedem Tipp neu abfragen
+    wideFetchAt = now;
+    const t0 = new Date(now).toISOString().replace(/\.\d+Z$/, 'Z');
+    const t1 = new Date(now + 60000).toISOString().replace(/\.\d+Z$/, 'Z');
+    try {
+      const res = await timedFetch(`${API}?min=${CITY_BOX.s},${CITY_BOX.w}&max=${CITY_BOX.n},${CITY_BOX.e}` +
+        `&zoom=12&startTime=${t0}&endTime=${t1}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      const keep = viewBox;
+      viewBox = CITY_BOX;                     // die Ausschnittsprüfung im Aufbau nutzt diese Box
+      const wide = buildVehicles(Array.isArray(json) ? json : []);
+      viewBox = keep;
+      focusLine(idx, wide);
+    } catch (_) {
+      focusLine(idx, null);                    // im Zweifel mit dem schwenken, was wir schon haben
+    }
+  }
+
+  // Kamera auf die Fahrzeuge einer Linie setzen — mit Platz für Panel (Rechner) bzw. Karte (Telefon).
   function focusLine(idx, list) {
     if (!ctx || !ctx.map.fitBounds || !window.maplibregl) return;
     // Die berechneten Punkte tragen ihre Position als [lon, lat] in `pos` — vorher stand hier
@@ -884,7 +914,14 @@
     try {
       const b = new window.maplibregl.LngLatBounds(pts[0], pts[0]);
       for (const p of pts) b.extend(p);
-      ctx.map.fitBounds(b, { padding: 72, maxZoom: 14.5, duration: 650 });
+      const box = ctx.map.getContainer ? ctx.map.getContainer() : null;
+      const ch = box && box.clientHeight ? box.clientHeight : 800;
+      // Genug Rand, damit die Punkte nicht hinter Panel oder Bottom-Sheet liegen; maxZoom deckelt nur
+      // den Hineinzoom, ein Herauszoomen bleibt erlaubt (genau das fehlte vorher).
+      const padding = finePointer()
+        ? { top: 90, bottom: 150, left: 340, right: 90 }
+        : { top: 90, bottom: Math.round(ch * 0.45), left: 40, right: 40 };
+      ctx.map.fitBounds(b, { padding, maxZoom: 15, duration: 700 });
     } catch (_) { /* Schwenk ist Komfort, kein Muss */ }
   }
 
@@ -1322,13 +1359,14 @@
       };
     },
     _test: { esc, buildVehicles, delayText, delayClass, vehiclesAt, setVehicles(v) { vehicles = v; }, popupShell,
-             departureRow, stationShell, freshness, focusLine,
+             departureRow, stationShell, freshness, focusLine, focusLineWide, CITY_BOX,
              dedupeStops, markers: () => markerLog, markerNode: () => markerBox, markerHtml,
              syncMarkers: () => syncMarkerPositions(), decodePolyline,
              tapVehicle, tapStop,
              tripChain, chain: () => chainCache,
              goToStop, nextStops, stops: () => stops, popupStopList: () => popupStopList,
              setRelaxAt(t) { ctx.state.selAt = t; }, relaxAt: () => ctx.state.selAt, RELAX_MS,
+             CARD_STOPS,
              following: () => !!followTrip, resetFollow() { followTrip = null; followUntil = 0; },
              placePopup, dragOff: () => dragOff, setDrag(d) { dragOff = d; }, leaderD: leaderD, layoutPopup },
   };

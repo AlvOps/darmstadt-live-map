@@ -327,9 +327,9 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     const geoA = shownStopGeo();
     await L.openPopup(vB); L.render(true);
     const geoB = shownStopGeo();
-    check('erst die Halte der Fahrt A', geoA.length === 3, `${geoA.length}: ${geoA.join(' | ')}`);
+    check('erst die Halte der Fahrt A (Karte zeigt alle kommenden)', geoA.length >= 3 && geoA.length <= 25, `${geoA.length}: ${geoA.join(' | ')}`);
     check('nach dem Wechsel die Halte der Fahrt B (gleiche Anzahl, andere Orte)',
-      geoB.length === 3 && geoB.join('|') !== geoA.join('|'), `${geoB.length}: ${geoB.join(' | ')}`);
+      geoB.length === geoA.length && geoB.join('|') !== geoA.join('|'), `${geoB.length}: ${geoB.join(' | ')}`);
     check('die Koordinaten gehören zu B', geoB.some(g => g.includes('49.88')), geoB.join(' | '));
     L.closePopup(); L.render(true);
   }
@@ -345,8 +345,18 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     check('und zwar auf endliche Koordinaten aus der Position, nicht auf NaN',
       !!fit.pts && fit.pts.length > 0 && fit.pts.every(p => Number.isFinite(p[0]) && Number.isFinite(p[1])),
       JSON.stringify(fit.pts));
-    check('mit dem gewohnten Rahmen (padding 72, maxZoom 14.5)',
-      !!fit.opts && fit.opts.padding === 72 && fit.opts.maxZoom === 14.5, JSON.stringify(fit.opts));
+    check('mit Rand für Panel bzw. Bottom-Sheet (statt 72 px rundum)',
+      !!fit.opts && fit.opts.padding && typeof fit.opts.padding === 'object' &&
+      fit.opts.padding.top >= 60 && fit.opts.padding.bottom >= 100 && fit.opts.maxZoom === 15,
+      JSON.stringify(fit.opts));
+    // Wunsch 2026-10-15: die Linienwahl muss auch Fahrzeuge AUSSERHALB des Ausschnitts zeigen —
+    // sonst passierte nichts, wenn man woanders hin gepannt hatte.
+    await X.focusLineWide(0);
+    const wideCall = net.calls.find(u => u.includes('min=49.79'));
+    check('die Linienwahl fragt den weiten Stadtausschnitt ab (nicht nur die sichtbaren Fahrzeuge)',
+      !!wideCall, String(wideCall || net.calls[net.calls.length - 1] || '').slice(0, 120));
+    check('und der weite Ausschnitt deckt Darmstadt samt Umland ab',
+      /min=49\.79,8\.56&max=49\.95,8\.78/.test(String(wideCall || '')), String(wideCall || '').slice(0, 120));
     X.setVehicles(built);
   }
 

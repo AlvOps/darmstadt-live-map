@@ -172,7 +172,18 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       Number.isFinite(left) && Number.isFinite(top) && left > 0 && top > 0 && left < 1280 && top < 800);
     const rows = (p.innerHTML.match(/class="st-name"/g) || []).length;
     console.log(`  Haltezeilen im Popup: ${rows}`);
-    check('Popup zeigt höchstens die nächsten drei Halte', rows >= 1 && rows <= 3);
+    check('Popup listet die kommenden Halte (Karte zeigt bis 25)', rows >= 1 && rows <= 25);
+    // Deterministisch: die Karte zeigt ALLE kommenden Halte, die Kurzform bleibt bei drei (Wunsch 2026-10-15)
+    const now0 = Date.now(), manyLeg = {
+      from: { name: 'A', lat: 1, lon: 1 }, to: { name: 'Z', lat: 2, lon: 2 },
+      startTime: new Date(now0 + 60000).toISOString(), endTime: new Date(now0 + 40 * 60000).toISOString(),
+      intermediateStops: Array.from({ length: 12 }, (_, i) => ({ name: 'S' + i, lat: 1 + i / 100, lon: 1 + i / 100,
+        departure: new Date(now0 + (i + 2) * 60000).toISOString() })) };
+    check('Karte listet alle kommenden Halte (nicht nur drei)',
+      sandbox.DarmstadtLive._test.nextStops(manyLeg, 25).length === 14,
+      `${sandbox.DarmstadtLive._test.nextStops(manyLeg, 25).length} Halte`);
+    check('Kurzform bleibt bei drei Halten', sandbox.DarmstadtLive._test.nextStops(manyLeg).length === 3);
+    check('Obergrenze der Karte ist 25 Halte', sandbox.DarmstadtLive._test.CARD_STOPS === 25);
     check('Popup nennt die Uhrzeiten der Halte', /class="st-clock"/.test(p.innerHTML));
     check('Popup nennt Status und Verspätung als Wort', /On time|Delayed|Early/.test(p.innerHTML));
     sandbox.DarmstadtLive.render(true);          // Marken neu aufbauen, damit die Hervorhebung sitzt

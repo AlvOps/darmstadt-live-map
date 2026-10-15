@@ -72,10 +72,14 @@ function run(check, log = console.log) {
 
   // scrollbars
   check('Firefox: thin scrollbars with themed colour', /scrollbar-width:\s*thin/.test(css) && /scrollbar-color:\s*var\(--scroll-thumb\)\s+transparent/.test(css));
-  for (const sel of ['.panel', '.pop-stops']) {          // #legend scrollt nicht mehr -> kein eigener Balken
+  for (const sel of ['.panel']) {                        // Karte/Liste: nur das Panel hat noch einen Balken
     check(`WebKit scrollbar styled for ${sel}`, css.includes(sel + '::-webkit-scrollbar-thumb') && css.includes(sel + '::-webkit-scrollbar-track') &&
       css.includes(sel + '::-webkit-scrollbar-corner') && css.includes(sel + '::-webkit-scrollbar-thumb:hover'));
   }
+  check('stop list scrolls but shows no scrollbar (owner wish)',
+    /\.pop-stops \{ scrollbar-width: none; -ms-overflow-style: none; \}/.test(css) &&
+    /\.pop-stops::-webkit-scrollbar \{ width: 0; height: 0; \}/.test(css) &&
+    !/\.pop-stops[^{]*\{[^}]*scrollbar-width:\s*thin/.test(css));
   check('scrollbar thumb colour derives from --muted/--accent', /--scroll-thumb:\s*var\(--muted\)/.test(css) && /--scroll-thumb-hover:\s*var\(--accent\)/.test(css));
   check('overscroll-behavior: contain on panels and lists', /\.panel, #legend, \.pop-stops \{ overscroll-behavior: contain; \}/.test(css));
   check('scrollbar-gutter: stable where a list can scroll (popup)', /scrollbar-gutter:\s*stable/.test(rule('#popup') || ''));
@@ -145,6 +149,40 @@ function run(check, log = console.log) {
     /#paneltoggle \{[^}]*min-height: 44px/.test(mob) && /#panelclose \{[^}]*min-height: 40px/.test(mob));
   check('desktop keeps no drawer chrome (toggle/close hidden)',
     /#paneltoggle, #panelclose \{ display: none; \}/.test(css));
+  check('phone drawer stays open when a group is expanded (only a line/favourite choice closes it)',
+    /closest\('\.chip, \.fav-go'\)/.test(html) && !/closest\('\.chip, \.fav-go, details summary'\)/.test(html));
+  check('3D tilt button exists and really changes the pitch',
+    /class TiltButton/.test(html) && /pitch: on \? 45 : 0/.test(html) &&
+    /\.maplibregl-ctrl-group\.tilt3d \{/.test(css) && /on\('pitchend'/.test(html));
+  const i18nAll = fs.readFileSync(path.join(DOCS, 'i18n.js'), 'utf8');    // lokal: i18nSrc wird erst weiter unten gesetzt
+  check('tilt button is labelled in both languages (symbol, nothing hardcoded)',
+    /tilt3d: 'Tilt the map/.test(i18nAll) && /tilt3d: 'Karte kippen/.test(i18nAll) &&
+    /data-i18n-aria', 'tilt3d'/.test(html));
+  check('vehicle card lists up to 25 stops (short form stays at 3)',
+    /const CARD_STOPS = 25;/.test(liveSrc) && /nextStops\(leg, CARD_STOPS\)/.test(liveSrc));
+  check('line choice asks for the wide city box, then frames the line',
+    /focusLineWide\(sel\)/.test(liveSrc) && /const CITY_BOX = \{ w: 8\.560, s: 49\.790/.test(liveSrc) &&
+    /focusLine\(idx, wide\)/.test(liveSrc));
+
+  // Aufklärung + Einführung beim Start (Wunsch 2026-10-15: Hinweis immer, Einführung nur einmal)
+  check('start overlay exists and cannot block the page if JS fails (no .on in the markup)',
+    /<div id="welcome" role="dialog" aria-modal="true"/.test(html) && !/id="welcome" class="on"/.test(html));
+  check('overlay fades in and out (CSS transition, `.on` set by the script)',
+    /#welcome\.on \{ opacity: 1; pointer-events: auto; \}/.test(css) && /#welcome \{[^}]*transition: opacity/.test(css));
+  check('disclaimer appears on every visit, tutorial only the first time',
+    /localStorage\.getItem\('darmstadt-live-tour'\)/.test(html) &&
+    /localStorage\.setItem\('darmstadt-live-tour', '1'\)/.test(html) &&
+    /if \(i === 0 && seenTour\) \{ close\(\); return; \}/.test(html));
+  check('tutorial has four steps and a skip that only shows from step 1',
+    /skip\.hidden = i === 0/.test(html) && /skip\.onclick = close/.test(html) &&
+    (html.match(/'tut[1-4]Title'/g) || []).length === 4);
+  check('intro text exists in both languages',
+    /welcomeTitle: 'Work in progress'/.test(i18nAll) && /welcomeTitle: 'Baustelle'/.test(i18nAll) &&
+    /tut4Title: '4 · Language, 3D and the drawer'/.test(i18nAll) &&
+    /tut4Title: '4 · Sprache, 3D und die Schublade'/.test(i18nAll));
+  check('intro buttons are thumb-sized and the overlay sits above every panel',
+    /\.wnav \{[^}]*min-height: 44px/.test(css) && /\.wskip \{[^}]*min-height: 44px/.test(css) &&
+    /#welcome \{ position: absolute; inset: 0; z-index: 20;/.test(css));
   check('tapping the map closes the phone drawer',
     /hidePanel: \(\) => \{ if \(touchLayout\(\)\) setPanel\(false\); \}/.test(html));
   check('phone: the drawer toggle stays in one place (top-left, panel starts below it)',
@@ -284,8 +322,9 @@ function run(check, log = console.log) {
     check('map bounds cover Darmstadt', s < 49.872 && n > 49.872 && w < 8.652 && e > 8.652);
     check('zoom-out is limited and the world is not repeated', /minZoom: [1-9]\d*/.test(html) && /renderWorldCopies: false/.test(html));
   }
-  check('chosen line swings the camera to its vehicles',
-    /function focusLine\(/.test(liveSrc) && /fitBounds\(b, \{ padding: 72, maxZoom: 14\.5/.test(liveSrc));
+  check('chosen line swings the camera to its vehicles (with room for panel/sheet)',
+    /function focusLine\(/.test(liveSrc) && /const padding = finePointer\(\)/.test(liveSrc) &&
+    /padding, maxZoom: 15, duration: 700/.test(liveSrc));
 
   // Overlap fix: with 'Status & filters' AND the line list open, the blocks used to collide because
   // the panel could not scroll and the legend still had a grow factor. Now the panel scrolls and the
