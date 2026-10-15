@@ -1,6 +1,6 @@
 {
-  "name":"Darmstadt Public Transport Map"
-  "short_name":"DA ÖPNV"
+  "name": "Darmstadt Public Transport Map",
+  "short_name": "DA ÖPNV",
   "description": "Live trams, buses and regional trains in Darmstadt from the open realtime feed",
   "start_url": "./",
   "scope": "./",
