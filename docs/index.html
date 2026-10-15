@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0d12">
-<title>Darmstadt Live Map</title>
+<title>Darmstadt Public Transport Map</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-20"></script>
+<script src="i18n.js?v=20261015-21"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -442,7 +442,7 @@
 </div>
 
 <div id="head" class="panel">
-  <h1><span data-i18n="appTitle">Darmstadt Live Map</span><span class="badge-live" id="livebadge" data-state="waiting"><i></i><span id="livebadgetxt" data-i18n="modeLive">Realtime prognoses</span></span>
+  <h1><span data-i18n="appTitle">Darmstadt Public Transport Map</span><span class="badge-live" id="livebadge" data-state="waiting"><i></i><span id="livebadgetxt" data-i18n="modeLive">Realtime prognoses</span></span>
     <button id="panelclose" class="panel-x" data-i18n-aria="closePanel" aria-label="Close panel">✕</button></h1>
 
   <!-- Umschalter: immer nur ein Bereich sichtbar -> das Panel passt ohne Scrollbalken.
@@ -552,11 +552,11 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-20"></script>
+<script src="search.js?v=20261015-21"></script>
 <!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
      antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
-<script src="operator.js?v=20261015-20"></script>
-<script src="live.js?v=20261015-20"></script>
+<script src="operator.js?v=20261015-21"></script>
+<script src="live.js?v=20261015-21"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -931,7 +931,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-20';
+  const APP_V = '20261015-21';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {

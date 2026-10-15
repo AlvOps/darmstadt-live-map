@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Darmstadt Live Map — hybrid test page</title>
+<title>Darmstadt Public Transport Map — shortcut</title>
 <!--
   Testseite für den Hybridbetrieb: eine Quelle je Linie (Betreiber-GPS für die gemeldeten Linien,
   offener Strom mit Prognosen für alles andere). Sie ist absichtlich nur eine Weiterleitung: die
@@ -17,8 +17,8 @@
   genau das ist dem Betreiber passiert. Mit der Kennung in der Adresse ist jeder Link auf diese Seite
   ein frischer Eintrag, und die Kennung wird beim Versionssprung mitgezogen.
 -->
-<meta http-equiv="refresh" content="0; url=../?v=20261015-20">
-<script>location.replace('../?v=20261015-20');</script>
+<meta http-equiv="refresh" content="0; url=../?v=20261015-21">
+<script>location.replace('../?v=20261015-21');</script>
 <style>
   body { margin: 0; background: #10131a; color: #e8eaf0;
          font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -29,15 +29,14 @@
 </head>
 <body>
 <main>
-  <h1>Hybrid test page</h1>
-  <p>Opening the map with operator positions enabled…</p>
+  <h1>Darmstadt Public Transport Map</h1>
+  <p>Opening the map…</p>
   <p class="note">
-    This is the experimental build: on the lines the operator reports, a dot is the operator’s own
-    live position; every other dot stays derived from realtime stop prognoses.
-    <strong>Not</strong> the published map.
+    The map itself shows operator GPS positions where the operator reports them, and realtime stop
+    prognoses everywhere else. This page is only a short cut to it, kept for old links.
   </p>
-  <p><a href="../?v=20261015-20" id="go">Continue to the map</a></p>
-  <p class="note"><a href="../?hybrid=0&v=20261015-20">Open it without the operator positions</a></p>
+  <p><a href="../?v=20261015-21" id="go">Continue to the map</a></p>
+  <p class="note"><a href="../?hybrid=0&v=20261015-21">Open it without the operator positions</a></p>
 </main>
 </body>
 </html>

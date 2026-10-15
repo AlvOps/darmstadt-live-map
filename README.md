@@ -1,4 +1,4 @@
-# Darmstadt Live Map
+# Darmstadt Public Transport Map
 
 Interactive **live-only** map of public transport in Darmstadt, Germany: trams, city/regional buses
 and S-Bahn/regional trains. The project started from the open-source base
@@ -18,7 +18,8 @@ away: `?hybrid=0`.
 
 Repository: `AlvOps/darmstadt-live-map` — an **independent repository**, not a GitHub fork and not part
 of any fork network. It was rebuilt as a standalone repository on 2026-10-15 (the earlier fork lives on
-as the archived `AlvOps/darmstadt-nahverkehr-fork`).
+as the archived `AlvOps/darmstadt-nahverkehr-fork`). The app calls itself **Darmstadt Public Transport
+Map** — *Nahverkehrskarte Darmstadt* in German; the repository keeps its `darmstadt-live-map` name.
 
 **Custom domain.** The map is served at **https://darmstadtmap.com/** (and on `www.`). The certificate
 is a Let's Encrypt one that GitHub Pages obtains and renews by itself — nothing to install — and

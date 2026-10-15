@@ -8,7 +8,7 @@
 
   const STRINGS = {
     en: {
-      appTitle: 'Darmstadt Live Map',
+      appTitle: 'Darmstadt Public Transport Map',
       subtitle: 'Tram, bus and regional rail — from the open realtime feed',
       subtitleOperator: 'Tram, bus and regional rail — operator GPS where available, otherwise the open realtime feed',
       dataSource: 'Data',
@@ -146,7 +146,7 @@
       searchNoHit: 'No stop found',
     },
     de: {
-      appTitle: 'Darmstadt Live Map',
+      appTitle: 'Nahverkehrskarte Darmstadt',
       subtitle: 'Straßenbahn, Bus und Regionalbahn – aus dem offenen Echtzeitstrom',
       subtitleOperator: 'Straßenbahn, Bus und Regionalbahn – GPS des Betreibers, wo vorhanden, sonst der offene Echtzeitstrom',
       dataSource: 'Daten',
