@@ -281,12 +281,13 @@ function openPage(seedFavs, opts = {}) {
     LngLatBounds: class { constructor(a, b) { this._p = [a, b]; } extend(p) { this._p.push(p); } },
     NavigationControl: class {},
   };
+  if (opts.hybrid) sb.location.search = '?hybrid=1';   // Hybridbetrieb (wie /?hybrid=1)
   vm.createContext(sb);
   vm.runInContext(read('i18n.js'), sb);
   vm.runInContext(read('search.js'), sb);
   vm.runInContext(liveSrc, sb);
   const blocks = [...html.matchAll(/<script(?![^>]*src)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
-  vm.runInContext(blocks[blocks.length - 1], sb);      // das echte Inline-Skript der Seite
+  blocks.forEach(b => vm.runInContext(b, sb));         // ALLE Inline-Skripte, in Reihenfolge wie im Browser
   return { el: pageEl, chips, chipFor, all: pall, fire: ev => (wh[ev] || []).forEach(f => f()),
     sb, controls, style, store: pstore, setStyleCalls, mapFire: ev => (mh[ev] || []).forEach(f => f()),
     t: k => sb.I18N.t(k), ready: new Promise(r => setTimeout(r, 40)) };
@@ -495,7 +496,7 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
   console.log('\n=== Bas: Bedienleiste unten rechts (Grundkarte über Kippen, Ortung überall) ===');
   {
     const names = p => p.controls.filter(c => c.pos === 'bottom-right').map(c => c.name);
-    const desk = openPage(null), phone = openPage(null, { touch: true });
+    const desk = openPage(null, { hybrid: true }), phone = openPage(null, { touch: true, hybrid: true });
     await desk.ready; await phone.ready;
     const dn = names(desk), pn = names(phone);
     check('a basemap toggle is registered and starts on the standard dark view',
@@ -553,7 +554,7 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
       desk.sb.document.documentElement.dataset.basemap === 'normal' &&
       btn.attrs['aria-pressed'] === 'false' && btn.attrs['data-i18n-title'] === 'basemapToSatellite');
 
-    const stored = openPage(null, { store: { 'dlm-basemap': 'satellite' } });
+    const stored = openPage(null, { hybrid: true, store: { 'dlm-basemap': 'satellite' } });
     await stored.ready;
     const sbtn = (stored.controls.find(c => c.name === 'BasemapButton') || {}).el;
     check('a stored satellite choice is flagged before the style loads',
@@ -563,18 +564,28 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     check('a stored satellite choice is applied at boot',
       vis(stored, 'sat') === 'visible' && vis(stored, 'cartoimg') === 'none' && vis(stored, 'roads') === 'none');
 
-    const storedCarto = openPage(null, { store: { 'dlm-basemap': 'carto' } });
+    const storedCarto = openPage(null, { hybrid: true, store: { 'dlm-basemap': 'carto' } });
     await storedCarto.ready;
     storedCarto.mapFire('style.load'); storedCarto.mapFire('style.load');
     check('a stored cartographic choice is applied at boot',
       storedCarto.sb.basemap() === 'carto' && vis(storedCarto, 'cartoimg') === 'visible' &&
       vis(storedCarto, 'sat') === 'none' && vis(storedCarto, 'roads') === 'none');
-    const legacy = openPage(null, { store: { 'dlm-basemap': 'map' } });
+    const legacy = openPage(null, { hybrid: true, store: { 'dlm-basemap': 'map' } });
     await legacy.ready;
     check('the legacy stored value "map" migrates to the standard dark view',
       legacy.sb.basemap() === 'normal');
 
     console.log('\n=== Bas: Suche oben rechts, Telefon hinter der Lupe ===');
+    const prod = openPage(null), prodPhone = openPage(null, { touch: true });
+    await prod.ready; await prodPhone.ready;
+    check('the published page keeps the old UI: no basemap toggle, no location on the desktop',
+      !names(prod).includes('BasemapButton') && !names(prod).includes('LocateButton') &&
+      names(prodPhone).includes('LocateButton'), names(prod).join(' > '));
+    check('the published page keeps the search inside the left panel (and never flags hybrid)',
+      !prod.sb.document.documentElement.dataset.hybrid &&
+      prod.el('searchbar').parentNode === prod.el('panelbar') &&
+      prod.sb.document.documentElement.dataset.search === 'panel');
+
     const bar = phone.el('searchbar'), open = phone.el('searchopen'), input = phone.el('search'), res = phone.el('results');
     input.parentNode = phone.el('searchwrap'); phone.el('searchwrap').parentNode = bar;
     check('the magnifier is wired', typeof open.onclick === 'function');

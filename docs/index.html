@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-10"></script>
+<script src="i18n.js?v=20261015-11"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -63,7 +63,16 @@
   body:not([data-pane="favs"]) #favs { display: none; }
   /* Suche: durchscheinendes Feld oben rechts, direkt links neben dem Sprachumschalter (gleiche Höhe
      wie #lang). Trefferliste direkt darunter. Auf dem Telefon steckt sie hinter der Lupe (siehe unten). */
-  #searchbar { position: absolute; z-index: 4; top: calc(16px + env(safe-area-inset-top)); right: 118px;
+  /* Produktionsseite (kein Hybridbetrieb): die Suche sitzt wie früher im linken Panel. Diese
+     Überschreibungen gewinnen über die Hybrid-Regeln weiter unten (höhere Spezifität). */
+  html:not([data-hybrid]) #searchbar { position: static; top: auto; right: auto; left: auto; height: auto;
+    z-index: auto; width: 100%; display: block; margin-top: 8px; }
+  html:not([data-hybrid]) #searchopen { display: none !important; }
+  html:not([data-hybrid]) #searchwrap { display: block; width: 100%; }
+  html:not([data-hybrid]) #search { padding: 6px 10px; font-size: 12.5px; background: var(--panel);
+    backdrop-filter: none; }
+
+  #searchbar { position: absolute; z-index: 4; top: calc(16px + env(safe-area-inset-top)); right: 118px; height: 46px;
     height: 46px; display: flex; gap: 6px; align-items: center; background: transparent; }
   #searchopen { display: none; }
   #searchwrap { position: relative; width: 230px; }
@@ -331,6 +340,7 @@
       min-height: 44px; padding: 0; font-size: 17px; border-radius: 9px; background: rgba(16,19,26,.28);
       backdrop-filter: blur(6px); }
     #searchwrap { display: none; width: auto; }
+    html:not([data-hybrid]) #search { min-height: 40px; font-size: 14px; }
     #searchbar.open { left: 8px; right: 8px; z-index: 7; }
     #searchbar.open #searchopen { display: none; }
     #searchbar.open #searchwrap { display: block; flex: 1 1 auto; }
@@ -418,7 +428,8 @@
     <button id="panelclose" class="panel-x" data-i18n-aria="closePanel" aria-label="Close panel">✕</button></h1>
 
   <!-- Umschalter: immer nur ein Bereich sichtbar -> das Panel passt ohne Scrollbalken.
-       (Die Haltestellensuche steht oben rechts in #searchbar.) -->
+       (Im Hybridbetrieb steht die Haltestellensuche oben rechts in #searchbar, auf der
+       veröffentlichten Seite hier im Panel — der frühe Inline-Schalter oben verschiebt sie.) -->
   <div id="panelbar">
     <div class="seg" id="panes" role="group">
       <button data-pane="lines" class="on" aria-pressed="true" data-i18n="legendTitle">Lines</button><button data-pane="favs" aria-pressed="false" data-i18n="favTitle">Favourites</button><button data-pane="status" aria-pressed="false" data-i18n="presentation">Status &amp; filters</button>
@@ -466,6 +477,19 @@
   </div>
 </div>
 
+<script>
+  // Muss synchron laufen, VOR dem ersten Bildaufbau: live.js ist hier noch nicht geladen, deshalb
+  // dieselbe Bedingung wie dort. Hybridbetrieb -> data-hybrid sofort setzen (sonst blitzte das
+  // Suchfeld kurz in der falschen Ecke auf). Produktionsseite -> die Suche gehört ins linke Panel,
+  // genau wie vor dem Umbau.
+  (function () {
+    var hybrid = window.DLM_OPERATOR === true || /[?&]hybrid=1(?:&|$)/.test(String(location.search || ''));
+    if (hybrid) { document.documentElement.dataset.hybrid = '1'; return; }
+    var sb = document.getElementById('searchbar'), pb = document.getElementById('panelbar');
+    document.documentElement.dataset.search = 'panel';
+    if (sb && pb) pb.appendChild(sb);
+  })();
+</script>
 <div id="bar" class="panel">
   <div id="row">
     <div id="clock">--:--</div>
@@ -507,11 +531,11 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-10"></script>
+<script src="search.js?v=20261015-11"></script>
 <!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
      antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
-<script src="operator.js?v=20261015-10"></script>
-<script src="live.js?v=20261015-10"></script>
+<script src="operator.js?v=20261015-11"></script>
+<script src="live.js?v=20261015-11"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -544,6 +568,9 @@ const CARTO_MAXZOOM = 20;
 // Drei Zustände: 'normal' = dunkler Vektorstil (wie bisher), 'satellite' = Luftbild,
 // 'carto' = helle Straßenkarte. Der Betreiber wollte ausdrücklich alle drei.
 const BASEMAPS = ['normal', 'satellite', 'carto'];
+// Hybridbetrieb? Nur dort gibt es Grundkarten-Umschalter, Lupe und Ortung auf dem Rechner. Die
+// veröffentlichte Seite bleibt genau wie vorher (dunkle Karte, Suche im Panel, Ortung nur mobil).
+const HYBRID = !!(window.DarmstadtLive && window.DarmstadtLive.HYBRID_ON);
 const OWN_LAYERS = new Set(['sat', 'cartoimg', 'me-acc', 'me-dot']);   // nicht Grundkarte: bleiben stehen
 const BASE_VIS = new Map();                              // ursprüngliche Sichtbarkeit je Stil-Ebene
 let BASEMAP = 'normal', basemapBtn = null;
@@ -633,7 +660,7 @@ function setBasemap(which) {
 }
 let basemapCapped = false;
 map.on('style.load', () => {            // Satellit bei jedem Laden sicherstellen, Kachelgrenze nur einmal
-  try { addRasters(); applyBasemap(); }
+  try { if (HYBRID) { addRasters(); applyBasemap(); } }
   catch (err) { console.warn('satellite-layer-failed', err); }
   if (basemapCapped) return;
   try { basemapCapped = inlineTileSource(); }
@@ -686,7 +713,7 @@ class BasemapButton {
   }
   onRemove() { if (this.el) this.el.remove(); basemapBtn = null; }
 }
-map.addControl(new BasemapButton(), 'bottom-right');   // über dem Kipp-Schalter, auf Telefon UND Rechner gleich
+if (HYBRID) map.addControl(new BasemapButton(), 'bottom-right');   // über dem Kipp-Schalter, beide Layouts gleich
 map.addControl(new TiltButton(), 'bottom-right');
 
 const tip = document.getElementById('tip');
@@ -813,7 +840,8 @@ class LocateButton {
 }
 // Auf Telefon UND Rechner (eine Bedienleiste, ein Codepfad) — nur, wenn der Browser es kann. Der
 // Genauigkeitskreis kommt aus der Angabe des Browsers; am Rechner ist sie oft grob (WLAN/IP).
-if (navigator.geolocation) map.addControl(new LocateButton(), 'bottom-right');
+// Ortung: auf dem Telefon wie bisher, auf dem Rechner nur im Hybridbetrieb.
+if ((touchLayout() || HYBRID) && navigator.geolocation) map.addControl(new LocateButton(), 'bottom-right');
 // Eigene Geste beendet das Verfolgen, die Markierung bleibt stehen.
 map.on('dragstart', () => { if (GEO.on) geoStop(document.querySelector('.locate')); });
 
@@ -878,7 +906,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-10';
+  const APP_V = '20261015-11';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {

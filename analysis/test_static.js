@@ -175,9 +175,11 @@ function run(check, log = console.log) {
     /focusLine\(idx, wide\)/.test(liveSrc));
 
   // „Wo bin ich?" (Wunsch 2026-10-15): auf Telefon UND Rechner, und die Koordinaten bleiben am Gerät
-  check('location button exists on every layout (no touch gate) and uses the browser geolocation',
-    /if \(navigator\.geolocation\) map\.addControl\(new LocateButton\(\), 'bottom-right'\)/.test(html) &&
-    !/touchLayout\(\) && navigator\.geolocation/.test(html) &&
+  // Ortung: auf dem Telefon immer, auf dem Rechner nur im Hybridbetrieb — die veröffentlichte
+  // Seite soll sich nicht ändern.
+  check('location button is on every phone layout and on the desktop only in the hybrid build',
+    /if \(\(touchLayout\(\) \|\| HYBRID\) && navigator\.geolocation\) map\.addControl\(new LocateButton\(\), 'bottom-right'\)/.test(html) &&
+    !/if \(navigator\.geolocation\) map\.addControl\(new LocateButton/.test(html) &&
     /getCurrentPosition\(/.test(html) && /watchPosition\(/.test(html) && /clearWatch\(/.test(html));
   check('location is drawn on the map and never sent anywhere',
     !/const GEO = [\s\S]{0,1500}?fetch\(/.test(html) && /addSource\('me'/.test(html) &&
@@ -406,6 +408,16 @@ function run(check, log = console.log) {
     /#legend \{ flex: 0 0 auto;/.test(css) && /#legend-sec \{ flex: 0 0 auto;/.test(css));
   const chipMin = parseFloat(((rule('.chip') || '').match(/min-height:\s*([\d.]+)px/) || [])[1] || '0');
   check(`line chips are big enough to hit (${chipMin}px >= 26px)`, chipMin >= 26);
+
+  // Die drei Neuerungen (Grundkarten-Umschalter, Suche oben rechts, Ortung auf dem Rechner) gehören
+  // NUR in den Hybridbetrieb — die veröffentlichte Seite bleibt wie vorher.
+  check('the new UI is hybrid-only (basemap, top-right search, desktop location)',
+    /const HYBRID = !!\(window\.DarmstadtLive && window\.DarmstadtLive\.HYBRID_ON\)/.test(html) &&
+    /if \(HYBRID\) map\.addControl\(new BasemapButton\(\)/.test(html) &&
+    /if \(\(touchLayout\(\) \|\| HYBRID\) && navigator\.geolocation\)/.test(html) &&
+    /if \(HYBRID\) \{ addRasters\(\); applyBasemap\(\); \}/.test(html) &&
+    /html:not\(\[data-hybrid\]\) #searchbar \{ position: static/.test(css) &&
+    /pb\.appendChild\(sb\)/.test(html));
 
   // Drei Grundkarten (Wunsch 2026-10-15): dunkler Vektorstil, Luftbild, helle Straßenkarte.
   check('satellite raster source is configured but starts hidden',
