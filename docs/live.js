@@ -69,7 +69,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261015-14';
+  const VERSION = '20261015-15';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -158,6 +158,33 @@
       out[i] = out[i - 1] + Math.hypot((path[i][0] - path[i - 1][0]) * kx, (path[i][1] - path[i - 1][1]) * 110540);
     }
     return out;
+  }
+
+  // Eigene Tramgleise als dünne Linien unter den Fahrzeugpillen. Sie zeigen genau die Korridore,
+  // die die dunkle Grundkarte verschweigt — ohne einen einzigen zusätzlichen Abruf.
+  function addCorridors() {
+    const META = ctx && ctx.META;
+    const tracks = (META && META.tram_tracks) || [];
+    if (!tracks.length || ctx.map.getSource('tracks')) return 0;
+    const features = [];
+    for (const flat of tracks) {
+      const coords = [];
+      for (let i = 0; i + 1 < flat.length; i += 2) coords.push([flat[i], flat[i + 1]]);
+      if (coords.length > 1) features.push({ type: 'Feature', properties: {},
+        geometry: { type: 'LineString', coordinates: coords } });
+    }
+    if (!features.length) return 0;
+    ctx.map.addSource('tracks', { type: 'geojson', data: { type: 'FeatureCollection', features } });
+    ctx.map.addLayer({
+      id: 'corridors', type: 'line', source: 'tracks',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-color': '#9aa4b8',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.9, 14, 1.8, 17, 3.2],
+        'line-opacity': 0.5,
+      },
+    });
+    return features.length;
   }
 
   function posAt(path, cd) {
@@ -657,7 +684,8 @@
   function placeMarker(el, pos) {
     el._geo = pos;                                  // merken: danach kann die Position neu gesetzt werden
     const p = ctx.map.project([pos[0], pos[1]]);
-    el.style.transform = 'translate(' + Math.round(p.x) + 'px,' + Math.round(p.y) + 'px)translate(-50%,-50%)';
+    // -100% statt -50%: die Pille sitzt ÜBER dem Punkt, der Punkt selbst bleibt sichtbar (CSS-Dot).
+    el.style.transform = 'translate(' + Math.round(p.x) + 'px,' + Math.round(p.y) + 'px)translate(-50%,-100%)';
     el.style.zIndex = String(1000 + Math.round(p.y));
   }
 
@@ -673,7 +701,7 @@
     markerLog = vis.map(c => ({ v: c.v, pos: c.pos, rest: c.rest, u: c.u }));
     const host = markerHost();
     if (!host) return;
-    host.classList.toggle('scaled', ctx.map.getZoom() < 12.5);
+    host.classList.toggle('scaled', ctx.map.getZoom() < 14);   // kompakte Pille bis z14 (vorher 12.5)
     const letter = T('stopMark');                       // "H" in beiden Sprachen (Haltestelle)
     // Zuerst aufräumen: alles, was nicht mehr dazugehört, verschwindet. Über die Kinder im DOM, damit
     // auch nach einem Modul-Neustart keine Waisen stehen bleiben (nicht nur über den Pool).
@@ -1744,6 +1772,11 @@
     attach(context) {
       ctx = context;
       lineIndex = null;
+      // Tramgleise aus dem eigenen Bestand unter die Pillen legen (data/meta.json, 399 Polylinien).
+      // Die dunkle Kachel zeichnet Gleise überhaupt nicht und Nebenstraßen erst ab z13 — deshalb
+      // wirkten korrekt gesetzte Bahnpillen wie über Häusern schwebend. Reine Bestandsdaten, kein
+      // zusätzlicher Abruf; applyBasemap blendet die Ebene bei Satellit/Karte wieder aus.
+      try { addCorridors(); } catch (_) { /* Stil noch nicht da: dann eben ohne */ }
       ctx.map.on('moveend', () => scheduleRefresh(700));
       // Der Betreiber hat Vorrang: eigene Geste beendet das Begleiten sofort
       ctx.map.on('dragstart', stopFollow);

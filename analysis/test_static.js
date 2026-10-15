@@ -62,7 +62,13 @@ function run(check, log = console.log) {
   const mob = media('max-width: 700px');
   check('mobile: popup is a bottom sheet above the measured bar (--bar-h)', /bottom:\s*calc\(var\(--bar-h/.test(rule('#popup', mob) || ''));
   check('mobile: popup uses safe-area inset', /safe-area-inset-bottom/.test(rule('#popup', mob) || ''));
-  check('mobile: stop list does not scroll on its own (max-height: none -> no nested scroll)', prop(rule('.pop-stops', mob), 'max-height') === 'none');
+  // Wunsch des Betreibers: die Telefonkarte zeigt — wie die Karte am Rechner — genau DREI Halte,
+  // alles Weitere scrollt, und der Balken bleibt unsichtbar. Die Zeilen sind hier 44 px hoch.
+  const mobList = rule('.pop-stops', mob) || '';
+  check('mobile: the card shows exactly three stops, the rest scrolls with no visible bar',
+    prop(mobList, 'max-height') === 'calc(3 * var(--stop-row))' &&
+    prop(mobList, 'overflow-y') === 'auto' && prop(mobList, 'scrollbar-width') === 'none' &&
+    /--stop-row:\s*44px/.test(mobList));
   check('mobile: close button is a >=40px touch target', /min-height:\s*4\dpx/.test(rule('.pop-close', mob) || '') && /min-width:\s*4\dpx/.test(rule('.pop-close', mob) || ''));
   check('mobile: segmented buttons >=40px', /min-height:\s*4\dpx/.test(rule('.seg button', mob) || ''));
   check('mobile: mode toggles >=40px', /min-height:\s*4\dpx/.test(rule('.tog', mob) || ''));
@@ -90,6 +96,23 @@ function run(check, log = console.log) {
     /\.pop-stops \{ scrollbar-width: none; -ms-overflow-style: none; \}/.test(css) &&
     /\.pop-stops::-webkit-scrollbar \{ width: 0; height: 0; \}/.test(css) &&
     !/\.pop-stops[^{]*\{[^}]*scrollbar-width:\s*thin/.test(css));
+  // Die Pillen hängen als Sprechblase ÜBER der genauen Position; ein Punkt darunter markiert sie.
+  // Vorher lag die Pille mittig auf dem Punkt und verdeckte bei z13 rund 600 m Straße.
+  const liveNow = fs.readFileSync(path.join(DOCS, 'live.js'), 'utf8');
+  check('vehicle pills hang above the exact point, with a dot marking it',
+    /translate\(-50%,-100%\)/.test(liveNow) &&
+    /\.mk::after \{[^}]*left: 50%[^}]*top: 100%[^}]*border-radius: 50%/.test(css) &&
+    /\.mk\.focus::after \{[^}]*var\(--accent\)/.test(css) &&
+    /#markers\.scaled \.mk::after/.test(css) &&
+    /getZoom\(\) < 14\)/.test(liveNow));
+  // Eigene Tramgleise unter den Pillen: die dunkle Grundkarte zeichnet sie nicht, Nebenstraßen erst
+  // ab z13 — deshalb wirkten korrekt gesetzte Bahnpillen wie schwebend. Aus meta.json, kein Abruf.
+  check('tram corridors are drawn under the pills from the repository data',
+    /META\.tram_tracks/.test(liveNow) && /id: 'corridors'/.test(liveNow) &&
+    /type: 'geojson'/.test(liveNow) && /addSource\('tracks'/.test(liveNow) &&
+    /try \{ addCorridors\(\); \}/.test(liveNow));
+  check('the map zooms one step closer (17) so point and road can be told apart', /maxZoom: 17/.test(html));
+
   check('scrollbar thumb colour derives from --muted/--accent', /--scroll-thumb:\s*var\(--muted\)/.test(css) && /--scroll-thumb-hover:\s*var\(--accent\)/.test(css));
   check('overscroll-behavior: contain on panels and lists', /\.panel, #legend, \.pop-stops \{ overscroll-behavior: contain; \}/.test(css));
   check('scrollbar-gutter: stable where a list can scroll (popup)', /scrollbar-gutter:\s*stable/.test(rule('#popup') || ''));

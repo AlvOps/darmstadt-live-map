@@ -163,7 +163,12 @@ vm.runInContext(liveSrc, sandbox);
 
 const mapHandlers = {};
 const mapContainer = { clientWidth: 1280, clientHeight: 800, addEventListener() {} };
+const dmapStyle = { sources: {}, layers: [] };
 const map = {
+  // Quellen/Ebenen, wie die echte Karte sie führt: die App legt darüber die Tramgleise an.
+  getSource: id => dmapStyle.sources[id], addSource: (id, s) => { dmapStyle.sources[id] = s; },
+  getLayer: id => dmapStyle.layers.find(l => l.id === id),
+  addLayer: l => { dmapStyle.layers.push(l); },
   getBounds: () => ({ getWest: () => 8.63, getSouth: () => 49.86, getEast: () => 8.68, getNorth: () => 49.89 }),
   getZoom: () => 14, on(ev, fn) { mapHandlers[ev] = fn; }, getContainer: () => mapContainer,
   project: ([lon, lat]) => ({ x: 640 + (lon - 8.652) * 9000, y: 400 - (lat - 49.872) * 9000 }),
@@ -427,6 +432,17 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     check('clearVehicle räumt die Linie weg', X.chain().length === 0);
     check('index.html ruft es bei der Linienwahl', /window\.DarmstadtLive\.clearVehicle\(\)/.test(html) &&
       /if \(state\.selLine !== null && window\.DarmstadtLive/.test(html));
+  }
+
+  console.log('\n=== M3b: Tramgleise liegen unter den Pillen (eigene Daten, kein Abruf) ===');
+  {
+    const trk = map.getSource('tracks'), cor = map.getLayer('corridors');
+    const feats = trk && trk.data && trk.data.features ? trk.data.features.length : 0;
+    check('the tram corridors come from the repository file (399 polylines)', feats === 399, `${feats} Linien`);
+    check('they are a plain line layer painted under the markers',
+      !!cor && cor.type === 'line' && cor.source === 'tracks');
+    check('the newest polyline is a real path, not a single point',
+      feats > 0 && trk.data.features.every(f => f.geometry.coordinates.length > 1));
   }
 
   console.log('\n=== M4: ein gewähltes Fahrzeug isoliert die Karte — auch beim Herauszoomen ===');
