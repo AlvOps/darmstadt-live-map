@@ -17,13 +17,18 @@ Repository: `AlvOps/darmstadt-live-map` — an **independent repository**, not a
 of any fork network. It was rebuilt as a standalone repository on 2026-10-15 (the earlier fork lives on
 as the archived `AlvOps/darmstadt-nahverkehr-fork`).
 
-**Custom domain.** `darmstadtmap.com` was bought for this map and its Cloudflare zone exists, but the
-apex/`www` DNS records are still missing, so the domain does not resolve. While the `CNAME` was in place,
-GitHub 301-redirected the `github.io` URLs to that dead domain and the map was briefly unreachable; the
-domain is therefore parked until the records exist. Records to add (Cloudflare, **DNS only** — the
-orange proxy blocks GitHub's certificate issuance): `A @` → 185.199.108.153, 185.199.109.153,
-185.199.110.153, 185.199.111.153; `AAAA @` → 2606:50c0:8000::153 … `::8003::153`; `CNAME www` →
-`alvops.github.io`. After that: re-add `docs/CNAME`, set the domain in Pages and enforce HTTPS.
+**Custom domain.** The map is served at **https://darmstadtmap.com/** (and on `www.`). The certificate
+is a Let's Encrypt one that GitHub Pages obtains and renews by itself — nothing to install — and
+`https_enforced` is on, so `http://` as well as the `github.io` URLs redirect to the domain. DNS lives
+at Cloudflare and must stay **DNS-only (grey cloud)**; the orange proxy would block GitHub's certificate
+check. Records: `A @` and `A www` → 185.199.108.153, 185.199.109.153, 185.199.110.153,
+185.199.111.153; `AAAA @` → 2606:50c0:8000::153, `::8001::153`, `::8002::153`, `::8003::153`.
+
+Two traps learned here: while the records were missing, the `CNAME` file made GitHub 301 the `github.io`
+URLs into a domain that did not resolve, so the site was unreachable and the domain had to be parked
+until the records existed. And when checking "is the new version live", verify **on the domain itself** —
+the Pages CDN caches pages for 600 s (`cache-control: max-age=600`) and a stale browser cache looks
+exactly like a failed deploy.
 
 **Branches.** `main` is the only production branch, and it is what GitHub Pages serves (`main` / `docs`).
 `stable` is kept as the rollback point. The former working branches `master` and `operator-hybrid` were
