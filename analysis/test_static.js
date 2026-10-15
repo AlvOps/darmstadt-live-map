@@ -229,6 +229,10 @@ function run(check, log = console.log) {
     /<div id="welcome" role="dialog" aria-modal="true"/.test(html) && !/id="welcome" class="on"/.test(html));
   check('overlay fades in and out (CSS transition, `.on` set by the script)',
     /#welcome\.on \{ opacity: 1; pointer-events: auto; \}/.test(css) && /#welcome \{[^}]*transition: opacity/.test(css));
+  check('the disclaimer text follows the mode (operator dots vs. no-GPS opt-out)',
+    /'welcomeTitle', HYB \? 'welcomeBodyOperator' : 'welcomeBody'/.test(html) &&
+    /HYB = !!\(window\.DarmstadtLive && window\.DarmstadtLive\.HYBRID_ON\)/.test(html) &&
+    /addEventListener\('langchange'/.test(html));
   check('disclaimer appears on every visit, tutorial only the first time',
     /localStorage\.getItem\('darmstadt-live-tour'\)/.test(html) &&
     /localStorage\.setItem\('darmstadt-live-tour', '1'\)/.test(html) &&

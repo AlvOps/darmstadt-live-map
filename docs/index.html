@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-22"></script>
+<script src="i18n.js?v=20261015-23"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -552,11 +552,11 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-22"></script>
+<script src="search.js?v=20261015-23"></script>
 <!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
      antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
-<script src="operator.js?v=20261015-22"></script>
-<script src="live.js?v=20261015-22"></script>
+<script src="operator.js?v=20261015-23"></script>
+<script src="live.js?v=20261015-23"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -931,7 +931,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-22';
+  const APP_V = '20261015-23';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {
@@ -1143,14 +1143,20 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
     const el = id => document.getElementById(id);
     const title = el('wtitle'), body = el('wbody'), step = el('wstep'), skip = el('wskip'), nav = el('wnav');
     const T = k => window.I18N.t(k);
+    // Der Hinweistext hängt am Betrieb: auf der Hauptseite die zwei Punktarten (Betreiber-GPS als
+    // Standard), in der schlanken Fassung (?hybrid=0) der Hinweis, dass dort nichts GPS ist.
+    // Wichtig: dieses Skript setzt den Text selbst (T(bk)), der Attributtausch aus activateHybridCopy()
+    // allein erreicht den Dialog also nicht.
+    const HYB = !!(window.DarmstadtLive && window.DarmstadtLive.HYBRID_ON);
     const STEPS = [
-      ['welcomeTitle', 'welcomeBody'],
+      ['welcomeTitle', HYB ? 'welcomeBodyOperator' : 'welcomeBody'],
       ['tut1Title', 'tut1Body'], ['tut2Title', 'tut2Body'],
       ['tut3Title', 'tut3Body'], ['tut4Title', 'tut4Body'],
     ];
     let seenTour = false;
     try { seenTour = localStorage.getItem('darmstadt-live-tour') === '1'; } catch (_) { /* Privatmodus */ }
     let i = 0;
+    window.addEventListener('langchange', () => paint());   // offen stehender Hinweis wechselt mit
     const paint = () => {
       const [tk, bk] = STEPS[i];
       title.textContent = T(tk); body.textContent = T(bk);
