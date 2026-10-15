@@ -99,29 +99,21 @@ function run(check, log = console.log) {
   // Die Pillen hängen als Sprechblase ÜBER der genauen Position; ein Punkt darunter markiert sie.
   // Vorher lag die Pille mittig auf dem Punkt und verdeckte bei z13 rund 600 m Straße.
   const liveNow = fs.readFileSync(path.join(DOCS, 'live.js'), 'utf8');
-  // Unter z15 ist eine 50-px-Pille breiter als ein Häuserblock (bei z13 rund 600 m) und liegt damit
-  // zwangsläufig über Gebäuden — dort deshalb nur farbige Punkte, und nur ab z15 die Pille. Ab z15
-  // hängt sie über dem genauen Punkt, der Ankerpunkt darunter markiert ihn.
-  check('below z15 markers are dots, not pills wider than a city block',
-    /classList\.toggle\('dots', zoomNow < 15\)/.test(liveNow) &&
-    /#markers\.dots \.mk \{[^}]*padding: 0[^}]*width: 12px[^}]*box-sizing: border-box[^}]*border-radius: 50%/.test(css) &&
-    // Reihenfolge ist Teil der Regel: nach '#markers.scaled .mk' muss die Punktregel kommen,
-    // sonst überschreibt deren padding die Breite und der Punkt wird zum Oval.
-    css.indexOf('#markers.dots .mk {') > css.indexOf('#markers.scaled .mk {') &&
-    /#markers\.dots \.mk svg, #markers\.dots \.mk span \{ display: none; \}/.test(css) &&
-    /#markers\.dots \.mk\.focus \{[^}]*width: auto/.test(css));
-  check('from z15 the pill hangs above the exact point, with a dot marking it',
-    /classList\.toggle\('callout', zoomNow >= 15\)/.test(liveNow) &&
-    /getZoom\(\) >= 15 \? '-100%' : '-50%'/.test(liveNow) &&
-    /#markers:not\(\.callout\) \.mk::before \{ display: none; \}/.test(css) &&
-    /\.mk::before \{[^}]*left: 50%[^}]*top: 100%[^}]*border-radius: 50%/.test(css) &&
-    /\.mk\.focus::before \{[^}]*var\(--accent\)/.test(css) &&
-    /#markers\.scaled \.mk::before/.test(css) &&
-    /zoomNow < 14\)/.test(liveNow));
-  // Der Betreiber-GPS-Punkt oben rechts und der Ankerpunkt dürfen sich nicht überschreiben.
-  check('the anchor dot and the operator provenance mark use different pseudo-elements',
-    /\.mk\[data-src="operator"\]::after/.test(css) && /\.mk::before \{/.test(css) &&
-    !/\.mk::after \{[^}]*border-radius: 50%; background: #fff/.test(css));
+  // Ausdrücklicher Wunsch des Betreibers (2026-10-15): die Liniennummer steht in JEDEM Zoom in der
+  // Marke. Ein reiner Punkt-Modus beim Herauszoomen und eine hochgezogene Sprechblase gab es
+  // zwischenzeitlich — beides ist wieder entfernt; die Pille sitzt wieder mittig auf dem Punkt.
+  check('every marker keeps its line tag at every zoom, centred on the point',
+    /classList\.toggle\('scaled', ctx\.map\.getZoom\(\) < 14\)/.test(liveNow) &&
+    !/toggle\('dots'/.test(liveNow) && !/toggle\('callout'/.test(liveNow) &&
+    /translate\(x, y\)|'translate\(' \+ Math\.round/.test(liveNow) &&
+    /translate\(-50%,-50%\)/.test(liveNow) && !/'-100%'/.test(liveNow) &&
+    !/#markers\.dots/.test(css) && !/#markers\.callout/.test(css) && !/\.mk::before \{/.test(css));
+  check('the markers keep symbol and label in the compact variant too',
+    /#markers\.scaled \.mk \{ font-size: 11px; padding: 2px 7px 2px 6px; \}/.test(css) &&
+    !/#markers\.scaled \.mk (svg|span)[^{]*\{[^}]*display: none/.test(css));
+  // Der Betreiber-GPS-Punkt oben rechts bleibt die einzige Zusatzmarke am Fahrzeug.
+  check('the operator provenance mark is the only extra pseudo-element on a marker',
+    /\.mk\[data-src="operator"\]::after/.test(css) && !/\.mk::before/.test(css));
   // Eigene Tramgleise unter den Pillen: die dunkle Grundkarte zeichnet sie nicht, Nebenstraßen erst
   // ab z13 — deshalb wirkten korrekt gesetzte Bahnpillen wie schwebend. Aus meta.json, kein Abruf.
   check('tram corridors are drawn under the pills from the repository data',

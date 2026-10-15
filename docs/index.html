@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-17"></script>
+<script src="i18n.js?v=20261015-18"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -264,21 +264,11 @@
      Pille mittig auf dem Punkt: mit ~50 px Breite deckte sie bei z13 rund 600 m ab und verdeckte
      damit beide Straßenseiten — der Fahrweg war korrekt, nur unsichtbar (Messung 2026-10-15:
      Straßenlage median 0,17 m, aber die Kachel zeichnet Straßen unter z13 teils gar nicht). */
-  /* Der Ankerpunkt hängt an ::before — ::after gehört dem Betreiber-GPS-Punkt oben rechts und die
-     beiden Regeln hätten sich sonst gegenseitig überschrieben. */
-  .mk::before { content: ''; position: absolute; left: 50%; top: 100%; width: 8px; height: 8px;
-    margin: -4px 0 0 -4px; border-radius: 50%; background: #fff;
-    border: 1.5px solid rgba(10, 14, 22, .6); box-shadow: 0 1px 3px rgba(0, 0, 0, .45); }
-  .mk.focus::before { background: var(--accent); border-color: #fff; }
-  /* Unter z15 nur farbige Punkte: eine 50-px-Pille ist bei z13 rund 600 m breit und liegt damit
-     zwangsläufig über ganzen Häuserblocks — genau das, was der Betreiber als „fliegt über die
-     Häuser" gesehen hat. Ab z15 steht die Linie wieder in der Pille, und die hängt dann über dem
-     genauen Punkt. Ein gewähltes Fahrzeug behält seine Pille in jedem Zoom. */
-  #markers.dots .mk svg, #markers.dots .mk span { display: none; }
-  #markers.dots .mk::before { display: none; }
-  #markers.dots .mk.focus { width: auto; height: auto; padding: 3px 9px 3px 7px; border-radius: 999px; }
-  #markers.dots .mk.focus svg, #markers.dots .mk.focus span { display: inline; }
-  #markers:not(.callout) .mk::before { display: none; }
+  /* Die Marke zeigt IMMER die Linie („tags at all times", Wunsch des Betreibers 2026-10-15): die
+     Pille sitzt mittig auf dem Punkt und trägt Symbol + Liniennummer in jedem Zoom. Ein reiner
+     Punkt-Modus und eine hochgezogene Sprechblase gab es zwischenzeitlich — beides wieder entfernt,
+     weil die Liniennummer beim Herauszoomen gebraucht wird. Dass eine 50-px-Pille bei z13 ~600 m
+     breit ist, bleibt so; das ist die bewusst gewählte Abwägung des Betreibers. */
   .mk.dim { opacity: .55; }
   /* Über hellem Luftbild verschwimmen die hellen Pillen — nur im Satellitenmodus ein dunkler Saum.
      Der Fokusring bleibt dabei erhalten (eigene Regel, sonst überschriebe der Saum ihn). */
@@ -286,12 +276,7 @@
   html:not([data-basemap="normal"]) .mk.focus { box-shadow: 0 0 0 1.5px rgba(0,0,0,.55), 0 0 0 4px var(--accent), 0 1px 5px rgba(0, 0, 0, .5); }
   #markers.scaled .mk { font-size: 11px; padding: 2px 7px 2px 6px; }
   #markers.scaled .mk svg { width: 12px; height: 12px; }
-  #markers.scaled .mk::before { width: 6px; height: 6px; margin: -3px 0 0 -3px; }
-  /* Muss NACH #markers.scaled .mk stehen: dessen padding (2px 7px 2px 6px) hat dieselbe Spezifität
-     und gewinnt sonst — mit border-box erzwingt das padding dann 17 px Breite, und der Punkt würde
-     zum Oval (im Browser gemessen 2026-10-15: 17x11 px statt 12x12). */
-  #markers.dots .mk { padding: 0; width: 12px; height: 12px; min-width: 0; box-sizing: border-box;
-    border-width: 2px; border-radius: 50%; }
+  /* Kompaktere Pille beim Herauszoomen: kleinere Schrift und engeres padding, Beschriftung bleibt. */
   /* Haltestelle: weißer Kreis mit großem Buchstaben (H = Haltestelle, S = station) */
   /* Haltestelle: kleiner weißer Kreis, Buchstabe wirklich mittig (Buttons bringen sonst eigenes
      Innenmaß und Zeilenhöhe mit — daher padding 0, border-box und Flex-Zentrierung). */
@@ -564,11 +549,11 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-17"></script>
+<script src="search.js?v=20261015-18"></script>
 <!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
      antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
-<script src="operator.js?v=20261015-17"></script>
-<script src="live.js?v=20261015-17"></script>
+<script src="operator.js?v=20261015-18"></script>
+<script src="live.js?v=20261015-18"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -945,7 +930,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-17';
+  const APP_V = '20261015-18';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {

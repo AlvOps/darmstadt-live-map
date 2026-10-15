@@ -445,15 +445,16 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
       feats > 0 && trk.data.features.every(f => f.geometry.coordinates.length > 1));
   }
 
-  console.log('\n=== M3c: unter z15 sind es Punkte, keine Pillen (Karte steht auf z14) ===');
+  console.log('\n=== M3c: die Liniennummer steht in jedem Zoom in der Marke ===');
   {
     const host = X.markerNode();
-    check('bei z14 trägt die Markenebene die Klasse "dots" (keine Pillen über den Häusern)',
-      host.classList.contains('dots') && !host.classList.contains('callout'));
-    check('die Marke sitzt dabei mittig auf der Position (kein Versatz nach oben)',
-      X.markers().length > 0 && ((host.children.find(n => n.dataset && n.dataset.key) || {}).style || {}).transform
-        .indexOf('translate(-50%,-50%)') > -1,
-      ((host.children.find(n => n.dataset && n.dataset.key) || {}).style || {}).transform || 'keine Marke');
+    const el = host.children.find(n => n.dataset && n.dataset.key === 'v:' + vA.tripId) || host.children[0];
+    check('kein Punkt-Modus und keine hochgezogene Sprechblase mehr (Betreiber-Wunsch)',
+      !host.classList.contains('dots') && !host.classList.contains('callout'));
+    check('die Marke sitzt mittig auf der Position', !!el && /translate\(-50%,-50%\)/.test(el.style.transform),
+      el ? el.style.transform : 'keine Marke');
+    check('die Marke trägt Liniennummer und Symbol', !!el && /<span>/.test(el.innerHTML) && el.innerHTML.includes(vA.lineName),
+      el ? el.innerHTML.slice(0, 60) : 'keine Marke');
   }
 
   console.log('\n=== M4: ein gewähltes Fahrzeug isoliert die Karte — auch beim Herauszoomen ===');

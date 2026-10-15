@@ -69,7 +69,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261015-17';
+  const VERSION = '20261015-18';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -684,11 +684,8 @@
   function placeMarker(el, pos) {
     el._geo = pos;                                  // merken: danach kann die Position neu gesetzt werden
     const p = ctx.map.project([pos[0], pos[1]]);
-    // Ab z15 hängt die Pille ÜBER dem Punkt (Ankerpunkt darunter sichtbar). Darunter bleibt sie
-    // mittig: bei z12–14 verschöbe sie sich sonst 135–440 m vom Fahrzeug weg, also quer über die
-    // nächsten Häuserblocks — genau der Eindruck, den der Betreiber gemeldet hat.
-    const shift = ctx.map.getZoom() >= 15 ? '-100%' : '-50%';
-    el.style.transform = 'translate(' + Math.round(p.x) + 'px,' + Math.round(p.y) + 'px)translate(-50%,' + shift + ')';
+    // Immer mittig auf dem Punkt — die Liniennummer steht in jedem Zoom in der Pille.
+    el.style.transform = 'translate(' + Math.round(p.x) + 'px,' + Math.round(p.y) + 'px)translate(-50%,-50%)';
     el.style.zIndex = String(1000 + Math.round(p.y));
   }
 
@@ -704,12 +701,8 @@
     markerLog = vis.map(c => ({ v: c.v, pos: c.pos, rest: c.rest, u: c.u }));
     const host = markerHost();
     if (!host) return;
-    const zoomNow = ctx.map.getZoom();
-    // Unter z15 nur Punkte (siehe CSS): eine Pille wäre dort breiter als ein Häuserblock. Ab z15
-    // zeigt sie die Linie und hängt über dem genauen Punkt. 'scaled' bleibt für die Zwischenstufe.
-    host.classList.toggle('dots', zoomNow < 15);
-    host.classList.toggle('callout', zoomNow >= 15);
-    host.classList.toggle('scaled', zoomNow < 14);
+    // Nur die kompakte Pille beim Herauszoomen; die Liniennummer bleibt in jedem Zoom sichtbar.
+    host.classList.toggle('scaled', ctx.map.getZoom() < 14);
     const letter = T('stopMark');                       // "H" in beiden Sprachen (Haltestelle)
     // Zuerst aufräumen: alles, was nicht mehr dazugehört, verschwindet. Über die Kinder im DOM, damit
     // auch nach einem Modul-Neustart keine Waisen stehen bleiben (nicht nur über den Pool).
