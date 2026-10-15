@@ -427,8 +427,8 @@ function run(check, log = console.log) {
   // Beide Raster werden OBEN angehängt: der Stil beginnt mit einer background-Ebene, die die ganze
   // Fläche malt — darunter eingehängt wäre ein Raster unsichtbar.
   check('three basemaps exist, both rasters start hidden and sit above the style layers',
-    /CARTO_TILES = 'https:\/\/basemaps\.cartocdn\.com\/rastertiles\/voyager\/\{z\}\/\{x\}\/\{y\}\.png'/.test(html) &&
-    /const CARTO_MAXZOOM = 20;/.test(html) && /id: 'cartoimg', type: 'raster'/.test(html) &&
+    /CARTO_TILES = 'https:\/\/tile\.openstreetmap\.de\/\{z\}\/\{x\}\/\{y\}\.png'/.test(html) &&
+    /const CARTO_MAXZOOM = 19;/.test(html) && /id: 'cartoimg', type: 'raster'/.test(html) &&
     /const BASEMAPS = \['normal', 'satellite', 'carto'\]/.test(html) &&
     /map\.addLayer\(\{ id: 'sat'[^\n]*\}\);/.test(html) && /map\.addLayer\(\{ id: 'cartoimg'[^\n]*\}\);/.test(html) &&
     !/firstStyleLayerId/.test(html));

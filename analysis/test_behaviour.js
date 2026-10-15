@@ -519,7 +519,7 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     const sat = desk.style.sources.sat, cim = desk.style.sources.cartoimg;
     check('both basemap rasters exist, hidden, and sit ABOVE the style layers (never under its background)',
       !!sat && sat.type === 'raster' && /World_Imagery\/MapServer\/tile\/\{z\}\/\{y\}\/\{x\}$/.test(sat.tiles[0]) &&
-      !!cim && cim.type === 'raster' && /rastertiles\/voyager\/\{z\}\/\{x\}\/\{y\}\.png$/.test(cim.tiles[0]) &&
+      !!cim && cim.type === 'raster' && /tile\.openstreetmap\.de\/\{z\}\/\{x\}\/\{y\}\.png$/.test(cim.tiles[0]) &&
       vis(desk, 'sat') === 'none' && vis(desk, 'cartoimg') === 'none' &&
       desk.style.layers.filter(l => l.id === 'sat').length === 1 &&
       desk.style.layers.filter(l => l.id === 'cartoimg').length === 1 &&
