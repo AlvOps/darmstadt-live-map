@@ -11,9 +11,14 @@
   Anwendung selbst wird NICHT kopiert, damit es keine zweite Fassung gibt, die auseinanderläuft.
   Der Schalter `hybrid=1` bleibt in der Adresse, live.js liest ihn und startet dann das
   Betreibermodul. Die veröffentlichte Seite unter / bleibt unverändert (dort ist der Schalter aus).
+
+  Ausserdem wird `&v=<Kennung>` angehängt — Zwischenspeicher-Schutz. Ein Browser, der die Zielseite
+  noch von einem früheren Build im Speicher hat, zeigt sonst die alte Fassung ohne Betreiberbetrieb;
+  genau das ist dem Betreiber passiert. Mit der Kennung in der Adresse ist jeder Link auf diese Seite
+  ein frischer Eintrag, und die Kennung wird beim Versionssprung mitgezogen.
 -->
-<meta http-equiv="refresh" content="0; url=../?hybrid=1">
-<script>location.replace('../?hybrid=1');</script>
+<meta http-equiv="refresh" content="0; url=../?hybrid=1&v=20261015-19">
+<script>location.replace('../?hybrid=1&v=20261015-19');</script>
 <style>
   body { margin: 0; background: #10131a; color: #e8eaf0;
          font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -31,8 +36,8 @@
     live position; every other dot stays derived from realtime stop prognoses.
     <strong>Not</strong> the published map.
   </p>
-  <p><a href="../?hybrid=1" id="go">Continue to the hybrid map</a></p>
-  <p class="note"><a href="../">Back to the published map (prognoses only)</a></p>
+  <p><a href="../?hybrid=1&v=20261015-19" id="go">Continue to the hybrid map</a></p>
+  <p class="note"><a href="../?v=20261015-19">Back to the published map (prognoses only)</a></p>
 </main>
 </body>
 </html>
