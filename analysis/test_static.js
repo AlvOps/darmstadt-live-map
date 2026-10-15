@@ -259,6 +259,12 @@ function run(check, log = console.log) {
   check('the dots follow the live status, also in the favourites, and cannot rot for long',
     /window\.DarmstadtLive\.lineStatus/.test(html) && /setInterval\(updateLineDots, 1000\)/.test(html) &&
     /updateLineDots\(\);/.test(html) && /fdot\.className = 'ldot'/.test(html));
+  check('nothing pops up on hover in the left pane, and the dots stay labelled for screen readers',
+    !/tip\.innerHTML/.test(html) && !/c\.title = lineEnds\(l\)/.test(html) &&
+    /d\.setAttribute\('aria-label', label\)/.test(html) && !/d\.title = label/.test(html));
+  check('the line status comes from the whole feed, not from the current view',
+    /for \(const v of vehicles\) \{[\s\S]{0,200}lineIdx/.test(
+      require('fs').readFileSync(require('path').join(__dirname, '..', 'docs', 'live.js'), 'utf8')));
   check('a small legend sits beside the realtime badge, in both languages',
     /<span id="dotlegend"[^>]*>[\s\S]{0,420}data-status="gps"[\s\S]{0,220}data-status="feed"[\s\S]{0,220}data-status="none"/.test(html) &&
     /dotGps: 'GPS', dotFeed: 'Prognosis', dotNone: 'No service'/.test(i18nAll) &&
