@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-03"></script>
+<script src="i18n.js?v=20261015-04"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -129,6 +129,11 @@
   .maplibregl-ctrl-group.tilt3d svg { display: block; width: 17px; height: 17px; }
   .maplibregl-ctrl-group.tilt3d[aria-pressed="true"] { background: var(--accent); }
   .maplibregl-ctrl-group.tilt3d[aria-pressed="true"] svg { fill: #111; }
+  /* „Wo bin ich?" — nur auf dem Telefon eingebunden, gleiche Optik wie die anderen Knöpfe */
+  .maplibregl-ctrl-group.locate { display: grid; place-items: center; width: 29px; height: 29px; padding: 0; }
+  .maplibregl-ctrl-group.locate svg { display: block; width: 17px; height: 17px; }
+  .maplibregl-ctrl-group.locate[aria-pressed="true"] { background: #5aaaff; }
+  .maplibregl-ctrl-group.locate[aria-pressed="true"] svg { fill: #fff; }
 
   /* --- Echtzeit --- */
   .livestat { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--muted); margin-top: 8px; }
@@ -450,8 +455,8 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-03"></script>
-<script src="live.js?v=20261015-03"></script>
+<script src="search.js?v=20261015-04"></script>
+<script src="live.js?v=20261015-04"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -586,6 +591,81 @@ function selectLine(li) {
   if (touchLayout() && hidePanelNow) hidePanelNow();
 }
 
+// „Wo bin ich?" — nur auf dem Telefon (Wunsch des Betreibers 2026-10-15). Ein Tipp fragt die Position
+// ab, zeichnet Punkt und Genauigkeitskreis und schwenkt dorthin; während der Verfolgung bleibt die
+// Position in der Mitte. Die Koordinaten werden nur gezeichnet und verlassen das Gerät nicht.
+const GEO = { watch: null, on: false };
+function geoNotice(text) {                 // kurze Meldung in der vorhandenen Leiste
+  const b = document.getElementById('banner');
+  if (!b) return;
+  b.textContent = text; b.hidden = false;
+  clearTimeout(geoNotice._t);
+  geoNotice._t = setTimeout(() => { b.hidden = true; }, 6000);
+}
+// Genauigkeitskreis als Polygon (Meter -> Grad), sonst wäre der Kreis bei jedem Zoom falsch groß.
+function geoCircle(lat, lon, acc) {
+  const pts = [], dLat = acc / 111320, dLon = acc / (111320 * Math.cos(lat * Math.PI / 180) || 1);
+  for (let a = 0; a < 360; a += 10) {
+    pts.push([lon + dLon * Math.cos(a * Math.PI / 180), lat + dLat * Math.sin(a * Math.PI / 180)]);
+  }
+  pts.push(pts[0]);
+  return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [pts] }, properties: {} };
+}
+function geoPaint(lat, lon, acc) {
+  const data = { type: 'FeatureCollection', features: [
+    geoCircle(lat, lon, Math.max(15, acc || 0)),
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: {} },
+  ] };
+  const src = map.getSource('me');
+  if (src) src.setData(data);
+  else {
+    map.addSource('me', { type: 'geojson', data });
+    map.addLayer({ id: 'me-acc', type: 'fill', source: 'me', filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: { 'fill-color': 'rgba(90,170,255,.18)', 'fill-outline-color': 'rgba(90,170,255,.55)' } });
+    map.addLayer({ id: 'me-dot', type: 'circle', source: 'me', filter: ['==', ['geometry-type'], 'Point'],
+      paint: { 'circle-radius': 5, 'circle-color': '#5aaaff', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
+  }
+  if (GEO.on) map.easeTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 15.5), duration: 600 });
+}
+function geoStop(b) {
+  if (GEO.watch !== null && navigator.geolocation) { try { navigator.geolocation.clearWatch(GEO.watch); } catch (_) { /* egal */ } }
+  GEO.watch = null; GEO.on = false;
+  if (b && b.setAttribute) b.setAttribute('aria-pressed', 'false');
+  ['me-acc', 'me-dot'].forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
+  if (map.getSource('me')) map.removeSource('me');
+}
+function geoStart(b) {
+  if (!navigator.geolocation) { geoNotice(window.I18N.t('geoUnsupported')); return; }
+  GEO.on = true;
+  if (b) b.setAttribute('aria-pressed', 'true');
+  geoNotice(window.I18N.t('geoSearching'));
+  const ok = p => geoPaint(p.coords.latitude, p.coords.longitude, p.coords.accuracy);
+  const bad = () => { if (!GEO.on) return; geoStop(b); geoNotice(window.I18N.t('geoDenied')); };
+  navigator.geolocation.getCurrentPosition(ok, bad, { enableHighAccuracy: true, timeout: 12000 });
+  if (GEO.watch === null) {
+    GEO.watch = navigator.geolocation.watchPosition(ok, bad, { enableHighAccuracy: true, maximumAge: 5000 });
+  }
+}
+class LocateButton {
+  onAdd(m) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'maplibregl-ctrl maplibregl-ctrl-group locate';
+    b.setAttribute('aria-pressed', 'false');
+    b.setAttribute('data-i18n-aria', 'geoTitle');
+    b.setAttribute('data-i18n-title', 'geoTitle');
+    b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="#333"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 3h-1.06A8 8 0 0 0 13 4.06V3h-2v1.06A8 8 0 0 0 4.06 11H3v2h1.06A8 8 0 0 0 11 19.94V21h2v-1.06A8 8 0 0 0 19.94 13H21v-2zm-9 6.5a6.5 6.5 0 1 1 0-13 6.5 6.5 0 0 1 0 13z"/></svg>';
+    b.onclick = () => (GEO.on ? geoStop(b) : geoStart(b));
+    this.el = b;
+    return b;
+  }
+  onRemove() { geoStop(this.el); this.el.remove(); }
+}
+// Nur auf dem Telefon (der Betreiber wollte es ausdrücklich dort) — und nur, wenn das Gerät es kann.
+if (touchLayout() && navigator.geolocation) map.addControl(new LocateButton(), 'bottom-right');
+// Eigene Geste beendet das Verfolgen, die Markierung bleibt stehen.
+map.on('dragstart', () => { if (GEO.on) geoStop(document.querySelector('.locate')); });
+
 // Linienleiste nach Verkehrsart/Betreiber gruppiert
 const GROUPS = [
   { key: 'grpTram', open: true, modes: ['tram'], test: l => l.mode === 'tram' },
@@ -647,7 +727,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-03';
+  const APP_V = '20261015-04';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {

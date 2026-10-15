@@ -164,6 +164,21 @@ function run(check, log = console.log) {
     /focusLineWide\(sel\)/.test(liveSrc) && /const CITY_BOX = \{ w: 8\.560, s: 49\.790/.test(liveSrc) &&
     /focusLine\(idx, wide\)/.test(liveSrc));
 
+  // „Wo bin ich?" (Wunsch 2026-10-15): nur auf dem Telefon, und die Koordinaten bleiben am Gerät
+  check('location button exists, is phone-only and uses the browser geolocation',
+    /new LocateButton\(\)/.test(html) && /if \(touchLayout\(\) && navigator\.geolocation\)/.test(html) &&
+    /getCurrentPosition\(/.test(html) && /watchPosition\(/.test(html) && /clearWatch\(/.test(html));
+  check('location is drawn on the map and never sent anywhere',
+    !/const GEO = [\s\S]{0,1500}?fetch\(/.test(html) && /addSource\('me'/.test(html) &&
+    /id: 'me-acc'/.test(html) && /id: 'me-dot'/.test(html));
+  check('a drag stops the follow (the marker stays)',
+    /map\.on\('dragstart', \(\) => \{ if \(GEO\.on\) geoStop/.test(html));
+  check('location messages exist in both languages',
+    /geoTitle: 'Where am I\?'/.test(i18nAll) && /geoTitle: 'Wo bin ich\?'/.test(i18nAll) &&
+    /geoDenied: 'Location is not available/.test(i18nAll) && /geoDenied: 'Standort nicht verfügbar/.test(i18nAll));
+  check('location control matches the other map buttons',
+    /\.maplibregl-ctrl-group\.locate \{/.test(css) && /\.maplibregl-ctrl-group\.locate\[aria-pressed="true"\]/.test(css));
+
   // Aufklärung + Einführung beim Start (Wunsch 2026-10-15: Hinweis immer, Einführung nur einmal)
   check('start overlay exists and cannot block the page if JS fails (no .on in the markup)',
     /<div id="welcome" role="dialog" aria-modal="true"/.test(html) && !/id="welcome" class="on"/.test(html));

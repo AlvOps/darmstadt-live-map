@@ -94,6 +94,10 @@ function jsLiterals(src) {
 }
 
 const KEY_NAMES = new Set(['Escape', 'Space', 'Enter', 'Tab']);
+// GeoJSON-Geometrietypen sind Spezifikations-Schlüsselwörter, keine sichtbare Prosa (sie stehen z. B.
+// in der Ortungs-Ebene: "Feature"/"Polygon"/"Point"). Ohne diese Liste meldet der Scanner sie als Text.
+const TECH_TOKENS = new Set(['Feature', 'FeatureCollection', 'Point', 'MultiPoint', 'LineString',
+  'MultiLineString', 'Polygon', 'MultiPolygon', 'GeometryCollection']);
 // Looks like a sentence for humans? (≥2 words, a word with ≥3 letters, not a selector/URL/CSS/id list)
 /* CSS-ish selector list or single token, e.g. "#speed button", ".pop-stops li", "#legend summary".
  * Deliberately LINEAR: the previous pattern was /^[\w-]+(\s*[,>+~]?\s*[#.]?[\w-]+(\[[^\]]*\])?)*$/,
@@ -108,6 +112,7 @@ function looksLikeSelectorOrToken(s) {
 function isProse(lit) {
   const s = lit.replace(/<[^>]*>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\u0000/g, ' ').trim();
   if (!s) return false;
+  if (TECH_TOKENS.has(s)) return false;                              // GeoJSON-Schlüsselwörter, s. o.
   if (/^(https?:|data\/|[#.\[]|\(|rgba?\(|var\(|calc\(|min\(|max\(|clamp\()/.test(s)) return false;   // CSS-Werte sind keine Prosa
   if (/(^|[?&\s])[a-zA-Z]+=/.test(s)) return false;                 // URL query strings
   if (KEY_NAMES.has(s)) return false;                                // KeyboardEvent.key/code values
