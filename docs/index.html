@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-13"></script>
+<script src="i18n.js?v=20261015-14"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -341,11 +341,15 @@
       backdrop-filter: blur(6px); }
     #searchwrap { display: none; width: auto; }
     html:not([data-hybrid]) #search { min-height: 40px; font-size: 14px; }
-    #searchbar.open { left: 8px; right: 8px; z-index: 7; }
+    /* Aufgeklappt bleibt das Feld bewusst klein: vorher war es über die ganze Breite gezogen und
+       40 px hoch, das wirkte wuchtig. Es sitzt jetzt rechts und deckt nur den Toggle-Bereich ab.
+       Die Trefferliste darf breiter sein als das Feld (lange Stationsnamen), die Trefferzeilen
+       bleiben 44 px hoch für den Finger. */
+    #searchbar.open { left: auto; right: 8px; z-index: 7; height: 40px; }
     #searchbar.open #searchopen { display: none; }
-    #searchbar.open #searchwrap { display: block; flex: 1 1 auto; }
-    /* aufgeklappt liegt das Feld über ☰ und EN/DE: dichter getönt, sonst schimmern deren Beschriftungen durch */
-    #searchbar.open #search { background: rgba(16,19,26,.72); }
+    #searchbar.open #searchwrap { display: block; flex: 0 1 auto; width: min(58vw, 208px); }
+    #searchbar.open #search { min-height: 32px; font-size: 13px; padding: 6px 9px; background: rgba(16,19,26,.72); }
+    #searchbar.open #results { left: auto; right: 0; width: min(76vw, 288px); }
     #search { min-height: 40px; font-size: 14px; }
     #results button.res { min-height: 44px; font-size: 14px; }
     #favstations .fav-go { min-height: 44px; font-size: 14px; }
@@ -531,11 +535,11 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-13"></script>
+<script src="search.js?v=20261015-14"></script>
 <!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
      antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
-<script src="operator.js?v=20261015-13"></script>
-<script src="live.js?v=20261015-13"></script>
+<script src="operator.js?v=20261015-14"></script>
+<script src="live.js?v=20261015-14"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -909,7 +913,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-13';
+  const APP_V = '20261015-14';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {

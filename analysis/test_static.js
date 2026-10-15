@@ -468,7 +468,15 @@ function run(check, log = console.log) {
     /min-width: 44px/.test(rule('#searchopen', mob) || '') &&
     prop(rule('#searchwrap', mob), 'display') === 'none' &&
     prop(rule('#searchbar.open #searchwrap', mob), 'display') === 'block' &&
-    /left: 8px; right: 8px/.test(rule('#searchbar.open', mob) || ''));
+    /left: auto; right: 8px/.test(rule('#searchbar.open', mob) || ''));
+  // Aufgeklappt muss das Feld klein bleiben (der Betreiber fand es zu wuchtig): schmal, flach, aber
+  // die Trefferliste darf breiter sein als das Feld und die Trefferzeilen bleiben Fingergröße.
+  check('the opened search box stays small on phones',
+    /width: min\(58vw, 208px\)/.test(rule('#searchbar.open #searchwrap', mob) || '') &&
+    /min-height: 32px/.test(rule('#searchbar.open #search', mob) || '') &&
+    /font-size: 13px/.test(rule('#searchbar.open #search', mob) || '') &&
+    /width: min\(76vw, 288px\)/.test(rule('#searchbar.open #results', mob) || '') &&
+    /min-height: 44px/.test(rule('#results button.res', mob) || ''));
   check('the magnifier is labelled in both languages and wired to the box',
     /<button id="searchopen" type="button" aria-expanded="false" aria-controls="searchwrap"\s+data-i18n-aria="searchOpen"/.test(html) &&
     /searchOpen: 'Open the stop search'/.test(fs.readFileSync(path.join(DOCS, 'i18n.js'), 'utf8')) &&
