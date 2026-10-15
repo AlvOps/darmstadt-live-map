@@ -237,7 +237,7 @@ function run(check, log = console.log) {
     /skip\.hidden = i === 0/.test(html) && /skip\.onclick = close/.test(html) &&
     (html.match(/'tut[1-4]Title'/g) || []).length === 4);
   check('intro text exists in both languages',
-    /welcomeTitle: 'Work in progress'/.test(i18nAll) && /welcomeTitle: 'Baustelle'/.test(i18nAll) &&
+    /welcomeTitle: 'How to read this map'/.test(i18nAll) && /welcomeTitle: 'So liest du diese Karte'/.test(i18nAll) &&
     /tut4Title: '4 · Language, 3D and the drawer'/.test(i18nAll) &&
     /tut4Title: '4 · Sprache, 3D und die Schublade'/.test(i18nAll));
   check('intro buttons are thumb-sized and the overlay sits above every panel',
