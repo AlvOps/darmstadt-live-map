@@ -230,22 +230,23 @@ function run(check, log = console.log) {
   check('overlay fades in and out (CSS transition, `.on` set by the script)',
     /#welcome\.on \{ opacity: 1; pointer-events: auto; \}/.test(css) && /#welcome \{[^}]*transition: opacity/.test(css));
   check('the disclaimer text follows the mode (operator dots vs. no-GPS opt-out)',
-    /'welcomeTitle', HYB \? 'welcomeBodyOperator' : 'welcomeBody'/.test(html) &&
+    /const DOC_BODY = HYB \? 'welcomeBodyOperator' : 'welcomeBody'/.test(html) &&
     /HYB = !!\(window\.DarmstadtLive && window\.DarmstadtLive\.HYBRID_ON\)/.test(html) &&
     /addEventListener\('langchange'/.test(html));
-  check('disclaimer appears on every visit, tutorial only the first time',
-    /localStorage\.getItem\('darmstadt-live-tour'\)/.test(html) &&
-    /localStorage\.setItem\('darmstadt-live-tour', '1'\)/.test(html) &&
-    /if \(i === 0 && seenTour\) \{ close\(\); return; \}/.test(html));
-  check('tutorial has four steps and a skip that only shows from step 1',
-    /skip\.hidden = i === 0/.test(html) && /skip\.onclick = close/.test(html) &&
-    (html.match(/'tut[1-4]Title'/g) || []).length === 4);
-  check('intro text exists in both languages',
+  check('the start asks for the language first, but only until one was chosen',
+    /let phase = window\.I18N\.stored\(\) \? 'doc' : 'lang'/.test(html) && /id="wlang"/.test(html) &&
+    /chooseLang: 'Choose language'/.test(i18nAll) && /chooseLang: 'Sprache wählen'/.test(i18nAll));
+  check('that segment is the header toggle itself (same .seg markup, data-lang en/de)',
+    /<div id="wlang"[\s\S]{0,240}class="seg"[\s\S]{0,240}data-lang="en"[\s\S]{0,140}data-lang="de"/.test(html));
+  check('the disclaimer appears on every visit and the tutorial is gone for now',
+    /body\.textContent = T\(DOC_BODY\)/.test(html) && /nav\.onclick = close/.test(html) &&
+    !/STEPS|wstep|wskip|seenTour|darmstadt-live-tour/.test(html));
+  check('the dialog copy exists in both languages (tutorial strings stay for later)',
     /welcomeTitle: 'How to read this map'/.test(i18nAll) && /welcomeTitle: 'So liest du diese Karte'/.test(i18nAll) &&
     /tut4Title: '4 · Language, 3D and the drawer'/.test(i18nAll) &&
     /tut4Title: '4 · Sprache, 3D und die Schublade'/.test(i18nAll));
-  check('intro buttons are thumb-sized and the overlay sits above every panel',
-    /\.wnav \{[^}]*min-height: 44px/.test(css) && /\.wskip \{[^}]*min-height: 44px/.test(css) &&
+  check('the confirm button is thumb-sized and the overlay sits above every panel',
+    /\.wnav \{[^}]*min-height: 44px/.test(css) &&
     /#welcome \{ position: absolute; inset: 0; z-index: 20;/.test(css));
   check('tapping the map closes the phone drawer',
     /hidePanel: \(\) => \{ if \(touchLayout\(\)\) setPanel\(false\); \}/.test(html));

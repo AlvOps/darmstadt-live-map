@@ -565,18 +565,18 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     const desk = openPage(null, { hybrid: true }), phone = openPage(null, { touch: true, hybrid: true });
     await desk.ready; await phone.ready;
     const dn = names(desk), pn = names(phone);
-    check('a basemap toggle is registered and starts on the standard dark view',
-      dn.includes('BasemapButton') && desk.sb.basemap() === 'normal' &&
-      desk.sb.document.documentElement.dataset.basemap === 'normal', dn.join(' > '));
+    check('a basemap toggle is registered and starts on the cartographic map (owner default 2026-10-15)',
+      dn.includes('BasemapButton') && desk.sb.basemap() === 'carto' &&
+      desk.sb.document.documentElement.dataset.basemap === 'carto', dn.join(' > '));
     check('the basemap toggle is registered directly before the tilt button (renders above it)',
       dn.indexOf('BasemapButton') >= 0 && dn.indexOf('TiltButton') === dn.indexOf('BasemapButton') + 1);
     check('the locate control is registered on desktop as well (no touch gate)', dn.includes('LocateButton'));
     check('phone and desktop get the identical control column (one rule, no layout branch)',
       dn.join('>') === pn.join('>'), pn.join(' > '));
     const btn = (desk.controls.find(c => c.name === 'BasemapButton') || {}).el;
-    check('the toggle is symbol-only with a translated label and an off state',
-      !!btn && btn.attrs['data-i18n-aria'] === 'basemapTitle' && btn.attrs['aria-pressed'] === 'false' &&
-      btn.attrs['data-i18n-title'] === 'basemapToSatellite' && btn.title === desk.t('basemapToSatellite') && !btn.textContent);
+    check('the toggle is symbol-only, labelled, and names the next state (standard view)',
+      !!btn && btn.attrs['data-i18n-aria'] === 'basemapTitle' && btn.attrs['aria-pressed'] === 'true' &&
+      btn.attrs['data-i18n-title'] === 'basemapToNormal' && btn.title === desk.t('basemapToNormal') && !btn.textContent);
 
     console.log('\n=== Bas: Karte ⇄ Satellit schaltet nur Sichtbarkeit ===');
     const vis = (p, id) => { const l = p.style.layers.find(x => x.id === id); return l ? ((l.layout && l.layout.visibility) || 'visible') : 'missing'; };
@@ -586,7 +586,7 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     check('both basemap rasters exist, hidden, and sit ABOVE the style layers (never under its background)',
       !!sat && sat.type === 'raster' && /World_Imagery\/MapServer\/tile\/\{z\}\/\{y\}\/\{x\}$/.test(sat.tiles[0]) &&
       !!cim && cim.type === 'raster' && /tile\.openstreetmap\.de\/\{z\}\/\{x\}\/\{y\}\.png$/.test(cim.tiles[0]) &&
-      vis(desk, 'sat') === 'none' && vis(desk, 'cartoimg') === 'none' &&
+      vis(desk, 'sat') === 'none' && vis(desk, 'cartoimg') === 'visible' &&
       desk.style.layers.filter(l => l.id === 'sat').length === 1 &&
       desk.style.layers.filter(l => l.id === 'cartoimg').length === 1 &&
       desk.style.layers[0].id !== 'sat',
@@ -594,45 +594,54 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     check('the tile cap still runs exactly once (one setStyle, from the patch)',
       desk.setStyleCalls.length === 1 && desk.style.sources.carto.maxzoom === 14 && !desk.style.sources.carto.url);
     desk.style.layers.push({ id: 'me-dot', type: 'circle', source: 'me' });   // „Wo bin ich?“ ist an
+    check('the cartographic state is flagged for pill contrast but is not the satellite state',
+      desk.sb.basemap() === 'carto' &&
+      desk.sb.document.documentElement.dataset.basemap === 'carto' && vis(desk, 'me-dot') === 'visible');
     btn.onclick();
-    // Die Wahl wird bewusst NICHT gemerkt: beim nächsten Laden beginnt es wieder mit der Nachtkarte.
+    // Die Wahl wird bewusst NICHT gemerkt: beim nächsten Laden beginnt es wieder mit der Kartenansicht.
     check('toggling switches visibility of the two basemaps without memorising the choice',
-      desk.sb.basemap() === 'satellite' && vis(desk, 'sat') === 'visible' &&
-      ['background', 'water', 'roads', 'hidden-by-style'].every(id => vis(desk, id) === 'none') &&
-      !('dlm-basemap' in desk.store));
+      desk.sb.basemap() === 'normal' && vis(desk, 'sat') === 'none' && vis(desk, 'cartoimg') === 'none' &&
+      ['background', 'water', 'roads'].every(id => vis(desk, id) === 'visible') &&
+      vis(desk, 'hidden-by-style') === 'none' && !('dlm-basemap' in desk.store));
+    check('the standard view flags <html> and unpresses the button',
+      desk.sb.document.documentElement.dataset.basemap === 'normal' && btn.attrs['aria-pressed'] === 'false' &&
+      btn.attrs['data-i18n-title'] === 'basemapToSatellite');
+    check('the own location dot is never hidden by the switch', vis(desk, 'me-dot') === 'visible');
+    btn.onclick();
+    check('the satellite image comes second, style layers hidden again',
+      desk.sb.basemap() === 'satellite' && vis(desk, 'sat') === 'visible' && vis(desk, 'cartoimg') === 'none' &&
+      ['background', 'water', 'roads'].every(id => vis(desk, id) === 'none') && !('dlm-basemap' in desk.store));
     check('satellite mode flags <html> (credit line + pill outline) and presses the button',
       desk.sb.document.documentElement.dataset.basemap === 'satellite' && btn.attrs['aria-pressed'] === 'true' &&
       btn.attrs['data-i18n-title'] === 'basemapToMap');
     check('the own location dot is never hidden by the switch', vis(desk, 'me-dot') === 'visible');
     btn.onclick();
-    check('the second click shows the light cartographic map, style layers still hidden',
+    check('the third click returns to the cartographic map, style layers still hidden',
       desk.sb.basemap() === 'carto' && vis(desk, 'cartoimg') === 'visible' && vis(desk, 'sat') === 'none' &&
       vis(desk, 'roads') === 'none' && vis(desk, 'water') === 'none' &&
       !('dlm-basemap' in desk.store) &&
       desk.sb.document.documentElement.dataset.basemap === 'carto' &&
       btn.attrs['aria-pressed'] === 'true' && btn.attrs['data-i18n-title'] === 'basemapToNormal');
-    check('the cartographic state is flagged for pill contrast but is not the satellite state',
-      desk.sb.document.documentElement.dataset.basemap === 'carto');
     btn.onclick();
-    check('the third click returns to the standard dark map with every style layer as the style had it',
+    check('the cycle wraps: the fourth click is the standard view again, style layers back as the style had it',
       desk.sb.basemap() === 'normal' && vis(desk, 'sat') === 'none' && vis(desk, 'cartoimg') === 'none' &&
-      vis(desk, 'water') === 'visible' && vis(desk, 'roads') === 'visible' &&
+      ['background', 'water', 'roads'].every(id => vis(desk, id) === 'visible') &&
       vis(desk, 'hidden-by-style') === 'none' && !('dlm-basemap' in desk.store) &&
       desk.sb.document.documentElement.dataset.basemap === 'normal' &&
       btn.attrs['aria-pressed'] === 'false' && btn.attrs['data-i18n-title'] === 'basemapToSatellite');
 
-    // Wunsch des Betreibers (2026-10-15): die Nachtkarte ist IMMER der Startzustand. Eine früher
-    // gewählte Grundkarte wird nicht wiederhergestellt, und ein alter Merker wird sogar entfernt.
-    for (const saved of ['satellite', 'carto', 'map']) {
+    // Wunsch des Betreibers (2026-10-15, später geändert): die Kartenansicht ist IMMER der Startzustand.
+    // Eine früher gewählte Grundkarte wird nicht wiederhergestellt, ein alter Merker sogar entfernt.
+    for (const saved of ['satellite', 'normal', 'night']) {
       const p = openPage(null, { hybrid: true, store: { 'dlm-basemap': saved } });
       await p.ready;
       const b = (p.controls.find(c => c.name === 'BasemapButton') || {}).el;
-      check(`a stored choice ("${saved}") never overrides the night map at boot`,
-        p.sb.basemap() === 'normal' && p.sb.document.documentElement.dataset.basemap === 'normal' &&
-        !!b && b.attrs['aria-pressed'] === 'false');
+      check(`a stored choice ("${saved}") never overrides the cartographic default at boot`,
+        p.sb.basemap() === 'carto' && p.sb.document.documentElement.dataset.basemap === 'carto' &&
+        !!b && b.attrs['aria-pressed'] === 'true');
       p.mapFire('style.load'); p.mapFire('style.load');
-      check(`the layers stay on the night view ("${saved}")`,
-        vis(p, 'sat') === 'none' && vis(p, 'cartoimg') === 'none' && vis(p, 'roads') !== 'none');
+      check(`the layers stay on the cartographic view ("${saved}")`,
+        vis(p, 'sat') === 'none' && vis(p, 'cartoimg') === 'visible' && vis(p, 'roads') === 'none');
       check(`the stale preference is cleared ("${saved}")`, p.store['dlm-basemap'] === undefined);
     }
 

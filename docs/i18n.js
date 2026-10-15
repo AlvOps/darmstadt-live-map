@@ -9,6 +9,8 @@
   const STRINGS = {
     en: {
       appTitle: 'Darmstadt Public Transport Map',
+      chooseLang: 'Choose language',
+      chooseLangHint: 'You can switch any time — the toggle stays in the top right.',
       subtitle: 'Tram, bus and regional rail — from the open realtime feed',
       subtitleOperator: 'Tram, bus and regional rail — operator GPS where available, otherwise the open realtime feed',
       dataSource: 'Data',
@@ -147,6 +149,8 @@
     },
     de: {
       appTitle: 'Nahverkehrskarte Darmstadt',
+      chooseLang: 'Sprache wählen',
+      chooseLangHint: 'Du kannst jederzeit umschalten – der Schalter bleibt oben rechts.',
       subtitle: 'Straßenbahn, Bus und Regionalbahn – aus dem offenen Echtzeitstrom',
       subtitleOperator: 'Straßenbahn, Bus und Regionalbahn – GPS des Betreibers, wo vorhanden, sonst der offene Echtzeitstrom',
       dataSource: 'Daten',
@@ -329,7 +333,7 @@
     });
     document.documentElement.lang = lang;
     document.title = t('appTitle');
-    document.querySelectorAll('#lang button').forEach(b => {
+    document.querySelectorAll('#lang button, #wlang button').forEach(b => {
       b.classList.toggle('on', b.dataset.lang === lang);
       b.setAttribute('aria-pressed', String(b.dataset.lang === lang));
     });
@@ -342,8 +346,14 @@
     window.dispatchEvent(new CustomEvent('langchange', { detail: { lang } }));
   }
 
+  // Wurde schon einmal ausdrücklich eine Sprache gewählt? Der Begrüßungsdialog fragt nur dann.
+  function stored() {
+    try { const v = localStorage.getItem(KEY); return v === 'en' || v === 'de'; } catch (e) { return false; }
+  }
+
   window.I18N = {
     get lang() { return lang; },
+    stored,
     detect,
     strings: STRINGS,               // für die Schlüsselprüfung in analysis/test_i18n.js
     t,
