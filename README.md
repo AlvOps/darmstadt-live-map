@@ -9,9 +9,12 @@ upcoming stops, and a **phone-first layout**.
 The timetable simulation (and its data files) was removed on 2026-10-14: the site shows live
 vehicles only, so nothing on the map is ever derived from a schedule.
 
-Live: https://alvops.github.io/darmstadt-live-map/
-Hybrid build — same page, plus the operator's own GPS vehicles for the HEAG fleet:
-https://alvops.github.io/darmstadt-live-map/?hybrid=1 (short link: `/hybrid/`)
+Live: **https://darmstadtmap.com/** (and https://alvops.github.io/darmstadt-live-map/, which redirects there)
+
+The main page **is the operator view** since 2026-10-15: on the lines the operator reports, a dot is the
+operator's own GPS position (marked with a small green dot); every other vehicle stays derived from
+realtime stop prognoses. The slim view — open feed only, no operator requests — is still one parameter
+away: `?hybrid=0`.
 
 Repository: `AlvOps/darmstadt-live-map` — an **independent repository**, not a GitHub fork and not part
 of any fork network. It was rebuilt as a standalone repository on 2026-10-15 (the earlier fork lives on

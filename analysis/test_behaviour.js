@@ -288,7 +288,9 @@ function openPage(seedFavs, opts = {}) {
     LngLatBounds: class { constructor(a, b) { this._p = [a, b]; } extend(p) { this._p.push(p); } },
     NavigationControl: class {},
   };
-  if (opts.hybrid) sb.location.search = '?hybrid=1';   // Hybridbetrieb (wie /?hybrid=1)
+  if (opts.hybrid) sb.location.search = '?hybrid=1';   // Hybridbetrieb, ausdrücklich
+  if (opts.plain) sb.location.search = '?hybrid=0';    // schlanke Fassung (Opt-out)
+  // Ohne Parameter ist die Betreiberfassung der Standard der Seite (seit 2026-10-15).
   vm.createContext(sb);
   vm.runInContext(read('i18n.js'), sb);
   vm.runInContext(read('search.js'), sb);
@@ -634,13 +636,18 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
       check(`the stale preference is cleared ("${saved}")`, p.store['dlm-basemap'] === undefined);
     }
 
-    console.log('\n=== Bas: Suche oben rechts, Telefon hinter der Lupe ===');
-    const prod = openPage(null), prodPhone = openPage(null, { touch: true });
+    console.log('\n=== Bas: Standard ist die Betreiberfassung, ?hybrid=0 ist die schlanke Fassung ===');
+    const hyb = openPage(null), hybPhone = openPage(null, { touch: true });
+    await hyb.ready; await hybPhone.ready;
+    check('the default page is the operator view (basemap toggle, desktop location, hybrid flag)',
+      !!hyb.sb.document.documentElement.dataset.hybrid && names(hyb).includes('BasemapButton') &&
+      names(hyb).includes('LocateButton'), names(hyb).join(' > '));
+    const prod = openPage(null, { plain: true }), prodPhone = openPage(null, { touch: true, plain: true });
     await prod.ready; await prodPhone.ready;
-    check('the published page keeps the old UI: no basemap toggle, no location on the desktop',
+    check('?hybrid=0 keeps the slim view: no basemap toggle, no desktop location, location on phones',
       !names(prod).includes('BasemapButton') && !names(prod).includes('LocateButton') &&
       names(prodPhone).includes('LocateButton'), names(prod).join(' > '));
-    check('the published page keeps the search inside the left panel (and never flags hybrid)',
+    check('?hybrid=0 keeps the search inside the left panel and never flags hybrid',
       !prod.sb.document.documentElement.dataset.hybrid &&
       prod.el('searchbar').parentNode === prod.el('panelbar') &&
       prod.sb.document.documentElement.dataset.search === 'panel');

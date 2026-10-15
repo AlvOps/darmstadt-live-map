@@ -69,7 +69,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261015-19';
+  const VERSION = '20261015-20';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -519,11 +519,13 @@
   }
 
   // Hybridbetrieb: Betreiberpositionen sind eine Testfunktion. Standardmäßig AUS, damit die
-  // veröffentlichte Seite unverändert bleibt (nur der offene Strom, keine Betreiberabrufe). An über
-  // ?hybrid=1 oder window.DLM_OPERATOR = true — die Testseite /hybrid/ setzt genau das.
+  // Hauptseite ist inzwischen die Betreiberfassung; nur ?hybrid=0 schaltet auf den reinen offenen
+  // Strom zurück (keine Betreiberabrufe).
+  // Betreiberfassung = Standard (Wunsch des Betreibers 2026-10-15). Die reine Prognosefassung gibt es
+  // nur noch ausdrücklich: ?hybrid=0 in der Adresse oder window.DLM_OPERATOR = false eingebettet.
   const HYBRID_ON = typeof window !== 'undefined' && !!window &&
-    (window.DLM_OPERATOR === true ||
-     /[?&]hybrid=1(?:&|$)/.test(String((window.location && window.location.search) || '')));
+    !(window.DLM_OPERATOR === false ||
+      /[?&]hybrid=0(?:&|$)/.test(String((window.location && window.location.search) || '')));
 
   // EINZIGER Einstieg zum Betreibermodul: ohne Hybridbetrieb null, damit Start, Stopp, Rückfall und
   // Fahrzeugabruf gar nicht erst stattfinden.

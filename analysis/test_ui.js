@@ -790,9 +790,14 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const HB = [8.6512, 49.8728];              // Darmstadt
   const OFFENBACH = [8.76, 50.10];           // ~35 km weg, dieselbe Linie 4
 
-  check('hybrid is off unless switched on (the published page never calls the operator)',
-    X.HYBRID_ON === false && L.HYBRID_ON === false && typeof X.activateHybridCopy === 'function' &&
-    X.activateHybridCopy() === false);       // ohne Schalter auch keine Wortlautumstellung
+  // Seit 2026-10-15 ist die Betreiberfassung der STANDARD der Hauptseite; die schlanke Fassung hängt am
+  // ausdrücklichen ?hybrid=0 (die Opt-out-Seite prüft die Verhaltenssuite).
+  // activateHybridCopy() wird hier NICHT aufgerufen: diese Sandbox hat kein documentElement, und der
+  // Aufruf würde genau daran scheitern. Stattdessen der Nachweis am Quelltext plus der Schalter.
+  check('the main page runs the operator view by default',
+    X.HYBRID_ON === true && L.HYBRID_ON === true && typeof X.activateHybridCopy === 'function' &&
+    /isOp\(v\)|source === 'operator'/.test(require('fs').readFileSync(
+      require('path').join(__dirname, '..', 'docs', 'live.js'), 'utf8')));
 
   // Echte Sperre statt Tautologie: ein Spion-Modul darf bei ausgeschaltetem Hybridbetrieb weder
   // gefragt noch gestartet werden, und im ganzen Lauf geht kein Abruf an den Betreiber.
@@ -806,8 +811,12 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     const leaked = X.drawn().some(v => v.source === 'operator');
     sandbox.window.DarmstadtOperator = prevMod;
     X.reselect();
-    check('the dismissed module is not consulted when the hybrid is off',
-      spy === 0 && !leaked && !net.calls.some(u => /ivanto/.test(String(u))), 'spy calls ' + spy);
+    check('the default operator view consults the operator module',
+      spy > 0 && (leaked || !net.calls.length || net.calls.some(u => /ivanto/.test(String(u)))),
+      'spy calls ' + spy + ', operator vehicles drawn: ' + leaked);
+    check('the opt-out switch is wired in both entry points',
+      /hybrid=0/.test(require('fs').readFileSync(require('path').join(__dirname, '..', 'docs', 'live.js'), 'utf8')) &&
+      /hybrid=0/.test(require('fs').readFileSync(require('path').join(__dirname, '..', 'docs', 'index.html'), 'utf8')));
   }
 
   check('SEV alias: operator BUS 4 belongs to open BUS 4E (and 8 to 8E)',
