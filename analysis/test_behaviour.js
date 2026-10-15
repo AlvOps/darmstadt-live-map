@@ -18,6 +18,7 @@
  *   Tok alle fünf Versionskennungen stehen auf demselben Wert
  *   M7  Marken hängen im Karten-Container (Gesten erreichen MapLibre)
  *   Reg Linienwahl/Sprachwechsel laufen ohne Ausnahme (Stern + Auswahlfeld; Inline-Skript der Seite)
+ *   Bas Karte ⇄ Satellit, Bedienleiste (Grundkarte über Kippen, Ortung auch am Rechner), Suche oben rechts
  *
  * Usage: node analysis/test_behaviour.js
  */
@@ -181,8 +182,9 @@ L.attach({ map, overlay, deck: sandbox.deck, META, state, hex, shortStop, MODE_R
 // i18n set() -> render -> selectLine bei jedem Sprachwechsel — blieb damit ungeprüft. Genau dort lag
 // der unbeachtete ReferenceError "paintLineStar is not defined" (selectLine stand eine Ebene über der
 // Favoritenlogik). openPage() startet deshalb die echte Seite und klickt eine Linie an.
-function openPage(seedFavs) {
-  const pe = {}, pall = [], pstore = {};
+// opts: { touch: Telefon-Layout, store: vorbelegter localStorage } — für die Bedienleiste und die Suche.
+function openPage(seedFavs, opts = {}) {
+  const pe = {}, pall = [], pstore = Object.assign({}, opts.store || {});
   let pn = 0;
   if (seedFavs) pstore['darmstadt-live-favs'] = JSON.stringify(seedFavs);
   const pageEl = id => {
@@ -201,7 +203,11 @@ function openPage(seedFavs) {
       remove() { const p = o.parentNode; if (p) { const i = p.children.indexOf(o); if (i >= 0) p.children.splice(i, 1); } o.removed = true; },
       setAttribute(k, v) { o.attrs[k] = String(v); },
       closest(sel) { return (o.parentNode && o.parentNode.tag === sel.replace(/^\./, '')) ? o.parentNode : pageEl(id + sel); },
-      scrollIntoView() {}, addEventListener() {},
+      scrollIntoView() {}, listeners: {},
+      addEventListener(ev, fn) { (o.listeners[ev] = o.listeners[ev] || []).push(fn); },
+      fire(ev, e) { (o.listeners[ev] || []).forEach(f => f(e || {})); },
+      focus() { sb.document.activeElement = o; },
+      contains(n) { for (let x = n; x; x = x.parentNode) if (x === o) return true; return false; },
       classList: { _s: new Set(), toggle(c, on) { on ? this._s.add(c) : this._s.delete(c); },
         add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); }, contains(c) { return this._s.has(c); } },
       querySelector(sel) { return pageEl(id + sel); },
@@ -220,14 +226,15 @@ function openPage(seedFavs) {
   const sb = {
     console, Math, JSON, Date, Number, String, Array, Object, Map, Set, parseInt, parseFloat, isNaN, isFinite,
     setTimeout, clearTimeout, setInterval, clearInterval, Promise, Float64Array, Uint16Array, Error,
-    CustomEvent: class { constructor(t) { this.type = t; } }, navigator: { language: 'en-GB' },
+    CustomEvent: class { constructor(t) { this.type = t; } },
+    navigator: { language: 'en-GB', geolocation: { getCurrentPosition() {}, watchPosition: () => 1, clearWatch() {} } },
     localStorage: { getItem: k => (k in pstore ? pstore[k] : null), setItem: (k, v) => { pstore[k] = String(v); } },
     sessionStorage: { getItem: () => null, setItem() {} },
     location: { pathname: '/darmstadt-live-map/', replace() {} },
     fetch: async url => ({ ok: true, status: 200, json: async () => (String(url).includes('meta.json') ? META : {}) }),
     requestAnimationFrame: () => 0,
     document: {
-      body: pageEl('body'), documentElement: { lang: '', style: { setProperty() {} } }, title: '',
+      body: pageEl('body'), documentElement: { lang: '', dataset: {}, style: { setProperty() {} } }, title: '', activeElement: null,
       getElementById: pageEl, addEventListener() {},
       createElement: tag => { const e = pageEl('new-' + tag + '-' + (++pn)); e.tag = tag; return e; },
       querySelectorAll: sel => (sel === '.chip' ? chips() : []),
@@ -241,17 +248,36 @@ function openPage(seedFavs) {
   };
   sb.window = sb;
   sb.devicePixelRatio = 1;
-  sb.matchMedia = () => ({ matches: false });          // Rechner: kein Schubladen-Layout
+  sb.matchMedia = () => ({ matches: !!opts.touch });   // Vorgabe Rechner: kein Schubladen-Layout
   sb.dispatchEvent = () => {};
   const wh = {};
   sb.addEventListener = (ev, fn) => { (wh[ev] = wh[ev] || []).push(fn); };
   const container = { clientWidth: 1280, clientHeight: 800, addEventListener() {}, appendChild(c) { return c; } };
+  // Karte mit einem kleinen, aber echten Stil: Quellen und Ebenen werden wirklich angelegt und
+  // umgeschaltet, addControl ruft onAdd wie MapLibre (die Reihenfolge ist die Spalte unten rechts).
+  const controls = [], mh = {}, setStyleCalls = [];
+  const style = { sources: { carto: { url: 'x' } }, layers: [
+    { id: 'background', type: 'background' },
+    { id: 'water', type: 'fill', source: 'carto' },
+    { id: 'roads', type: 'line', source: 'carto' },
+    { id: 'hidden-by-style', type: 'line', source: 'carto', layout: { visibility: 'none' } },
+  ] };
   sb.maplibregl = {
     Map: class { constructor(o) { Object.assign(this, o); }
       getCanvasContainer() { return container; } getCanvas() { return container; } getContainer() { return container; }
-      getStyle() { return { sources: { carto: { url: 'x' } } }; } addControl() {} on() {}
+      getStyle() { return style; }
+      addControl(c, pos) { const el = c && c.onAdd ? c.onAdd(this) : null; controls.push({ name: c && c.constructor && c.constructor.name, pos, el }); }
+      on(ev, fn) { (mh[ev] = mh[ev] || []).push(fn); }
+      getSource(id) { return style.sources[id]; } addSource(id, s) { style.sources[id] = s; }
+      getLayer(id) { return style.layers.find(l => l.id === id); }
+      addLayer(l, before) { const i = before ? style.layers.findIndex(x => x.id === before) : -1; style.layers.splice(i < 0 ? style.layers.length : i, 0, l); }
+      removeLayer(id) { const i = style.layers.findIndex(l => l.id === id); if (i >= 0) style.layers.splice(i, 1); }
+      removeSource(id) { delete style.sources[id]; }
+      setLayoutProperty(id, k, v) { const l = this.getLayer(id); if (!l) throw new Error('no layer ' + id); l.layout = Object.assign({}, l.layout, { [k]: v }); }
+      getLayoutProperty(id, k) { const l = this.getLayer(id); return l && l.layout ? l.layout[k] : undefined; }
+      getPitch() { return 0; }
       loaded() { return false; } getBounds() { return { getWest: () => 8.63, getSouth: () => 49.86, getEast: () => 8.68, getNorth: () => 49.89 }; }
-      getZoom() { return 14; } project() { return { x: 640, y: 400 }; } easeTo() {} isMoving() { return false; } fitBounds() {} setStyle() {} },
+      getZoom() { return 14; } project() { return { x: 640, y: 400 }; } easeTo() {} isMoving() { return false; } fitBounds() {} setStyle(s, o) { setStyleCalls.push(o); } },
     LngLatBounds: class { constructor(a, b) { this._p = [a, b]; } extend(p) { this._p.push(p); } },
     NavigationControl: class {},
   };
@@ -262,6 +288,7 @@ function openPage(seedFavs) {
   const blocks = [...html.matchAll(/<script(?![^>]*src)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
   vm.runInContext(blocks[blocks.length - 1], sb);      // das echte Inline-Skript der Seite
   return { el: pageEl, chips, chipFor, all: pall, fire: ev => (wh[ev] || []).forEach(f => f()),
+    sb, controls, style, store: pstore, setStyleCalls, mapFire: ev => (mh[ev] || []).forEach(f => f()),
     t: k => sb.I18N.t(k), ready: new Promise(r => setTimeout(r, 40)) };
 }
 
@@ -463,6 +490,95 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     check('das Abwählen räumt das Auswahlfeld weg, ohne Ausnahme',
       !err3 && page.el('selinfo').style.display === 'none',
       err3 ? err3.message : String(page.el('selinfo').style.display));
+  }
+
+  console.log('\n=== Bas: Bedienleiste unten rechts (Grundkarte über Kippen, Ortung überall) ===');
+  {
+    const names = p => p.controls.filter(c => c.pos === 'bottom-right').map(c => c.name);
+    const desk = openPage(null), phone = openPage(null, { touch: true });
+    await desk.ready; await phone.ready;
+    const dn = names(desk), pn = names(phone);
+    check('a basemap toggle is registered and starts on the map view',
+      dn.includes('BasemapButton') && desk.sb.basemap() === 'map' &&
+      desk.sb.document.documentElement.dataset.basemap === 'map', dn.join(' > '));
+    check('the basemap toggle is registered directly before the tilt button (renders above it)',
+      dn.indexOf('BasemapButton') >= 0 && dn.indexOf('TiltButton') === dn.indexOf('BasemapButton') + 1);
+    check('the locate control is registered on desktop as well (no touch gate)', dn.includes('LocateButton'));
+    check('phone and desktop get the identical control column (one rule, no layout branch)',
+      dn.join('>') === pn.join('>'), pn.join(' > '));
+    const btn = (desk.controls.find(c => c.name === 'BasemapButton') || {}).el;
+    check('the toggle is symbol-only with a translated label and an off state',
+      !!btn && btn.attrs['data-i18n-aria'] === 'basemapTitle' && btn.attrs['aria-pressed'] === 'false' &&
+      btn.attrs['data-i18n-title'] === 'basemapToSatellite' && btn.title === desk.t('basemapToSatellite') && !btn.textContent);
+
+    console.log('\n=== Bas: Karte ⇄ Satellit schaltet nur Sichtbarkeit ===');
+    const vis = (p, id) => { const l = p.style.layers.find(x => x.id === id); return l ? ((l.layout && l.layout.visibility) || 'visible') : 'missing'; };
+    desk.mapFire('style.load');                        // erstes Laden: Satellit + Kachel-Patch
+    desk.mapFire('style.load');                        // gepatchter Stil
+    const sat = desk.style.sources.sat;
+    check('satellite source is the keyless Esri raster, hidden, below every style layer',
+      !!sat && sat.type === 'raster' && /World_Imagery\/MapServer\/tile\/\{z\}\/\{y\}\/\{x\}$/.test(sat.tiles[0]) &&
+      desk.style.layers[0].id === 'sat' && vis(desk, 'sat') === 'none' && desk.style.layers.filter(l => l.id === 'sat').length === 1,
+      desk.style.layers.map(l => l.id).join(','));
+    check('the tile cap still runs exactly once (one setStyle, from the patch)',
+      desk.setStyleCalls.length === 1 && desk.style.sources.carto.maxzoom === 14 && !desk.style.sources.carto.url);
+    desk.style.layers.push({ id: 'me-dot', type: 'circle', source: 'me' });   // „Wo bin ich?“ ist an
+    btn.onclick();
+    check('toggling switches visibility of the two basemaps and persists the choice',
+      desk.sb.basemap() === 'satellite' && vis(desk, 'sat') === 'visible' &&
+      ['background', 'water', 'roads', 'hidden-by-style'].every(id => vis(desk, id) === 'none') &&
+      desk.store['dlm-basemap'] === 'satellite');
+    check('satellite mode flags <html> (credit line + pill outline) and presses the button',
+      desk.sb.document.documentElement.dataset.basemap === 'satellite' && btn.attrs['aria-pressed'] === 'true' &&
+      btn.attrs['data-i18n-title'] === 'basemapToMap');
+    check('the own location dot is never hidden by the switch', vis(desk, 'me-dot') === 'visible');
+    btn.onclick();
+    check('back to the map restores every style layer as the style had it',
+      desk.sb.basemap() === 'map' && vis(desk, 'sat') === 'none' && vis(desk, 'water') === 'visible' &&
+      vis(desk, 'roads') === 'visible' && vis(desk, 'hidden-by-style') === 'none' && desk.store['dlm-basemap'] === 'map' &&
+      desk.sb.document.documentElement.dataset.basemap === 'map');
+
+    const stored = openPage(null, { store: { 'dlm-basemap': 'satellite' } });
+    await stored.ready;
+    const sbtn = (stored.controls.find(c => c.name === 'BasemapButton') || {}).el;
+    check('a stored satellite choice is flagged before the style loads',
+      stored.sb.basemap() === 'satellite' && stored.sb.document.documentElement.dataset.basemap === 'satellite' &&
+      !!sbtn && sbtn.attrs['aria-pressed'] === 'true');
+    stored.mapFire('style.load'); stored.mapFire('style.load');
+    check('a stored satellite choice is applied at boot',
+      vis(stored, 'sat') === 'visible' && vis(stored, 'roads') === 'none');
+
+    console.log('\n=== Bas: Suche oben rechts, Telefon hinter der Lupe ===');
+    const bar = phone.el('searchbar'), open = phone.el('searchopen'), input = phone.el('search'), res = phone.el('results');
+    input.parentNode = phone.el('searchwrap'); phone.el('searchwrap').parentNode = bar;
+    check('the magnifier is wired', typeof open.onclick === 'function');
+    open.onclick && open.onclick();
+    check('the magnifier expands the search box and focuses the field',
+      bar.classList.contains('open') && open.attrs['aria-expanded'] === 'true' && phone.sb.document.activeElement === input);
+    input.fire('keydown', { key: 'Escape' });
+    check('Escape collapses it again', !bar.classList.contains('open') && open.attrs['aria-expanded'] === 'false');
+    open.onclick();
+    bar.fire('focusout');
+    await wait(200);
+    check('focus staying inside keeps it open', bar.classList.contains('open'));
+    phone.sb.document.activeElement = phone.el('body');
+    bar.fire('focusout');
+    await wait(200);
+    check('focus leaving the box collapses it', !bar.classList.contains('open') && open.attrs['aria-expanded'] === 'false');
+    open.onclick();
+    let jumped = null;
+    phone.sb.DarmstadtLive.openStation = s => { jumped = s; };
+    input.value = 'Luisenplatz';
+    input.fire('input');
+    const first = (res.children[0] && res.children[0].children[0]) || null;
+    check('searching still finds a stop after the move (ids unchanged)',
+      res.hidden === false && !!first && /Luisenplatz/.test(first.textContent), first ? first.textContent : 'kein Treffer');
+    if (first) first.onclick();
+    check('picking a result jumps there and collapses the box',
+      !!jumped && /Luisenplatz/.test(jumped.name) && !bar.classList.contains('open') && res.hidden === true);
+    open.onclick();
+    phone.mapFire('click');
+    check('tapping the map collapses it', !bar.classList.contains('open'));
   }
 
   console.log(`\nRESULT: ${fails === 0 ? 'PASS' : 'FAIL (' + fails + ')'}`);

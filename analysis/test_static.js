@@ -174,9 +174,10 @@ function run(check, log = console.log) {
     /focusLineWide\(sel\)/.test(liveSrc) && /const CITY_BOX = \{ w: 8\.560, s: 49\.790/.test(liveSrc) &&
     /focusLine\(idx, wide\)/.test(liveSrc));
 
-  // „Wo bin ich?" (Wunsch 2026-10-15): nur auf dem Telefon, und die Koordinaten bleiben am Gerät
-  check('location button exists, is phone-only and uses the browser geolocation',
-    /new LocateButton\(\)/.test(html) && /if \(touchLayout\(\) && navigator\.geolocation\)/.test(html) &&
+  // „Wo bin ich?" (Wunsch 2026-10-15): auf Telefon UND Rechner, und die Koordinaten bleiben am Gerät
+  check('location button exists on every layout (no touch gate) and uses the browser geolocation',
+    /if \(navigator\.geolocation\) map\.addControl\(new LocateButton\(\), 'bottom-right'\)/.test(html) &&
+    !/touchLayout\(\) && navigator\.geolocation/.test(html) &&
     /getCurrentPosition\(/.test(html) && /watchPosition\(/.test(html) && /clearWatch\(/.test(html));
   check('location is drawn on the map and never sent anywhere',
     !/const GEO = [\s\S]{0,1500}?fetch\(/.test(html) && /addSource\('me'/.test(html) &&
@@ -253,8 +254,7 @@ function run(check, log = console.log) {
     /id="panes"[\s\S]*data-pane="favs"[\s\S]*data-pane="status"/.test(html) &&
     /body\[data-pane="favs"\] #legend-sec \{ display: none; \}/.test(css) &&
     /body:not\(\[data-pane="favs"\]\) #favs \{ display: none; \}/.test(css));
-  check('stop search sits next to the pane switcher and uses the shared strings',
-    /id="panelbar"/.test(html) && /#panelbar \{ display: flex/.test(css) &&
+  check('stop search keeps its ids and the shared strings (search.js unchanged)',
     /<input id="search"[^>]*data-i18n-placeholder="searchPlaceholder"/.test(html) &&
     /<ul id="results" hidden><\/ul>/.test(html) && /search\.js\?v=\d{8}-\d+/.test(html));
   check('search results and saved stops are thumb-sized on phones',
@@ -406,6 +406,53 @@ function run(check, log = console.log) {
     /#legend \{ flex: 0 0 auto;/.test(css) && /#legend-sec \{ flex: 0 0 auto;/.test(css));
   const chipMin = parseFloat(((rule('.chip') || '').match(/min-height:\s*([\d.]+)px/) || [])[1] || '0');
   check(`line chips are big enough to hit (${chipMin}px >= 26px)`, chipMin >= 26);
+
+  // Karte ⇄ Satellit (Wunsch 2026-10-15): Raster-Ebene neben dem Vektorstil, nur Sichtbarkeit
+  check('satellite raster source is configured but starts hidden',
+    /SAT_TILES = 'https:\/\/server\.arcgisonline\.com\/ArcGIS\/rest\/services\/World_Imagery\/MapServer\/tile\/\{z\}\/\{y\}\/\{x\}'/.test(html) &&
+    /id: 'sat', type: 'raster'/.test(html) && /layout: \{ visibility: 'none' \}/.test(html) &&
+    /const SAT_MAXZOOM = 1[89];/.test(html) && /maxzoom: SAT_MAXZOOM/.test(html));
+  check('satellite layer goes below the first style layer', /firstStyleLayerId = layers\.length \? layers\[0\]\.id/.test(html) &&
+    /map\.addLayer\(\{ id: 'sat'[^\n]*\}, firstStyleLayerId\)/.test(html));
+  check('the basemap switch never swaps the style (layer visibility only)',
+    /function applyBasemap\(\)[\s\S]*?setLayoutProperty\(l\.id, 'visibility'/.test(html) &&
+    !/function (setBasemap|applyBasemap)\([^)]*\) \{[^}]*setStyle\(/.test(html) &&
+    (html.match(/\.setStyle\(/g) || []).length === 1);           // nur der Kachel-Patch
+  check('basemap toggle stacks directly above the tilt button, one rule for every layout',
+    /map\.addControl\(new BasemapButton\(\), 'bottom-right'\);[^\n]*\nmap\.addControl\(new TiltButton\(\), 'bottom-right'\);/.test(html) &&
+    !/touchLayout\(\)[^\n]*BasemapButton/.test(html));
+  check('basemap toggle looks like the other map buttons and shows its state',
+    /\.maplibregl-ctrl-group\.basemap \{ display: grid;[^}]*width: 29px; height: 29px/.test(css) &&
+    /\.maplibregl-ctrl-group\.basemap\[aria-pressed="true"\]/.test(css));
+  check('satellite credit is in the source box and shown only while satellite is on',
+    /<p class="attrib-sat" data-i18n="attributionSatellite">/.test(html) &&
+    /#attribbox \.attrib-sat \{ display: none; \}/.test(css) &&
+    /html\[data-basemap="satellite"\] #attribbox \.attrib-sat \{ display: block; \}/.test(css) &&
+    /attributionSatellite: 'Satellite imagery: Esri, Maxar, Earthstar Geographics'/.test(fs.readFileSync(path.join(DOCS, 'i18n.js'), 'utf8')));
+  check('marker pills get a dark outline only in satellite mode (focus ring kept)',
+    /html\[data-basemap="satellite"\] \.mk \{ box-shadow: 0 0 0 1\.5px rgba\(0,0,0,\.55\)/.test(css) &&
+    /html\[data-basemap="satellite"\] \.mk\.focus \{ box-shadow:[^}]*var\(--accent\)/.test(css) &&
+    !/(^|\n)\s*\.mk \{[^}]*rgba\(0,0,0,\.55\)/.test(css));
+
+  // Suche oben rechts neben EN/DE (Wunsch 2026-10-15), Telefon: hinter der Lupe
+  check('the search input lives next to the language toggle, not in the panel',
+    /<div id="searchbar" role="search">[\s\S]*id="search"[\s\S]*<\/div>\s*<div id="lang"/.test(html) &&
+    !/<div id="head"[\s\S]*id="search"[\s\S]*<div id="bar"/.test(html));
+  check('the search box is transparent and sits beside the language switch',
+    prop(rule('#searchbar'), 'background') === 'transparent' && /right: 118px/.test(rule('#searchbar') || '') &&
+    /rgba\(16,19,26,\.28\)/.test(prop(rule('#search'), 'background') || '') && /blur/.test(prop(rule('#search'), 'backdrop-filter') || ''));
+  check('desktop hides the magnifier, phones collapse the search behind it',
+    prop(rule('#searchopen'), 'display') === 'none' &&
+    prop(rule('#searchopen', mob), 'display') === 'inline-flex' && /min-height: 44px/.test(rule('#searchopen', mob) || '') &&
+    /min-width: 44px/.test(rule('#searchopen', mob) || '') &&
+    prop(rule('#searchwrap', mob), 'display') === 'none' &&
+    prop(rule('#searchbar.open #searchwrap', mob), 'display') === 'block' &&
+    /left: 8px; right: 8px/.test(rule('#searchbar.open', mob) || ''));
+  check('the magnifier is labelled in both languages and wired to the box',
+    /<button id="searchopen" type="button" aria-expanded="false" aria-controls="searchwrap"\s+data-i18n-aria="searchOpen"/.test(html) &&
+    /searchOpen: 'Open the stop search'/.test(fs.readFileSync(path.join(DOCS, 'i18n.js'), 'utf8')) &&
+    /searchOpen: 'Haltestellensuche öffnen'/.test(fs.readFileSync(path.join(DOCS, 'i18n.js'), 'utf8')));
+  check('the old panel search rules are gone', !/flex: 1 1 180px/.test(css) && !/#searchwrap \{ flex: 1 1 100%/.test(css));
 
   // Basemap zooming: CARTO's vector tiles stop at a fixed zoom with no maxzoom in the style, so the
   // source must be inlined and capped, otherwise MapLibre requests 404 tiles and the map freezes.

@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-08"></script>
+<script src="i18n.js?v=20261015-09"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -51,8 +51,8 @@
   #legend-sec { flex: 0 0 auto; min-height: 0; display: flex; flex-direction: column; }
   /* Linienliste ohne eigenen Scrollbalken: sie wächst mit, solange das Panel in den Bildschirm passt */
   #legend { flex: 0 0 auto; min-height: 0; max-height: none; overflow: visible; }
-  /* Umschalter zwischen Linien, Favoriten und Status — dazu rechts die Haltestellensuche.
-     Immer nur ein Bereich sichtbar, damit das Panel ohne Scrollbalken auskommt. */
+  /* Umschalter zwischen Linien, Favoriten und Status. Immer nur ein Bereich sichtbar, damit das
+     Panel ohne Scrollbalken auskommt. (Die Haltestellensuche sitzt seit 2026-10-15 oben rechts.) */
   #panelbar { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
   #panes { align-self: flex-start; }
   #panes button { padding: 6px 11px; font-size: 12.5px; }
@@ -61,10 +61,15 @@
   body[data-pane="favs"] #legend-sec { display: none; }
   body[data-pane="favs"] #presentation { display: none; }
   body:not([data-pane="favs"]) #favs { display: none; }
-  /* Suche: Eingabe in der Umschaltzeile, Trefferliste direkt darunter (kein Overlay-Ärger) */
-  #searchwrap { position: relative; flex: 1 1 180px; min-width: 140px; }
-  #search { width: 100%; box-sizing: border-box; padding: 6px 10px; font: inherit; font-size: 12.5px;
-    color: var(--text); background: rgba(255,255,255,.07); border: 1px solid var(--line); border-radius: 9px; }
+  /* Suche: durchscheinendes Feld oben rechts, direkt links neben dem Sprachumschalter (gleiche Höhe
+     wie #lang). Trefferliste direkt darunter. Auf dem Telefon steckt sie hinter der Lupe (siehe unten). */
+  #searchbar { position: absolute; z-index: 4; top: calc(16px + env(safe-area-inset-top)); right: 118px;
+    height: 46px; display: flex; gap: 6px; align-items: center; background: transparent; }
+  #searchopen { display: none; }
+  #searchwrap { position: relative; width: 230px; }
+  #search { width: 100%; box-sizing: border-box; padding: 8px 11px; font: inherit; font-size: 12.5px;
+    color: var(--text); background: rgba(16,19,26,.28); backdrop-filter: blur(6px);
+    border: 1px solid var(--line); border-radius: 9px; }
   #search::placeholder { color: var(--muted); }
   #results { position: absolute; z-index: 7; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px;
     list-style: none; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
@@ -129,11 +134,16 @@
   .maplibregl-ctrl-group.tilt3d svg { display: block; width: 17px; height: 17px; }
   .maplibregl-ctrl-group.tilt3d[aria-pressed="true"] { background: var(--accent); }
   .maplibregl-ctrl-group.tilt3d[aria-pressed="true"] svg { fill: #111; }
-  /* „Wo bin ich?" — nur auf dem Telefon eingebunden, gleiche Optik wie die anderen Knöpfe */
+  /* „Wo bin ich?" — auf Telefon UND Rechner eingebunden, gleiche Optik wie die anderen Knöpfe */
   .maplibregl-ctrl-group.locate { display: grid; place-items: center; width: 29px; height: 29px; padding: 0; }
   .maplibregl-ctrl-group.locate svg { display: block; width: 17px; height: 17px; }
   .maplibregl-ctrl-group.locate[aria-pressed="true"] { background: #5aaaff; }
   .maplibregl-ctrl-group.locate[aria-pressed="true"] svg { fill: #fff; }
+  /* Grundkarte Karte ⇄ Satellit: sitzt direkt über dem Kipp-Schalter, gleiche Optik; gedrückt = Satellit */
+  .maplibregl-ctrl-group.basemap { display: grid; place-items: center; width: 29px; height: 29px; padding: 0; }
+  .maplibregl-ctrl-group.basemap svg { display: block; width: 17px; height: 17px; }
+  .maplibregl-ctrl-group.basemap[aria-pressed="true"] { background: var(--accent); }
+  .maplibregl-ctrl-group.basemap[aria-pressed="true"] svg { fill: #111; }
 
   /* --- Echtzeit --- */
   .livestat { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--muted); margin-top: 8px; }
@@ -217,6 +227,9 @@
      Betreiberpositionen, also darf dort auch keine genannt werden. */
   #attribbox .attrib-op { display: none; }
   html[data-hybrid="1"] #attribbox .attrib-op { display: block; }
+  /* Satelliten-Quellenangabe nur, solange das Luftbild auch zu sehen ist (gleicher Kniff wie oben). */
+  #attribbox .attrib-sat { display: none; }
+  html[data-basemap="satellite"] #attribbox .attrib-sat { display: block; }
 
   /* --- Fahrzeugmarken und Haltestellen als DOM-Elemente (nicht als Textlayer) ---
      Grund: deck.gl kann keinen runden Hintergrund und keine eigenen Sinnbilder zeichnen. Als
@@ -239,6 +252,10 @@
     border-radius: 50%; background: #78dca0; box-shadow: 0 0 0 1.5px #10131a; }
   .mk.focus { border-color: #fff; box-shadow: 0 0 0 2.5px var(--accent), 0 1px 5px rgba(0, 0, 0, .5); }
   .mk.dim { opacity: .55; }
+  /* Über hellem Luftbild verschwimmen die hellen Pillen — nur im Satellitenmodus ein dunkler Saum.
+     Der Fokusring bleibt dabei erhalten (eigene Regel, sonst überschriebe der Saum ihn). */
+  html[data-basemap="satellite"] .mk { box-shadow: 0 0 0 1.5px rgba(0,0,0,.55), 0 1px 5px rgba(0, 0, 0, .5); }
+  html[data-basemap="satellite"] .mk.focus { box-shadow: 0 0 0 1.5px rgba(0,0,0,.55), 0 0 0 4px var(--accent), 0 1px 5px rgba(0, 0, 0, .5); }
   #markers.scaled .mk { font-size: 11px; padding: 2px 7px 2px 6px; }
   #markers.scaled .mk svg { width: 12px; height: 12px; }
   /* Haltestelle: weißer Kreis mit großem Buchstaben (H = Haltestelle, S = station) */
@@ -307,7 +324,18 @@
     .chip { font-size: 13.5px; padding: 9px 13px; min-height: 40px; border-radius: 8px; }
     #panes { align-self: stretch; display: flex; }
     #panes button { flex: 1 1 0; min-height: 44px; font-size: 13.5px; }
-    #searchwrap { flex: 1 1 100%; }
+    /* Suche: zugeklappt nur die Lupe (links neben EN/DE, ≥ 44 px), aufgeklappt über die volle Breite
+       der Kopfzeile. Zu bei Fokusverlust, Escape, Treffer oder Tipp auf die Karte. */
+    #searchbar { top: calc(6px + env(safe-area-inset-top)); right: 110px; height: 50px; }
+    #searchopen { display: inline-flex; align-items: center; justify-content: center; min-width: 44px;
+      min-height: 44px; padding: 0; font-size: 17px; border-radius: 9px; background: rgba(16,19,26,.28);
+      backdrop-filter: blur(6px); }
+    #searchwrap { display: none; width: auto; }
+    #searchbar.open { left: 8px; right: 8px; z-index: 7; }
+    #searchbar.open #searchopen { display: none; }
+    #searchbar.open #searchwrap { display: block; flex: 1 1 auto; }
+    /* aufgeklappt liegt das Feld über ☰ und EN/DE: dichter getönt, sonst schimmern deren Beschriftungen durch */
+    #searchbar.open #search { background: rgba(16,19,26,.72); }
     #search { min-height: 40px; font-size: 14px; }
     #results button.res { min-height: 44px; font-size: 14px; }
     #favstations .fav-go { min-height: 44px; font-size: 14px; }
@@ -367,6 +395,18 @@
   <span aria-hidden="true">☰</span> <span data-i18n="openPanel">Lines</span></button>
 <div id="loading" data-i18n="loading">Loading …</div>
 
+<!-- Haltestellensuche oben rechts neben dem Sprachumschalter (Kennungen unverändert: search.js und
+     die Suchlogik unten greifen über #search/#results zu). Telefon: zugeklappt hinter der Lupe. -->
+<div id="searchbar" role="search">
+  <button id="searchopen" type="button" aria-expanded="false" aria-controls="searchwrap"
+    data-i18n-aria="searchOpen" data-i18n-title="searchOpen">🔍</button>
+  <div id="searchwrap">
+    <input id="search" type="search" autocomplete="off" spellcheck="false"
+      data-i18n-placeholder="searchPlaceholder" data-i18n-aria="searchLabel"
+      placeholder="Search a stop …" aria-label="Search a stop">
+    <ul id="results" hidden></ul>
+  </div>
+</div>
 <div id="lang" class="panel">
   <div class="seg" role="group" data-i18n-aria="langGroup" aria-label="Language">
     <button data-lang="en" aria-pressed="true">EN</button><button data-lang="de" aria-pressed="false">DE</button>
@@ -378,16 +418,10 @@
     <button id="panelclose" class="panel-x" data-i18n-aria="closePanel" aria-label="Close panel">✕</button></h1>
 
   <!-- Umschalter: immer nur ein Bereich sichtbar -> das Panel passt ohne Scrollbalken.
-       Rechts daneben die Haltestellensuche (tippen -> Treffer -> Klick zoomt hin). -->
+       (Die Haltestellensuche steht oben rechts in #searchbar.) -->
   <div id="panelbar">
     <div class="seg" id="panes" role="group">
       <button data-pane="lines" class="on" aria-pressed="true" data-i18n="legendTitle">Lines</button><button data-pane="favs" aria-pressed="false" data-i18n="favTitle">Favourites</button><button data-pane="status" aria-pressed="false" data-i18n="presentation">Status &amp; filters</button>
-    </div>
-    <div id="searchwrap">
-      <input id="search" type="search" autocomplete="off" spellcheck="false"
-        data-i18n-placeholder="searchPlaceholder" data-i18n-aria="searchLabel"
-        placeholder="Search a stop …" aria-label="Search a stop">
-      <ul id="results" hidden></ul>
     </div>
   </div>
 
@@ -443,6 +477,7 @@
       <div id="attribbox" hidden>
         <p data-i18n="attributionLive">Realtime: DELFI e.V. (CC BY-SA 4.0) via Transitous/MOTIS</p>
         <p data-i18n="attributionMap">Base map: © OpenStreetMap contributors (ODbL) · CARTO</p>
+        <p class="attrib-sat" data-i18n="attributionSatellite">Satellite imagery: Esri, Maxar, Earthstar Geographics</p>
         <p class="attrib-op" data-i18n="attributionOperator">Live vehicle positions (GPS): HEAG mobilo vehicle data via IVANTO, for the lines it reports</p>
         <!-- Was die Punkte sind (und was nicht): gelb und fett, in beiden Sprachen, direkt in der
              Quellenangabe — damit die Einordnung dort steht, wo man die Herkunft nachliest. Zwei
@@ -472,11 +507,11 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-08"></script>
+<script src="search.js?v=20261015-09"></script>
 <!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
      antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
-<script src="operator.js?v=20261015-08"></script>
-<script src="live.js?v=20261015-08"></script>
+<script src="operator.js?v=20261015-09"></script>
+<script src="live.js?v=20261015-09"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -497,6 +532,16 @@ const BASEMAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-
 // ersetzt: darüber skaliert MapLibre die z14-Kacheln selbst (Overzoom), die Karte bleibt weich.
 const TILE_SUBS = ['a', 'b', 'c', 'd'];
 const TILE_MAXZOOM = 14;
+// Satellit: Esri World Imagery, ohne Schlüssel (am 2026-10-15 gemessen: z14–z18 = HTTP 200, JPEG).
+// Eine Raster-Ebene UNTER dem Vektorstil, die nur ihre Sichtbarkeit wechselt — kein setStyle(): das
+// würfe Quellen/Ebenen weg, holte den Stil neu und käme der deck.gl-Ebene und der Kachelgrenze oben in die Quere.
+const SAT_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const SAT_MAXZOOM = 18;                                  // gemessen bis z18; die Karte selbst endet bei 16
+const OWN_LAYERS = new Set(['sat', 'me-acc', 'me-dot']); // gehören nicht zur Grundkarte, bleiben beim Umschalten stehen
+const BASE_VIS = new Map();                              // ursprüngliche Sichtbarkeit je Stil-Ebene
+let BASEMAP = 'map', basemapBtn = null;
+try { if (localStorage.getItem('dlm-basemap') === 'satellite') BASEMAP = 'satellite'; } catch (_) { /* Privatmodus */ }
+function basemap() { return BASEMAP; }
 function inlineTileSource() {
   const style = map.getStyle();
   const src = style.sources && style.sources.carto;
@@ -522,8 +567,47 @@ const map = new maplibregl.Map({
   minZoom: 9, renderWorldCopies: false,
   attributionControl: false             // Quellenangabe steckt im ⓘ im Balken (#attrib)
 });
+// Satellitenquelle einhängen: verborgen, als unterste Ebene (unter allem, was der Stil zeichnet, und
+// unter „Wo bin ich?“). Läuft vor dem Kachel-Patch: dessen getStyle() nimmt sie dann einfach mit.
+function addSatellite() {
+  if (map.getSource('sat')) return;
+  const layers = (map.getStyle() || {}).layers || [];
+  const firstStyleLayerId = layers.length ? layers[0].id : undefined;
+  map.addSource('sat', {
+    type: 'raster', tiles: [SAT_TILES], tileSize: 256, maxzoom: SAT_MAXZOOM,
+    attribution: window.I18N.t('attributionSatellite'),
+  });
+  map.addLayer({ id: 'sat', type: 'raster', source: 'sat', layout: { visibility: 'none' } }, firstStyleLayerId);
+}
+// Grundkarte anwenden: nur Sichtbarkeit umschalten. Vor dem Laden des Stils greift nur das Kennzeichen
+// am <html> (Quellenangabe, Pillen-Saum); die Ebenen folgen beim style.load.
+function applyBasemap() {
+  const sat = BASEMAP === 'satellite';
+  document.documentElement.dataset.basemap = BASEMAP;       // Hooks für CSS (Pillen-Kontrast, Quellenangabe)
+  if (basemapBtn) {
+    basemapBtn.setAttribute('aria-pressed', String(sat));
+    const key = sat ? 'basemapToMap' : 'basemapToSatellite';
+    basemapBtn.setAttribute('data-i18n-title', key);
+    basemapBtn.title = window.I18N.t(key);
+  }
+  let layers = [];
+  try { layers = (map.getStyle() || {}).layers || []; } catch (_) { /* Stil noch nicht geladen */ }
+  for (const l of layers) {
+    if (l.id === 'sat') { try { map.setLayoutProperty('sat', 'visibility', sat ? 'visible' : 'none'); } catch (_) {} continue; }
+    if (OWN_LAYERS.has(l.id)) continue;
+    if (!BASE_VIS.has(l.id)) BASE_VIS.set(l.id, (l.layout && l.layout.visibility) || 'visible');
+    try { map.setLayoutProperty(l.id, 'visibility', sat ? 'none' : BASE_VIS.get(l.id)); } catch (_) {}
+  }
+}
+function setBasemap(which) {
+  BASEMAP = which === 'satellite' ? 'satellite' : 'map';
+  try { localStorage.setItem('dlm-basemap', BASEMAP); } catch (_) { /* Privatmodus: gilt nur für diesen Besuch */ }
+  applyBasemap();
+}
 let basemapCapped = false;
-map.on('style.load', () => {            // einmalig nach dem ersten Laden begrenzen
+map.on('style.load', () => {            // Satellit bei jedem Laden sicherstellen, Kachelgrenze nur einmal
+  try { addSatellite(); applyBasemap(); }
+  catch (err) { console.warn('satellite-layer-failed', err); }
   if (basemapCapped) return;
   try { basemapCapped = inlineTileSource(); }
   catch (err) { console.warn('basemap-tile-cap-failed', err); }
@@ -557,6 +641,25 @@ class TiltButton {
   }
   onRemove() { if (this.el) this.el.remove(); }
 }
+// Karte ⇄ Satellit: Symbol statt Text, aria-pressed="true" = Satellit. Steht vor dem Kipp-Schalter in
+// der Registrierung und damit direkt DARÜBER — auf Telefon und Rechner gleich, ohne Layout-Weiche.
+class BasemapButton {
+  onAdd() {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'maplibregl-ctrl maplibregl-ctrl-group basemap';
+    b.setAttribute('data-i18n-aria', 'basemapTitle');
+    b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="#333">' +
+      '<path d="M12 2 1.5 7.5 12 13l10.5-5.5L12 2zm-8.3 9.3L1.5 12.5 12 18l10.5-5.5-2.2-1.2L12 15.7l-8.3-4.4zm0 5L1.5 17.5 12 23l10.5-5.5-2.2-1.2L12 20.7l-8.3-4.4z"/></svg>';
+    b.onclick = () => setBasemap(basemap() === 'map' ? 'satellite' : 'map');
+    basemapBtn = b;
+    this.el = b;
+    applyBasemap();                        // Zustand und Titel sofort richtig, auch bei gemerktem Satellit
+    return b;
+  }
+  onRemove() { if (this.el) this.el.remove(); basemapBtn = null; }
+}
+map.addControl(new BasemapButton(), 'bottom-right');   // über dem Kipp-Schalter, auf Telefon UND Rechner gleich
 map.addControl(new TiltButton(), 'bottom-right');
 
 const tip = document.getElementById('tip');
@@ -611,7 +714,7 @@ function selectLine(li) {
   if (touchLayout() && hidePanelNow) hidePanelNow();
 }
 
-// „Wo bin ich?" — nur auf dem Telefon (Wunsch des Betreibers 2026-10-15). Ein Tipp fragt die Position
+// „Wo bin ich?" — auf Telefon und Rechner (Wunsch des Betreibers 2026-10-15). Ein Tipp fragt die Position
 // ab, zeichnet Punkt und Genauigkeitskreis und schwenkt dorthin; während der Verfolgung bleibt die
 // Position in der Mitte. Die Koordinaten werden nur gezeichnet und verlassen das Gerät nicht.
 const GEO = { watch: null, on: false };
@@ -681,8 +784,9 @@ class LocateButton {
   }
   onRemove() { geoStop(this.el); this.el.remove(); }
 }
-// Nur auf dem Telefon (der Betreiber wollte es ausdrücklich dort) — und nur, wenn das Gerät es kann.
-if (touchLayout() && navigator.geolocation) map.addControl(new LocateButton(), 'bottom-right');
+// Auf Telefon UND Rechner (eine Bedienleiste, ein Codepfad) — nur, wenn der Browser es kann. Der
+// Genauigkeitskreis kommt aus der Angabe des Browsers; am Rechner ist sie oft grob (WLAN/IP).
+if (navigator.geolocation) map.addControl(new LocateButton(), 'bottom-right');
 // Eigene Geste beendet das Verfolgen, die Markierung bleibt stehen.
 map.on('dragstart', () => { if (GEO.on) geoStop(document.querySelector('.locate')); });
 
@@ -747,7 +851,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-08';
+  const APP_V = '20261015-09';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {
@@ -821,7 +925,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
       const li = document.createElement('li');
       const b = document.createElement('button');
       b.type = 'button'; b.className = 'res'; b.textContent = s.name;
-      b.onclick = () => { searchInput.value = ''; closeResults(); jumpToStation(s); };
+      b.onclick = () => { searchInput.value = ''; closeResults(); setSearchOpen(false); jumpToStation(s); };
       li.appendChild(b); resultsList.appendChild(li);
     }
     resultsList.hidden = false;
@@ -830,9 +934,30 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
     searchInput.addEventListener('input', runSearch);
     searchInput.addEventListener('focus', runSearch);
     searchInput.addEventListener('keydown', e => {
-      if (e.key === 'Escape') { searchInput.value = ''; closeResults(); }
+      if (e.key === 'Escape') { searchInput.value = ''; closeResults(); setSearchOpen(false); }
       if (e.key === 'Enter') { const first = resultsList.querySelector('button.res'); if (first) first.click(); }
     });
+  }
+  // Telefon: die Suche steckt hinter der Lupe. Tipp öffnet und setzt den Fokus; zu geht sie, wenn der
+  // Fokus den Kasten verlässt, bei Escape, nach einem Treffer und beim Tipp auf die Karte. Am Rechner
+  // ist das Feld immer offen (CSS), die Klasse ändert dort nichts.
+  const searchBar = document.getElementById('searchbar');
+  const searchOpen = document.getElementById('searchopen');
+  function setSearchOpen(open) {
+    if (!searchBar) return;
+    searchBar.classList.toggle('open', !!open);
+    if (searchOpen) searchOpen.setAttribute('aria-expanded', String(!!open));
+    if (open && searchInput) searchInput.focus();
+  }
+  if (searchBar && searchOpen) {
+    searchOpen.onclick = () => setSearchOpen(!searchBar.classList.contains('open'));
+    // Erst nach einem Moment prüfen: ein Tipp auf einen Treffer nimmt dem Feld den Fokus, bevor sein
+    // Klick ankommt (Safari fokussiert Knöpfe nicht) — sofort zuklappen ließe den Klick ins Leere gehen.
+    searchBar.addEventListener('focusout', () => setTimeout(() => {
+      const a = document.activeElement;
+      if (!(a && searchBar.contains(a))) setSearchOpen(false);
+    }, 150));
+    map.on('click', () => setSearchOpen(false));
   }
 
   // ---------- Favoriten ----------
