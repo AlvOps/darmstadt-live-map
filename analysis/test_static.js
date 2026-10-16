@@ -302,6 +302,23 @@ function run(check, log = console.log) {
       /<urlset xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9">/.test(sitemap) &&
       /<loc>https:\/\/darmstadtmap\.com\/<\/loc>/.test(sitemap));
   }
+  // Einwilligung (2026-10-16): Google Analytics darf NICHT aus dem statischen Markup geladen werden —
+  // vor einer Zustimmung darf keine einzige Anfrage an Google gehen. Die Wahl wird gespeichert, damit
+  // die Karte nur einmal auftaucht (auch nach einer Ablehnung).
+  check('GA loads only after consent, never from a static script tag',
+    !/<script[^>]+src="https:\/\/www\.googletagmanager\.com/.test(html) &&
+    /const KEY = 'darmstadt-live-consent'/.test(html) &&
+    /localStorage\.getItem\(KEY\)/.test(html) &&
+    /localStorage\.setItem\(KEY, value\)/.test(html) &&
+    /s\.src = 'https:\/\/www\.googletagmanager\.com\/gtag\/js\?id=G-GTEHNPPMW6'/.test(html));
+  check('the consent card offers both choices and speaks both languages',
+    /<button id="consent-yes"/.test(html) && /<button id="consent-no"/.test(html) &&
+    /consentYes: 'Accept'/.test(i18nAll) && /consentYes: 'Akzeptieren'/.test(i18nAll) &&
+    /consentNo: 'Only necessary'/.test(i18nAll) && /consentNo: 'Nur nötig'/.test(i18nAll) &&
+    /consentBody: 'Short version/.test(i18nAll) && /consentBody: 'Kurz:/.test(i18nAll));
+  check('the card waits for the start dialog and sits above the bottom bar',
+    /new MutationObserver\(/.test(html) && /attributeFilter: \['class'\]/.test(html) &&
+    /box\.style\.bottom = \(\(bar \? bar\.offsetHeight : 0\) \+ 16\)/.test(html));
   check('tapping the map closes the phone drawer',
     /hidePanel: \(\) => \{ if \(touchLayout\(\)\) setPanel\(false\); \}/.test(html));
   check('phone: the drawer toggle stays in one place (top-left, panel starts below it)',

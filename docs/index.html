@@ -2,18 +2,9 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<!-- Google Analytics (GA4), Mess-ID G-GTEHNPPMW6. Bewusst gleich nach <meta charset> (so steht der
-     Zeichensatz zuerst) und asynchron: das Skript blockiert das Laden der Karte nicht. Hinweis: GA4
-     setzt Cookies und zählt jeden Besuch sofort — für Besucher aus Deutschland ist das ohne
-     Einwilligung rechtlich heikel (siehe Optionen im Chat). -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-GTEHNPPMW6"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-
-  gtag('config', 'G-GTEHNPPMW6');
-</script>
+<!-- Google Analytics (GA4), Mess-ID G-GTEHNPPMW6: steht ABSICHTLICH nicht hier, sondern wird erst nach
+     ausdrücklicher Zustimmung nachgeladen (siehe Einwilligungskarte unten). Ohne Zustimmung geht keine
+     einzige Anfrage an Google. -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0d12">
 <title>Nahverkehrskarte Darmstadt — Straßenbahn, Bus und Regionalbahn live</title>
@@ -45,7 +36,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-33"></script>
+<script src="i18n.js?v=20261015-34"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -352,6 +343,14 @@
   #welcome h2 { margin: 0 0 8px; font-size: 17px; font-weight: 650; }
   #welcome p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
   .wrow { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  /* Einwilligung: kleine Karte unten links, kein Overlay, blockiert nichts. Erscheint nur, solange keine
+     Wahl gespeichert ist, und legt sich über keine Bedienelemente (unten rechts liegen die Kartenknöpfe). */
+  #consent { position: fixed; left: 12px; bottom: 12px; z-index: 15; width: 360px; max-width: calc(100% - 24px);
+    padding: 11px 13px 12px; display: none; flex-direction: column; gap: 9px; }
+  #consent.on { display: flex; }
+  #consent p { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+  #consent .crow { display: flex; gap: 8px; }
+  #consent button { flex: 1 1 0; min-height: 38px; font-size: 13px; }
   /* Erste Frage beim Start: dieselbe EN/DE-Umschaltung wie oben rechts, nur größer zu treffen */
   #wlang { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
   #wlang .seg { border-radius: 11px; }
@@ -610,6 +609,14 @@
 
 <!-- Erster Kontakt: Hinweis bei JEDEM Besuch, Einführung nur beim ersten Mal (Wunsch des Betreibers).
      Fade über CSS; der Hinweis nennt die Herkunft der Positionen, damit nichts als GPS missverstanden wird. -->
+<div id="consent" class="panel" role="dialog" aria-modal="false" data-i18n-aria="consentTitle" aria-label="Cookies">
+  <p data-i18n="consentBody">Kurz: Diese Karte nutzt Google Analytics, um zu sehen, wie viele Leute sie nutzen. Das Skript wird erst geladen, wenn du zustimmst – sonst wird nichts gesendet.</p>
+  <div class="crow">
+    <button id="consent-yes" data-i18n="consentYes">Akzeptieren</button>
+    <button id="consent-no" data-i18n="consentNo">Nur nötig</button>
+  </div>
+</div>
+
 <div id="welcome" role="dialog" aria-modal="true" data-i18n-aria="welcomeDialog" aria-label="Welcome">
   <div class="wcard panel">
     <h2 id="wtitle" data-i18n="welcomeTitle">So liest du diese Karte</h2>
@@ -626,11 +633,11 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-33"></script>
+<script src="search.js?v=20261015-34"></script>
 <!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
      antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
-<script src="operator.js?v=20261015-33"></script>
-<script src="live.js?v=20261015-33"></script>
+<script src="operator.js?v=20261015-34"></script>
+<script src="live.js?v=20261015-34"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -1026,7 +1033,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-33';
+  const APP_V = '20261015-34';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {
@@ -1281,6 +1288,57 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
     paint();
     requestAnimationFrame(() => box.classList.add('on'));
   })();
+  // ---------- Einwilligung für Google Analytics ----------
+  // Absicht: nichts an Google senden, solange nicht ausdrücklich zugestimmt wurde, und nur EINMAL fragen —
+  // die Wahl (auch die Ablehnung) wird gespeichert, danach erscheint die Karte nie wieder.
+  (function consent() {
+    const KEY = 'darmstadt-live-consent';
+    const box = document.getElementById('consent');
+    let saved = null;
+    try { saved = localStorage.getItem(KEY); } catch (_) { /* Privatmodus */ }
+    const loadGA = () => {
+      if (loadGA.done) return;
+      loadGA.done = true;
+      const s = document.createElement('script');
+      s.async = true;
+      s.src = 'https://www.googletagmanager.com/gtag/js?id=G-GTEHNPPMW6';
+      document.head.appendChild(s);
+      window.dataLayer = window.dataLayer || [];
+      window.gtag = function gtag() { window.dataLayer.push(arguments); };
+      window.gtag('js', new Date());
+      window.gtag('config', 'G-GTEHNPPMW6');
+    };
+    if (saved === 'granted') { loadGA(); return; }     // zugestimmt: nie wieder fragen
+    if (saved === 'denied') return;                    // abgelehnt: auch nicht wieder fragen
+    if (!box) return;
+    const choose = value => {
+      try { localStorage.setItem(KEY, value); } catch (_) { /* egal */ }
+      box.classList.remove('on');
+      setTimeout(() => { if (box.parentNode) box.parentNode.removeChild(box); }, 300);
+      if (value === 'granted') loadGA();
+    };
+    document.getElementById('consent-yes').onclick = () => choose('granted');
+    document.getElementById('consent-no').onclick = () => choose('denied');
+    // Nicht mit dem Hinweis kollidieren: erst zeigen, wenn der Startdialog geschlossen ist. Die Karte
+    // sitzt über der unteren Leiste (deren Höhe ändert sich mit dem Layout).
+    const place = () => {
+      const bar = document.getElementById('bar');
+      box.style.bottom = ((bar ? bar.offsetHeight : 0) + 16) + 'px';
+    };
+    const show = () => { place(); box.classList.add('on'); };
+    window.addEventListener('resize', () => { if (box.classList.contains('on')) place(); });
+    const wl = document.getElementById('welcome');
+    // MutationObserver ausdrücklich prüfen: sehr alte Browser und die DOM-Attrappe im Teststand kennen
+    // ihn nicht — dort soll die Karte einfach sofort erscheinen statt das Skript zu sprengen.
+    if (wl && typeof MutationObserver === 'function') {
+      const mo = new MutationObserver(() => {
+        if (!wl.classList.contains('on')) { mo.disconnect(); show(); }
+      });
+      mo.observe(wl, { attributes: true, attributeFilter: ['class'] });
+      setTimeout(() => { if (!wl.classList.contains('on')) { mo.disconnect(); show(); } }, 1200);
+    } else show();
+  })();
+
   // Quellenangabe: zugeklappt, bis man den ⓘ antippt; Tipp daneben schließt sie wieder
   const attribBtn = document.getElementById('attribbtn');
   const attribBox = document.getElementById('attribbox');
