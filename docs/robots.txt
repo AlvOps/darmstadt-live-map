@@ -1,0 +1,7 @@
+# Darmstadt Public Transport Map — the whole site is meant to be crawled.
+# The map itself is JavaScript, but it carries its content as text (see the <noscript> block on the map
+# page), and /hybrid/ is only a short cut to it and is marked noindex in its own markup.
+User-agent: *
+Allow: /
+
+Sitemap: https://darmstadtmap.com/sitemap.xml

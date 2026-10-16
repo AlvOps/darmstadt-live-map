@@ -291,14 +291,15 @@
   };
 
   const KEY = 'darmstadt-live-lang';
-  let lang = 'en';
+  let lang = 'de';
 
   function detect() {
     let stored = null;
     try { stored = localStorage.getItem(KEY); } catch (e) { /* Privatmodus */ }
     if (stored === 'en' || stored === 'de') return stored;
-    // Vorgabe ist immer Englisch (Vorgabe des Betreibers); Deutsch nur nach ausdrücklicher Wahl.
-    return 'en';
+    // Vorgabe ist Deutsch (Entscheidung des Betreibers 2026-10-15); Englisch nach ausdrücklicher Wahl.
+    // Die Browsersprache wird bewusst NICHT ausgewertet: beim ersten Besuch fragt die Seite selbst.
+    return 'de';
   }
 
   function t(key, vars) {

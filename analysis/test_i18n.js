@@ -141,6 +141,11 @@ function markupFindings(html) {
       const text = m[3].replace(/&[a-z]+;/g, ' ').trim();
       if (!text) continue;
       const i18nOwned = stack.some(e => e.i18n);
+      // <noscript> ist bewusst sprachfest: es ist die Fassung für Crawler und für Besucher ohne
+      // JavaScript, in beiden Sprachen hinterlegt (der <p> trägt jeweils sein lang-Attribut). Das ist
+      // keine Oberflächentextstelle, die übersetzt werden müsste.
+      const inNoscript = stack.some(e => e.tag === 'noscript');
+      if (inNoscript) continue;
       if (!/[A-Za-zÄÖÜäöüß]/.test(text)) continue;        // numbers, glyphs (✕ ❚❚ --:--)
       const top = stack[stack.length - 1] || {};
       if (/^(EN|DE)$/.test(text) && top.attrs && /data-lang=/.test(top.attrs)) continue;   // language codes
@@ -258,8 +263,9 @@ function run(check, log = console.log) {
   // default language
   const htmlLang = (html.match(/<html[^>]*\slang="([^"]*)"/) || [])[1];
   const fresh = loadI18n('de-DE');                      // German browser, nothing stored
-  check('default language is English even for a German browser', fresh.I18N.detect() === 'en');
-  check('<html lang> in the static markup matches the default (en)', htmlLang === 'en', `lang="${htmlLang}"`);
+  check('default language is German unless a language was chosen (browser language is not consulted)',
+    fresh.I18N.detect() === 'de');
+  check('<html lang> in the static markup matches the default (de)', htmlLang === 'de', `lang="${htmlLang}"`);
   check('index.html syncs <html lang> from I18N.detect() before first paint',
     /<head>[\s\S]*documentElement\.lang\s*=\s*window\.I18N\.detect\(\)[\s\S]*<\/head>/.test(html));
   fresh.I18N.set('de');

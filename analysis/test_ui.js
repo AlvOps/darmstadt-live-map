@@ -145,6 +145,10 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('keine ungültigen Koordinaten', heads.every(d => isFinite(d.pos[0]) && isFinite(d.pos[1])));
   check('jedes Fahrzeug bringt Restgeometrie mit', heads.every(d => Array.isArray(d.rest)));
 
+  // Diese Prüfungen zitieren englische Wortlaute, also Englisch hier ausdrücklich setzen: seit
+  // 2026-10-15 ist Deutsch die Vorgabe der Seite.
+  sandbox.I18N.set('en');
+  sandbox.DarmstadtLive.setLang();
   console.log('\n=== Popup (Klick auf ein Fahrzeug) ===');
   const v = heads[0].v;
   console.log(`  Fahrzeug: Linie ${v.lineName} | Verspätung ${v.delayMin} min | tripId ${v.tripId}`);
@@ -428,6 +432,8 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   }
 
   console.log('\n=== Sprachumschaltung ===');
+  sandbox.I18N.set('en');                     // Vergleichsbasis: englische Wortlaute
+  sandbox.DarmstadtLive.setLang();
   const enTitle = el('livestat').innerHTML;
   sandbox.I18N.set('de');
   sandbox.DarmstadtLive.setLang();

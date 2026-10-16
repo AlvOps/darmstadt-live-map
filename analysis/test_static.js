@@ -274,6 +274,33 @@ function run(check, log = console.log) {
     /<span id="dotlegend"[^>]*>[\s\S]{0,420}data-status="gps"[\s\S]{0,220}data-status="feed"[\s\S]{0,220}data-status="none"/.test(html) &&
     /dotGps: 'GPS', dotFeed: 'Prognosis', dotNone: 'No service'/.test(i18nAll) &&
     /dotGps: 'GPS', dotFeed: 'Prognose', dotNone: 'Kein Betrieb'/.test(i18nAll));
+  // Suchmaschinen-Hygiene (2026-10-15): Beschreibung, Canonical, Teilen-Vorschau mit echtem
+  // Kartenausschnitt, crawlbare Textfassung ohne JavaScript, robots.txt und sitemap.xml.
+  {
+    const robotsTxt = fs.readFileSync(path.join(DOCS, 'robots.txt'), 'utf8');
+    const sitemap = fs.readFileSync(path.join(DOCS, 'sitemap.xml'), 'utf8');
+    const og = fs.readFileSync(path.join(DOCS, 'og-image.png'));
+    const hybrid = fs.readFileSync(path.join(DOCS, 'hybrid', 'index.html'), 'utf8');
+    check('the head carries a description, the canonical address and crawl directives',
+      /<meta name="description" content="Live-Karte für Darmstadt/.test(html) &&
+      /<link rel="canonical" href="https:\/\/darmstadtmap\.com\/">/.test(html) &&
+      /<meta name="robots" content="index,follow,max-image-preview:large">/.test(html));
+    check('sharing previews use a real 1200x630 capture and name German as the locale',
+      /property="og:image" content="https:\/\/darmstadtmap\.com\/og-image\.png"/.test(html) &&
+      /property="og:locale" content="de_DE"/.test(html) &&
+      /property="og:locale:alternate" content="en_GB"/.test(html) &&
+      /name="twitter:card" content="summary_large_image"/.test(html) &&
+      og.readUInt32BE(16) === 1200 && og.readUInt32BE(20) === 630,
+      `og-image ${og.readUInt32BE(16)}x${og.readUInt32BE(20)}`);
+    check('the map page offers a crawlable text version, the shortcut page stays out of the index',
+      /<noscript>[\s\S]{0,300}lang="de"[\s\S]{0,1200}lang="en"/.test(html) &&
+      /<meta name="robots" content="noindex,follow">/.test(hybrid));
+    check('robots.txt allows crawling and names the sitemap, and the sitemap is well formed',
+      /User-agent: \*/.test(robotsTxt) && /Allow: \//.test(robotsTxt) &&
+      /Sitemap: https:\/\/darmstadtmap\.com\/sitemap\.xml/.test(robotsTxt) &&
+      /<urlset xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9">/.test(sitemap) &&
+      /<loc>https:\/\/darmstadtmap\.com\/<\/loc>/.test(sitemap));
+  }
   check('tapping the map closes the phone drawer',
     /hidePanel: \(\) => \{ if \(touchLayout\(\)\) setPanel\(false\); \}/.test(html));
   check('phone: the drawer toggle stays in one place (top-left, panel starts below it)',

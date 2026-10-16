@@ -1,14 +1,39 @@
 <!doctype html>
-<html lang="en">
+<html lang="de">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0d12">
-<title>Darmstadt Public Transport Map</title>
+<title>Nahverkehrskarte Darmstadt — Straßenbahn, Bus und Regionalbahn live</title>
+<meta name="description" content="Live-Karte für Darmstadt und Umgebung: echte Fahrzeugpositionen — auf den Linien, die der Betreiber meldet, dessen eigenes GPS, sonst aus dem offenen Echtzeitstrom abgeleitet — dazu Verspätungen, nächste Halte und Linienübersichten. Deutsch und Englisch.">
+<!-- Eine Adresse, alle Fassungen (auch die ?v=-Varianten) zeigen hierher. -->
+<link rel="canonical" href="https://darmstadtmap.com/">
+<meta name="robots" content="index,follow,max-image-preview:large">
+<!-- Vorschau beim Teilen (Chat, Reddit, Foren): ein echter Kartenausschnitt, keine Grafik. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Darmstadt Public Transport Map">
+<meta property="og:title" content="Nahverkehrskarte Darmstadt — Straßenbahn, Bus und Regionalbahn live">
+<meta property="og:description" content="Live-Karte für Darmstadt und Umgebung: echte Fahrzeugpositionen — auf den Linien, die der Betreiber meldet, dessen eigenes GPS, sonst aus dem offenen Echtzeitstrom abgeleitet — dazu Verspätungen, nächste Halte und Linienübersichten.">
+<meta property="og:url" content="https://darmstadtmap.com/">
+<meta property="og:image" content="https://darmstadtmap.com/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Live-Karte von Darmstadt mit Straßenbahnen, Bussen und Regionalbahnen">
+<meta property="og:locale" content="de_DE">
+<meta property="og:locale:alternate" content="en_GB">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Nahverkehrskarte Darmstadt">
+<meta name="twitter:description" content="Live-Karte für Darmstadt: echte Fahrzeugpositionen (Betreiber-GPS und offener Echtzeitstrom), Verspätungen und nächste Halte.">
+<meta name="twitter:image" content="https://darmstadtmap.com/og-image.png">
+<!-- Verbindungen früh aufbauen: Kartenkacheln, Betreiber- und offener Datenstrom, CDN -->
+<link rel="preconnect" href="https://tile.openstreetmap.de">
+<link rel="preconnect" href="https://basemaps.cartocdn.com" crossorigin>
+<link rel="preconnect" href="https://api.transitous.org" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-30"></script>
+<script src="i18n.js?v=20261015-31"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -431,6 +456,21 @@
 </style>
 </head>
 <body>
+<!-- Ohne JavaScript bliebe hier „Loading…" stehen: das ist das, was ein Crawler ohne Skript-Ausführung
+     liest, und es ist genau dieselbe Aussage wie auf der Karte — keine andere Fassung für Suchmaschinen. -->
+<noscript>
+  <p><strong>Nahverkehrskarte Darmstadt</strong></p>
+  <p lang="de">Diese Live-Karte braucht JavaScript, um die Fahrzeuge zu zeichnen. Sie zeigt Straßenbahnen,
+    Busse und Regionalbahnen in und um Darmstadt: Auf den Linien, die der Betreiber meldet, ist ein Punkt
+    seine eigene GPS-Position, auf allen anderen stammt die Position aus den Echtzeit-Prognosen des
+    offenen Datenstroms. Ein Tipp auf ein Fahrzeug zeigt Linie, Verspätung und die nächsten Halte.
+    <a href="https://darmstadtmap.com/">Live-Karte Darmstadt öffnen</a>.</p>
+  <p lang="en">This live map needs JavaScript to draw the vehicles. It shows trams, buses and regional
+    trains in and around Darmstadt: on the lines the operator reports, a dot is the operator's own GPS
+    position, on every other line the position is derived from the realtime stop prognoses of the open
+    feed. Tapping a vehicle shows its line, delay and next stops.
+    <a href="https://darmstadtmap.com/">Open the live map of Darmstadt</a>.</p>
+</noscript>
 <div id="map"></div>
 <!-- Fahrzeugmarken und Haltestellen: DOM-Elemente, von live.js positioniert (rund, weiß, mit Sinnbild) -->
 <div id="markers" aria-hidden="true"></div>
@@ -560,13 +600,13 @@
      Fade über CSS; der Hinweis nennt die Herkunft der Positionen, damit nichts als GPS missverstanden wird. -->
 <div id="welcome" role="dialog" aria-modal="true" data-i18n-aria="welcomeDialog" aria-label="Welcome">
   <div class="wcard panel">
-    <h2 id="wtitle" data-i18n="welcomeTitle">How to read this map</h2>
-    <p id="wbody" data-i18n="welcomeBody">Vehicle positions come from the operators' realtime feed.</p>
+    <h2 id="wtitle" data-i18n="welcomeTitle">So liest du diese Karte</h2>
+    <p id="wbody" data-i18n="welcomeBody">Fahrzeugpositionen kommen aus dem Echtzeitstrom der Betreiber.</p>
     <div id="wlang" hidden>
       <div class="seg" role="group" data-i18n-aria="langGroup" aria-label="Language">
-        <button data-lang="en" aria-pressed="true">EN</button><button data-lang="de" aria-pressed="false">DE</button>
+        <button data-lang="en" aria-pressed="false">EN</button><button data-lang="de" aria-pressed="true">DE</button>
       </div>
-      <p class="whint" data-i18n="chooseLangHint">You can switch any time.</p>
+      <p class="whint" data-i18n="chooseLangHint">Du kannst jederzeit umschalten.</p>
     </div>
     <div class="wrow">
       <button id="wnav" class="wnav" data-i18n="welcomeOk">Got it</button>
@@ -574,11 +614,11 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-30"></script>
+<script src="search.js?v=20261015-31"></script>
 <!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
      antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
-<script src="operator.js?v=20261015-30"></script>
-<script src="live.js?v=20261015-30"></script>
+<script src="operator.js?v=20261015-31"></script>
+<script src="live.js?v=20261015-31"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -974,7 +1014,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-30';
+  const APP_V = '20261015-31';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {
