@@ -1,26 +1,24 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow">
-<title>Darmstadt Public Transport Map — shortcut</title>
-<meta name="robots" content="noindex,follow">
+<!-- Nur eine Weiterleitung auf die Karte: nicht in den Index, die Verweise dürfen aber verfolgt werden. -->
+<meta name="robots" content="noindex, follow">
 <link rel="canonical" href="https://darmstadtmap.com/">
+<title>Nahverkehrskarte Darmstadt — Weiterleitung</title>
 <!--
-  Testseite für den Hybridbetrieb: eine Quelle je Linie (Betreiber-GPS für die gemeldeten Linien,
-  offener Strom mit Prognosen für alles andere). Sie ist absichtlich nur eine Weiterleitung: die
-  Anwendung selbst wird NICHT kopiert, damit es keine zweite Fassung gibt, die auseinanderläuft.
-  Der Schalter `hybrid=1` bleibt in der Adresse, live.js liest ihn und startet dann das
-  Betreibermodul. Die veröffentlichte Seite unter / bleibt unverändert (dort ist der Schalter aus).
+  Kurzadresse aus der Zeit, als der Betreiberbetrieb noch hinter ?hybrid=1 lag. Seit 2026-10-15 ist die
+  Betreiberfassung der Standard der Hauptseite; /?hybrid=0 ist die schlanke Fassung ohne Betreiberabrufe.
+  Diese Seite bleibt für alte Links erhalten und leitet auf die Karte weiter — die Anwendung selbst wird
+  bewusst NICHT kopiert, sonst gäbe es eine zweite Fassung, die auseinanderläuft.
 
-  Ausserdem wird `&v=<Kennung>` angehängt — Zwischenspeicher-Schutz. Ein Browser, der die Zielseite
-  noch von einem früheren Build im Speicher hat, zeigt sonst die alte Fassung ohne Betreiberbetrieb;
-  genau das ist dem Betreiber passiert. Mit der Kennung in der Adresse ist jeder Link auf diese Seite
-  ein frischer Eintrag, und die Kennung wird beim Versionssprung mitgezogen.
+  Angehängt wird `&v=<Kennung>`: Zwischenspeicher-Schutz. Ein Browser, der die Zielseite noch von einem
+  früheren Build im Speicher hat, zeigt sonst die alte Fassung; die Kennung wird beim Versionssprung
+  mitgezogen.
 -->
-<meta http-equiv="refresh" content="0; url=../?v=20261015-31">
-<script>location.replace('../?v=20261015-31');</script>
+<meta http-equiv="refresh" content="0; url=../?v=20261015-32">
+<script>location.replace('../?v=20261015-32');</script>
 <style>
   body { margin: 0; background: #10131a; color: #e8eaf0;
          font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -31,14 +29,15 @@
 </head>
 <body>
 <main>
-  <h1>Darmstadt Public Transport Map</h1>
-  <p>Opening the map…</p>
+  <h1>Nahverkehrskarte Darmstadt</h1>
+  <p>Die Karte wird geöffnet …</p>
   <p class="note">
-    The map itself shows operator GPS positions where the operator reports them, and realtime stop
-    prognoses everywhere else. This page is only a short cut to it, kept for old links.
+    Die Karte zeigt die GPS-Positionen des Betreibers, auf den Linien, die er meldet, und sonst aus den
+    Echtzeit-Prognosen der Haltestellen abgeleitete Positionen. Diese Seite ist nur eine Kurzadresse für
+    alte Links.
   </p>
-  <p><a href="../?v=20261015-31" id="go">Continue to the map</a></p>
-  <p class="note"><a href="../?hybrid=0&v=20261015-31">Open it without the operator positions</a></p>
+  <p><a href="../?v=20261015-32" id="go">Zur Karte</a></p>
+  <p class="note"><a href="../?hybrid=0&v=20261015-32">Ohne die Betreiberpositionen öffnen</a></p>
 </main>
 </body>
 </html>

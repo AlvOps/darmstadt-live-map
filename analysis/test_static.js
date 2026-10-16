@@ -294,7 +294,8 @@ function run(check, log = console.log) {
       `og-image ${og.readUInt32BE(16)}x${og.readUInt32BE(20)}`);
     check('the map page offers a crawlable text version, the shortcut page stays out of the index',
       /<noscript>[\s\S]{0,300}lang="de"[\s\S]{0,1200}lang="en"/.test(html) &&
-      /<meta name="robots" content="noindex,follow">/.test(hybrid));
+      /<meta name="robots" content="noindex, follow">/.test(hybrid) &&
+      (hybrid.match(/name="robots"/g) || []).length === 1);   // genau eine Angabe, keine widersprüchliche
     check('robots.txt allows crawling and names the sitemap, and the sitemap is well formed',
       /User-agent: \*/.test(robotsTxt) && /Allow: \//.test(robotsTxt) &&
       /Sitemap: https:\/\/darmstadtmap\.com\/sitemap\.xml/.test(robotsTxt) &&
