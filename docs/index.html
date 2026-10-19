@@ -36,7 +36,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-39"></script>
+<script src="i18n.js?v=20261015-40"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -445,6 +445,10 @@
     #lang .seg button { padding: 9px 10px; min-width: 42px; }
     #bar { left: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); padding: 4px 8px 4px 10px; }
     #clock { font-size: 14px; min-width: 42px; }
+    /* Lizenzen auf dem Telefon: die Box hat rechts nicht genug Platz neben dem ⓘ, deshalb liegt sie
+       dort als schmales Panel über der Ecke - links und rechts am Rand, nichts läuft hinaus. */
+    #attribbox { position: fixed; left: 8px; right: 8px; width: auto;
+      bottom: calc(56px + env(safe-area-inset-bottom)); }
     #row { gap: 8px; }
     .seg button { padding: 9px 11px; min-height: 40px; }
     #attribbtn { width: 34px; height: 34px; font-size: 15px; }
@@ -656,11 +660,11 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-39"></script>
+<script src="search.js?v=20261015-40"></script>
 <!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
      antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
-<script src="operator.js?v=20261015-39"></script>
-<script src="live.js?v=20261015-39"></script>
+<script src="operator.js?v=20261015-40"></script>
+<script src="live.js?v=20261015-40"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -1055,7 +1059,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-39';
+  const APP_V = '20261015-40';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {
