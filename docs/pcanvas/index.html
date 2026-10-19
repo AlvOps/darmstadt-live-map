@@ -1,0 +1,1410 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<!-- Google Analytics (GA4), Mess-ID G-GTEHNPPMW6: steht ABSICHTLICH nicht hier, sondern wird erst nach
+     ausdrücklicher Zustimmung nachgeladen (siehe Einwilligungskarte unten). Ohne Zustimmung geht keine
+     einzige Anfrage an Google. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<title>Nahverkehrskarte Darmstadt — Straßenbahn, Bus und Regionalbahn live — canvas pills (test)</title>
+<meta name="description" content="Live-Karte für Darmstadt und Umgebung: echte Fahrzeugpositionen — auf den Linien, die der Betreiber meldet, dessen eigenes GPS, sonst aus dem offenen Echtzeitstrom abgeleitet — dazu Verspätungen, nächste Halte und Linienübersichten. Deutsch und Englisch.">
+<!-- Eine Adresse, alle Fassungen (auch die ?v=-Varianten) zeigen hierher. -->
+<link rel="canonical" href="https://darmstadtmap.com/">
+<meta name="robots" content="noindex, follow">
+<!-- Vorschau beim Teilen (Chat, Reddit, Foren): ein echter Kartenausschnitt, keine Grafik. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Darmstadt Public Transport Map">
+<meta property="og:title" content="Nahverkehrskarte Darmstadt — Straßenbahn, Bus und Regionalbahn live">
+<meta property="og:description" content="Live-Karte für Darmstadt und Umgebung: echte Fahrzeugpositionen — auf den Linien, die der Betreiber meldet, dessen eigenes GPS, sonst aus dem offenen Echtzeitstrom abgeleitet — dazu Verspätungen, nächste Halte und Linienübersichten.">
+<meta property="og:url" content="https://darmstadtmap.com/">
+<meta property="og:image" content="https://darmstadtmap.com/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Live-Karte von Darmstadt mit Straßenbahnen, Bussen und Regionalbahnen">
+<meta property="og:locale" content="de_DE">
+<meta property="og:locale:alternate" content="en_GB">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Nahverkehrskarte Darmstadt">
+<meta name="twitter:description" content="Live-Karte für Darmstadt: echte Fahrzeugpositionen (Betreiber-GPS und offener Echtzeitstrom), Verspätungen und nächste Halte.">
+<meta name="twitter:image" content="https://darmstadtmap.com/og-image.png">
+<!-- Verbindungen früh aufbauen: Kartenkacheln, Betreiber- und offener Datenstrom, CDN -->
+<link rel="preconnect" href="https://tile.openstreetmap.de">
+<link rel="preconnect" href="https://basemaps.cartocdn.com" crossorigin>
+<link rel="preconnect" href="https://api.transitous.org" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.webmanifest">
+<script src="../i18n.js?v=20261015-46"></script>
+<script>document.documentElement.lang = window.I18N.detect();</script>
+<link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.4/dist.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0d12; --panel: rgba(16, 19, 26, 0.95); --line: rgba(255,255,255,0.09);
+    --text: #e8eaf0; --muted: #8a90a0; --accent: #ffd166; --fg: #e8eaf0;
+    --tram: #ff6b6b; --bus: #2ec4b6; --rail: #c77dff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #map { position: absolute; inset: 0; }
+  .panel { position: absolute; z-index: 2; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 14px; }
+  /* 380 px statt 300: erst damit passen Echtzeit-Kennzeichen und die Punkt-Erklärung in EINE Zeile
+     (gemessen; bei 300 px rutschte die Erklärung darunter). Telefon hat eigene Regeln (max-width: none). */
+  #head { top: 6px; left: 12px; padding: 10px 13px; max-width: 380px; }
+  #head h1 { margin: 0 0 2px; font-size: 17px; font-weight: 650; letter-spacing: .01em; }
+  #head p { margin: 0; color: var(--muted); font-size: 12.5px; }
+  .sec { margin-top: 14px; }
+  .lbl { font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 6px; }
+  #counts { display: flex; gap: 20px; }
+  .cnt b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; font-weight: 650; line-height: 1.15; }
+  .cnt span { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+  .cnt i, .tog i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+  .cnt.off { opacity: .35; }
+  #toggles { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tog { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 8px; font-size: 12.5px; }
+  .tog .box { width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid var(--muted);
+    display: grid; place-items: center; font-size: 10px; line-height: 1; color: #111; }
+  .tog[aria-pressed="true"] .box { background: var(--accent); border-color: var(--accent); }
+  .tog[aria-pressed="true"] .box::after { content: "✓"; font-weight: 800; }
+  .tog[aria-pressed="false"] { color: var(--muted); }
+  /* Panel: immer nur ein Bereich (Umschalter oben) -> passt ohne Scrollbalken. overflow bleibt nur
+     als unsichtbares Sicherheitsnetz, falls sehr großer Zoom doch mehr Platz verlangt. */
+  #head { display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain;
+    max-height: var(--head-max, calc(100vh - 32px)); scrollbar-width: none; }
+  #head::-webkit-scrollbar { width: 0; height: 0; }
+  #legend-sec { flex: 0 0 auto; min-height: 0; display: flex; flex-direction: column; }
+  /* Linienliste ohne eigenen Scrollbalken: sie wächst mit, solange das Panel in den Bildschirm passt */
+  #legend { flex: 0 0 auto; min-height: 0; max-height: none; overflow: visible; }
+  /* Umschalter zwischen Linien, Favoriten und Status. Immer nur ein Bereich sichtbar, damit das
+     Panel ohne Scrollbalken auskommt. (Die Haltestellensuche sitzt seit 2026-10-15 oben rechts.) */
+  #panelbar { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  #panes { align-self: flex-start; }
+  #panes button { padding: 6px 11px; font-size: 12.5px; }
+  body[data-pane="status"] #legend-sec { display: none; }
+  body[data-pane="lines"] #presentation { display: none; }
+  body[data-pane="favs"] #legend-sec { display: none; }
+  body[data-pane="favs"] #presentation { display: none; }
+  body:not([data-pane="favs"]) #favs { display: none; }
+  /* Suche: durchscheinendes Feld oben rechts, direkt links neben dem Sprachumschalter (gleiche Höhe
+     wie #lang). Trefferliste direkt darunter. Auf dem Telefon steckt sie hinter der Lupe (siehe unten). */
+  /* Produktionsseite (kein Hybridbetrieb): die Suche sitzt wie früher im linken Panel. Diese
+     Überschreibungen gewinnen über die Hybrid-Regeln weiter unten (höhere Spezifität). */
+  html:not([data-hybrid]) #searchbar { position: static; top: auto; right: auto; left: auto; height: auto;
+    z-index: auto; width: 100%; display: block; margin-top: 8px; }
+  html:not([data-hybrid]) #searchopen { display: none !important; }
+  html:not([data-hybrid]) #searchwrap { display: block; width: 100%; }
+  html:not([data-hybrid]) #search { padding: 6px 10px; font-size: 12.5px; background: var(--panel);
+    backdrop-filter: none; }
+
+  #searchbar { position: absolute; z-index: 4; top: calc(16px + env(safe-area-inset-top)); right: 118px; height: 46px;
+    height: 46px; display: flex; gap: 6px; align-items: center; background: transparent; }
+  #searchopen { display: none; }
+  #searchwrap { position: relative; width: 230px; }
+  #search { width: 100%; box-sizing: border-box; padding: 8px 11px; font: inherit; font-size: 12.5px;
+    color: var(--text); background: rgba(16,19,26,.62); }
+    border: 1px solid var(--line); border-radius: 9px; }
+  #search::placeholder { color: var(--muted); }
+  #results { position: absolute; z-index: 7; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px;
+    list-style: none; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35); max-height: 46vh; overflow-y: auto; }
+  #results[hidden] { display: none; }
+  #results button.res { display: block; width: 100%; text-align: left; padding: 8px 9px; font: inherit;
+    font-size: 13px; color: var(--fg); background: transparent; border: 0; border-radius: 7px; cursor: pointer; }
+  #results button.res:hover { background: rgba(255,255,255,.1); }
+  /* Favoriten: gemerkte Halte und Linien */
+  #favstations { list-style: none; margin: 4px 0 12px; padding: 0; }
+  #favstations li { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line); }
+  #favstations .fav-go { flex: 1 1 auto; min-width: 0; text-align: left; padding: 8px 0; font: inherit;
+    font-size: 12.5px; color: var(--fg); background: transparent; border: 0; cursor: pointer;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #favstations .fav-x { flex: none; padding: 3px 9px; font-size: 11px; border-radius: 6px; }
+  #favlines { display: flex; flex-wrap: wrap; gap: 5px; }
+  .favchip { border: 0; cursor: pointer; }
+  #favs .pop-note { margin-top: 8px; }
+  #legend details { border-top: 1px solid var(--line); }
+  #legend summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
+    padding: 9px 0; font-size: 12.5px; user-select: none; }
+  #legend summary::-webkit-details-marker { display: none; }
+  #legend summary::before { content: "▸"; color: var(--muted); font-size: 10px; width: 10px; transition: transform .15s; }
+  #legend details[open] summary::before { transform: rotate(90deg); }
+  #legend .chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 0 11px 16px; }
+  #selinfo { font-size: 12px; margin-bottom: 6px; display: none; align-items: baseline; gap: 6px; }
+  #selinfo button { padding: 1px 7px; font-size: 11px; border-radius: 6px; margin-left: auto; flex: none; }
+  #selinfo button.on { color: var(--accent); border-color: rgba(255,209,102,.45); }
+  .chip { font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 7px; cursor: pointer;
+    color: #111; border: 2px solid transparent; display: inline-flex; align-items: center; min-height: 28px; }
+  .chip.sel { border-color: #fff; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; }
+  /* Zustandspunkt je Linie: grün = Betreiber-GPS, blau = nur Prognose, rot = fährt gerade nicht.
+     Der dunkle Ring hält ihn auf jeder Linienfarbe lesbar. */
+  .ldot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #6b7280;
+    box-shadow: 0 0 0 1.5px rgba(0,0,0,.55); }
+  .ldot[data-status="gps"] { background: #34d058; }
+  .ldot[data-status="feed"] { background: #4c9aff; }
+  .ldot[data-status="none"] { background: #e5534b; }
+  /* Bewusst knapp: das Kopfpanel ist nur 300 px breit, so passt die Erklärung neben das
+     Echtzeit-Kennzeichen statt in eine zweite Zeile. */
+  #dotlegend { display: inline-flex; flex-wrap: wrap; gap: 7px; margin-left: 8px; font-size: 11px;
+    font-weight: 500; color: var(--muted); vertical-align: middle; white-space: nowrap; }
+  #dotlegend .lg { display: inline-flex; align-items: center; gap: 4px; }
+  /* Uhr + ⓘ als eine kleine Ecke unten links: ruhig, aber sauber gesetzt (tabellarische Ziffern,
+     damit die Ziffern beim Minutenwechsel nicht springen). */
+  #bar { left: 16px; bottom: 16px; padding: 5px 10px 5px 12px; }
+  #row { display: flex; align-items: center; gap: 9px; flex-wrap: nowrap; }
+  #clock { font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: .04em;
+    min-width: 48px; text-align: right; color: var(--text); }
+  button, select { background: rgba(255,255,255,.07); color: var(--text); border: 1px solid var(--line);
+    border-radius: 9px; padding: 7px 12px; font: inherit; cursor: pointer; }
+  button:hover, select:hover { background: rgba(255,255,255,.13); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; background: transparent; }
+  .seg button.on { background: rgba(255,209,102,.18); color: var(--accent); }
+  /* Quellenangabe: kleines ⓘ, das Panel darunter klappt nur auf Klick auf */
+  #attrib { position: relative; flex: none; padding-left: 9px; border-left: 1px solid var(--line); }
+  #attribbtn { width: 26px; height: 26px; padding: 0; border-radius: 50%; font-size: 13px; line-height: 1;
+    color: var(--muted); flex: none; }
+  #attribbtn[aria-expanded="true"] { color: var(--accent); border-color: rgba(255,209,102,.45); }
+  /* Das ⓘ sitzt in der linken unteren Ecke: mit right:0 wuchs die Box nach LINKS aus dem Bild
+     (Betreiber-Hinweis 2026-10-19). Mit left:0 öffnet sie nach rechts und bleibt im Bild. */
+  #attribbox { position: absolute; left: 0; bottom: calc(100% + 8px); width: min(340px, 78vw);
+    padding: 9px 11px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35); }
+  #attribbox p { margin: 0 0 4px; font-size: 11px; color: var(--muted); line-height: 1.45; }
+  #attribbox p:last-child { margin-bottom: 0; }
+  #attribbox[hidden] { display: none; }
+  #tip { position: absolute; pointer-events: none; padding: 6px 9px; font-size: 12.5px; display: none;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; z-index: 5; }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); z-index: 9; background: var(--bg); }
+  .maplibregl-ctrl-attrib { background: rgba(0,0,0,.5) !important; font-size: 10px; }
+  .maplibregl-ctrl-attrib a { color: #aaa !important; }
+  /* Eigener 3D-Schalter neben dem Kompass (MapLibres Kompass setzt nur Norden/Pitch zurück, kippt nicht) */
+  .maplibregl-ctrl-group.tilt3d { display: grid; place-items: center; width: 29px; height: 29px; padding: 0; }
+  .maplibregl-ctrl-group.tilt3d svg { display: block; width: 17px; height: 17px; }
+  .maplibregl-ctrl-group.tilt3d[aria-pressed="true"] { background: var(--accent); }
+  .maplibregl-ctrl-group.tilt3d[aria-pressed="true"] svg { fill: #111; }
+  /* „Wo bin ich?" — auf Telefon UND Rechner eingebunden, gleiche Optik wie die anderen Knöpfe */
+  .maplibregl-ctrl-group.locate { display: grid; place-items: center; width: 29px; height: 29px; padding: 0; }
+  .maplibregl-ctrl-group.locate svg { display: block; width: 17px; height: 17px; }
+  .maplibregl-ctrl-group.locate[aria-pressed="true"] { background: #5aaaff; }
+  .maplibregl-ctrl-group.locate[aria-pressed="true"] svg { fill: #fff; }
+  /* Grundkarte Karte ⇄ Satellit: sitzt direkt über dem Kipp-Schalter, gleiche Optik; gedrückt = Satellit */
+  .maplibregl-ctrl-group.basemap { display: grid; place-items: center; width: 29px; height: 29px; padding: 0; }
+  .maplibregl-ctrl-group.basemap svg { display: block; width: 17px; height: 17px; }
+  .maplibregl-ctrl-group.basemap[aria-pressed="true"] { background: var(--accent); }
+  .maplibregl-ctrl-group.basemap[aria-pressed="true"] svg { fill: #111; }
+
+  /* --- Echtzeit --- */
+  .livestat { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .livestat b { color: var(--text); }
+  #livestat2 { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+  .badge-live { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600;
+    letter-spacing: .07em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; margin-left: 8px;
+    background: rgba(46,196,182,.16); color: #2ec4b6; border: 1px solid rgba(46,196,182,.35); vertical-align: 2px; }
+  .badge-live i { width: 7px; height: 7px; border-radius: 50%; background: #2ec4b6; animation: bpulse 1.6s infinite; }
+  @keyframes bpulse { 0%,100% { opacity: 1 } 50% { opacity: .2 } }
+  /* Frischezustand der Daten — gesetzt von live.js (updateStat). Ein Ausfall darf nicht weiter
+     pulsieren, als käme gerade etwas an: alt/überholt wird grau bzw. rot und steht still. */
+  .badge-live[data-state="waiting"], .badge-live[data-state="stale"] {
+    background: rgba(255,255,255,.08); color: var(--muted); border-color: var(--line); }
+  .badge-live[data-state="waiting"] i, .badge-live[data-state="stale"] i { background: var(--muted); animation: none; }
+  .badge-live[data-state="expired"] { background: rgba(255,90,80,.16); color: #ff9b93; border-color: rgba(255,90,80,.4); }
+  .badge-live[data-state="expired"] i { background: #ff9b93; animation: none; }
+  /* --- Sprachumschalter (oben rechts) --- */
+  #lang { top: 16px; right: 16px; padding: 6px; z-index: 4; top: calc(16px + env(safe-area-inset-top)); }
+  #lang .seg button { padding: 7px 11px; font-size: 12.5px; font-weight: 600; min-width: 40px; }
+
+  /* --- Fahrzeug-Popup: sitzt am angeklickten Fahrzeug (Position setzt live.js), Telefon: Bottom-Sheet --- */
+  #popup { display: none; z-index: 6; padding: 10px 12px 11px; width: 304px; max-width: 304px;
+    left: -9999px; top: 0; scrollbar-gutter: stable; touch-action: pan-y; }
+  #popup.on { display: block; }
+  #popup.dragging { cursor: grabbing; }
+  /* Verbindungslinie vom Popup zum Punkt: signalisiert eindeutig, welcher Punkt gemeint ist */
+  #leader { position: absolute; inset: 0; z-index: 5; pointer-events: none; display: none; }
+  #leader.on { display: block; }
+  #leader path { fill: none; stroke: rgba(255, 255, 255, .6); stroke-width: 1.6; stroke-dasharray: 5 4;
+    stroke-linecap: round; }
+  #leader circle { fill: rgba(255, 255, 255, .8); stroke: rgba(16, 20, 28, .6); stroke-width: 1.5; }
+  /* Panel-Schublade und ihr Schalter gibt es nur auf dem Telefon (siehe @media unten) */
+  #paneltoggle, #panelclose { display: none; }
+  .pop-head { display: flex; align-items: center; gap: 8px; cursor: grab; touch-action: none; }
+  .pop-line { font-size: 13px; font-weight: 700; color: #111; padding: 2px 8px; border-radius: 7px; flex: none; }
+  .pop-title { font-weight: 650; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pop-close { margin-left: auto; flex: none; padding: 4px 9px; font-size: 12px; border-radius: 8px; }
+  .pop-delay { display: inline-block; font-size: 12px; font-weight: 650; padding: 3px 9px; border-radius: 999px; margin-top: 8px; }
+  .pop-delay.late { background: rgba(255,90,80,.16); color: #ff9b93; }
+  .pop-delay.ontime { background: rgba(120,220,160,.16); color: #86e0a8; }
+  .pop-delay.early { background: rgba(110,180,255,.16); color: #8ecbff; }
+  .pop-delay.unknown { background: rgba(255,255,255,.08); color: var(--text); }
+  .pop-sub { color: var(--muted); font-size: 11.5px; margin-top: 7px; line-height: 1.45; }
+  /* Halte in der Fahrzeugkarte: auf dem Rechner sind — wie in der Schublade auf dem Telefon — nur
+     DREI sichtbar, alles Weitere ist scrollbar. Der Balken bleibt unsichtbar (siehe unten). Eine Zeile
+     ist genau eine Zeilenhöhe hoch, damit „drei“ nicht von der Schriftmessung abhängt. */
+  .pop-stops { --stop-row: 30px; list-style: none; margin: 10px 0 0; padding: 0;
+    max-height: calc(3 * var(--stop-row)); overflow-y: auto; touch-action: pan-y; }
+  .pop-stops li { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; min-height: var(--stop-row);
+    box-sizing: border-box; line-height: 16px; border-top: 1px solid var(--line); font-size: 12.5px; }
+  /* Halte in der Fahrzeugkarte: anklickbar, mit sichtbarer Andeutung */
+  .pop-stops li.st-go { cursor: pointer; }
+  .pop-stops li.st-go:hover { background: rgba(255,255,255,.06); }
+  .pop-stops li.st-go .st-name { text-decoration: underline dotted rgba(255,255,255,.3); text-underline-offset: 2px; }
+  .pop-stops li.st-go::after { content: "›"; color: var(--muted); flex: none; }
+  .pop-stops .st-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pop-stops .st-line { font-size: 10px; font-weight: 700; color: #111; padding: 1px 6px; border-radius: 5px;
+    flex: none; min-width: 26px; text-align: center; }
+  .pop-stops .st-clock { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 650; flex: none; }
+  .pop-stops .st-rel { color: var(--muted); font-size: 11.5px; flex: none; }
+  .pop-stops .st-dly { font-variant-numeric: tabular-nums; font-weight: 600; flex: none; min-width: 34px; text-align: right; }
+  .pop-stops .st-dly.late { color: #ff9b93; }
+  .pop-stops .st-dly.ontime { color: #86e0a8; }
+  .pop-stops .st-dly.early { color: #8ecbff; }
+  .pop-stops .st-dly.unknown { color: var(--muted); }
+  /* Abgesagte Abfahrt und reine Fahrplanzeit: sichtbar anders als eine normale Echtzeitabfahrt. */
+  .pop-stops .st-dly.cancelled { color: #ff9b93; }
+  .pop-stops li.st-cancel .st-name { text-decoration: line-through; opacity: .75; }
+  .pop-stops .st-tag { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 5px;
+    font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--muted); border: 1px solid var(--line); }
+  .pop-note { color: var(--muted); font-size: 11px; margin-top: 10px; line-height: 1.4; }
+  /* Herkunftshinweis (Position abgeleitet, kein GPS): gelb und fett — er ordnet die Genauigkeit ein
+     und soll deshalb auffallen, nicht im Kleingedruckten verschwinden. Steht nach .pop-note,
+     damit es dessen Farbe überschreibt. */
+  .note-warn { color: var(--accent); font-weight: 700; }
+  /* Gegenstück für Betreiberfahrzeuge: deren Position IST gemessen (GPS) — grün statt gelb, ebenso fett. */
+  .note-gps { color: #78dca0; font-weight: 700; }
+  /* Betreiber-Quellenangabe nur im Hybridbetrieb: auf der veröffentlichten Seite gibt es keine
+     Betreiberpositionen, also darf dort auch keine genannt werden. */
+  #attribbox .attrib-op { display: none; }
+  html[data-hybrid="1"] #attribbox .attrib-op { display: block; }
+  /* Satelliten-Quellenangabe nur, solange das Luftbild auch zu sehen ist (gleicher Kniff wie oben). */
+  #attribbox .attrib-sat { display: none; }
+  html[data-basemap="satellite"] #attribbox .attrib-sat { display: block; }
+
+  /* --- Fahrzeugmarken und Haltestellen als DOM-Elemente (nicht als Textlayer) ---
+     Grund: deck.gl kann keinen runden Hintergrund und keine eigenen Sinnbilder zeichnen. Als
+     DOM-Element ist das Pill wirklich rund, weiß, mit dunkler Schrift und einem SVG-Sinnbild, das
+     die Verkehrsart zeigt — und es ist ein großes, sicheres Tippziel. */
+  #markers { position: absolute; inset: 0; pointer-events: none; z-index: 2; overflow: hidden; }
+  .mk { position: absolute; left: 0; top: 0; display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 9px 3px 7px; border-radius: 999px; background: #fff; color: #10131a;
+    font-size: 12.5px; font-weight: 800; line-height: 1.15; letter-spacing: .01em; white-space: nowrap;
+    border: 1.5px solid rgba(10, 14, 22, .35); box-shadow: 0 1px 5px rgba(0, 0, 0, .5);
+    transform: translate(-50%, -50%); pointer-events: auto; cursor: pointer; }
+  .mk svg { width: 14px; height: 14px; flex: none; fill: currentColor; }
+  /* Farbe nach Verkehrsart — dieselben Farben wie die Schalter im Panel links. */
+  .mk[data-mode="tram"] { background: var(--tram); }
+  .mk[data-mode="bus"] { background: var(--bus); }
+  .mk[data-mode="rail"] { background: var(--rail); }
+  /* Betreiber-GPS: kleiner grüner Punkt an der Marke, damit gemessene und abgeleitete Punkte auch ohne
+     Karte zu unterscheiden sind (die Karte sagt es ausdrücklich). */
+  .mk[data-src="operator"]::after { content: ""; position: absolute; top: -3px; right: -3px; width: 7px; height: 7px;
+    border-radius: 50%; background: #78dca0; box-shadow: 0 0 0 1.5px #10131a; }
+  .mk.focus { border-color: #fff; box-shadow: 0 0 0 2.5px var(--accent), 0 1px 5px rgba(0, 0, 0, .5); }
+  /* Die Pille hängt als Sprechblase ÜBER der Position, ein Punkt markiert sie genau. Vorher lag die
+     Pille mittig auf dem Punkt: mit ~50 px Breite deckte sie bei z13 rund 600 m ab und verdeckte
+     damit beide Straßenseiten — der Fahrweg war korrekt, nur unsichtbar (Messung 2026-10-15:
+     Straßenlage median 0,17 m, aber die Kachel zeichnet Straßen unter z13 teils gar nicht). */
+  /* Die Marke zeigt IMMER die Linie („tags at all times", Wunsch des Betreibers 2026-10-15): die
+     Pille sitzt mittig auf dem Punkt und trägt Symbol + Liniennummer in jedem Zoom. Ein reiner
+     Punkt-Modus und eine hochgezogene Sprechblase gab es zwischenzeitlich — beides wieder entfernt,
+     weil die Liniennummer beim Herauszoomen gebraucht wird. Dass eine 50-px-Pille bei z13 ~600 m
+     breit ist, bleibt so; das ist die bewusst gewählte Abwägung des Betreibers. */
+  .mk.dim { opacity: .55; }
+  /* Über hellem Luftbild verschwimmen die hellen Pillen — nur im Satellitenmodus ein dunkler Saum.
+     Der Fokusring bleibt dabei erhalten (eigene Regel, sonst überschriebe der Saum ihn). */
+  html:not([data-basemap="normal"]) .mk { box-shadow: 0 0 0 1.5px rgba(0,0,0,.55), 0 1px 5px rgba(0, 0, 0, .5); }
+  html:not([data-basemap="normal"]) .mk.focus { box-shadow: 0 0 0 1.5px rgba(0,0,0,.55), 0 0 0 4px var(--accent), 0 1px 5px rgba(0, 0, 0, .5); }
+  #markers.scaled .mk { font-size: 11px; padding: 2px 7px 2px 6px; }
+  #markers.scaled .mk svg { width: 12px; height: 12px; }
+  /* Kompaktere Pille beim Herauszoomen: kleinere Schrift und engeres padding, Beschriftung bleibt. */
+  /* Haltestelle: weißer Kreis mit großem Buchstaben (H = Haltestelle, S = station) */
+  /* Haltestelle: kleiner weißer Kreis, Buchstabe wirklich mittig (Buttons bringen sonst eigenes
+     Innenmaß und Zeilenhöhe mit — daher padding 0, border-box und Flex-Zentrierung). */
+  .stopmk { position: absolute; left: 0; top: 0; box-sizing: border-box; padding: 0; margin: 0;
+    width: 13px; height: 13px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    background: var(--accent); color: #1d7a3d; font-family: inherit; font-size: 8px; font-weight: 800; line-height: 1;
+    border: 1.2px solid #1d7a3d; box-shadow: 0 1px 3px rgba(0, 0, 0, .45);
+    pointer-events: auto; cursor: pointer; }
+  /* Haltestelle: 13 px Punkt, aber 33 px Tippfläche. WCAG 2.2 verlangt mindestens 24 px; der
+     sichtbare Punkt bleibt klein, das Ziel für den Daumen wird über ::before größer. */
+  .stopmk::before { content: ''; position: absolute; inset: -10px; border-radius: 50%; }
+  .stopmk.focus { border-color: var(--accent); }
+  .map-moving #markers { opacity: .9; }
+
+  /* --- Hinweis + Einführung beim Start (Fade, blockiert bis bestätigt) --- */
+  #welcome { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px;
+    background: rgba(4, 6, 10, .72); opacity: 0; transition: opacity .35s ease; pointer-events: none; }
+  #welcome.on { opacity: 1; pointer-events: auto; }
+  /* Startfenster ~30 % kleiner (Wunsch des Betreibers 2026-10-19): Breite, Schrift und Rand zusammen,
+     sonst würde eine nur schmalere Karte einfach höher stehen. */
+  #welcome .wcard { position: relative; max-width: 360px; width: 100%; padding: 13px 13px 10px; }
+  #welcome h2 { margin: 0 0 6px; font-size: 14.5px; font-weight: 650; }
+  #welcome p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.42; }
+  .wrow { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  /* Einwilligung: kleine Karte unten links, kein Overlay, blockiert nichts. Erscheint nur, solange keine
+     Wahl gespeichert ist, und legt sich über keine Bedienelemente (unten rechts liegen die Kartenknöpfe). */
+  #consent { position: fixed; left: 12px; bottom: 12px; z-index: 15; width: 360px; max-width: calc(100% - 24px);
+    padding: 11px 13px 12px; display: none; flex-direction: column; gap: 9px; }
+  #consent.on { display: flex; }
+  #consent p { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+  #consent .crow { display: flex; gap: 8px; }
+  #consent button { flex: 1 1 0; min-height: 38px; font-size: 13px; }
+  /* Erste Frage beim Start: dieselbe EN/DE-Umschaltung wie oben rechts, nur größer zu treffen */
+  #wlang { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; }
+  #wlang .seg { border-radius: 9px; }
+  #wlang .seg button { padding: 9px 17px; font-size: 12.5px; font-weight: 650; min-width: 64px; min-height: 40px; }
+  #wlang .whint { font-size: 10.5px; }
+  .wnav { margin-left: auto; min-height: 44px; background: rgba(255,209,102,.18);
+    border-color: rgba(255,209,102,.45); color: var(--accent); font-weight: 650; }
+  #banner { position: absolute; z-index: 3; top: 16px; left: 50%; transform: translateX(-50%);
+    max-width: min(560px, 90vw); padding: 9px 14px; font-size: 12.5px; background: rgba(255,90,80,.14);
+    border: 1px solid rgba(255,90,80,.4); border-radius: 10px; color: #ffd9d6; }
+
+  /* --- Scrollbalken passend zum Design (dünn, durchscheinend, ohne Spur) --- */
+  :root { --scroll-thumb: var(--muted); --scroll-thumb-hover: var(--accent); }
+  @supports (color: color-mix(in srgb, red, blue)) {
+    :root { --scroll-thumb: color-mix(in srgb, var(--muted) 45%, transparent);
+            --scroll-thumb-hover: color-mix(in srgb, var(--accent) 70%, transparent); }
+  }
+  .panel, #legend, .pop-stops { overscroll-behavior: contain; }
+  @supports (scrollbar-width: thin) {
+    .panel { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+  }
+  /* Die Halteliste in der Karte scrollt, zeigt aber keinen Balken mehr (Wunsch des Betreibers) */
+  .pop-stops { scrollbar-width: none; -ms-overflow-style: none; }
+  .pop-stops::-webkit-scrollbar { width: 0; height: 0; }
+  .panel::-webkit-scrollbar { width: 9px; height: 9px; }
+  .panel::-webkit-scrollbar-track { background: transparent; }
+  .panel::-webkit-scrollbar-corner { background: transparent; }
+  .panel::-webkit-scrollbar-thumb {
+    background: var(--scroll-thumb); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+  .panel::-webkit-scrollbar-thumb:hover {
+    background: var(--scroll-thumb-hover); background-clip: padding-box; }
+
+  /* --- Telefon/Touch: Linienliste zuerst, eine einzige Scrollfläche, große Ziele --- */
+  /* Auch für Touch-Geräte über 700 px Breite (Telefon im Querformat), sonst gäbe es dort weder
+     Schublade noch Schalter und das Panel bliebe einfach stehen. */
+  @media (max-width: 700px), (hover: none) and (pointer: coarse) {
+    /* Telefon: Panel und Karten bewusst eine Spur kompakter als am Rechner (Wunsch des Betreibers
+       2026-10-15) — weniger Rand, kleinere Schrift, niedrigere Zeilen; Treffer bleiben ≥ 36 px hoch. */
+    /* Startfenster: auf dem Telefon war die Breite schon vom Schirm begrenzt, also kommen die
+       fehlenden Prozent aus Rand und Schrift (Betreiber wollte ~30 % weniger Fläche). */
+    #welcome .wcard { padding: 11px 11px 9px; }
+    #welcome h2 { font-size: 13.5px; margin-bottom: 5px; }
+    #welcome p { font-size: 10.5px; line-height: 1.38; }
+    #wlang { gap: 6px; }
+    #wlang .seg button { padding: 8px 15px; font-size: 12px; }
+    #wlang .whint { font-size: 10px; }
+    #head { top: calc(56px + env(safe-area-inset-top)); left: 8px; right: 72px; padding: 7px 9px 8px;
+      max-width: none; max-height: 51vh; overflow-y: auto; overscroll-behavior: contain; }
+    #head h1 { font-size: 14px; }
+    #head p { font-size: 11px; }
+    #legend { overflow: visible; max-height: none; min-height: 0; margin-right: 0; padding-right: 0; scrollbar-gutter: auto; }
+    #legend summary { padding: 9px 0; font-size: 13px; min-height: 40px; }
+    #legend .chips { gap: 5px; padding: 0 0 10px 0; }
+    .chip { font-size: 12.5px; padding: 6px 10px; min-height: 40px; border-radius: 8px; }
+    #panes { align-self: stretch; display: flex; }
+    #panes button { flex: 1 1 0; min-height: 40px; font-size: 12.5px; }
+    /* Suche: zugeklappt nur die Lupe (links neben EN/DE, ≥ 44 px), aufgeklappt über die volle Breite
+       der Kopfzeile. Zu bei Fokusverlust, Escape, Treffer oder Tipp auf die Karte. */
+    #searchbar { top: calc(6px + env(safe-area-inset-top)); right: 110px; height: 50px; }
+    #searchopen { display: inline-flex; align-items: center; justify-content: center; min-width: 44px;
+      min-height: 44px; padding: 0; font-size: 17px; border-radius: 9px; background: rgba(16,19,26,.28);
+      }
+    #searchwrap { display: none; width: auto; }
+    html:not([data-hybrid]) #search { min-height: 40px; font-size: 14px; }
+    /* Aufgeklappt bleibt das Feld bewusst klein: vorher war es über die ganze Breite gezogen und
+       40 px hoch, das wirkte wuchtig. Es sitzt jetzt rechts und deckt nur den Toggle-Bereich ab.
+       Die Trefferliste darf breiter sein als das Feld (lange Stationsnamen), die Trefferzeilen
+       bleiben 44 px hoch für den Finger. */
+    #searchbar.open { left: auto; right: 8px; z-index: 7; height: 40px; }
+    #searchbar.open #searchopen { display: none; }
+    #searchbar.open #searchwrap { display: block; flex: 0 1 auto; width: min(58vw, 208px); }
+    #searchbar.open #search { min-height: 32px; font-size: 13px; padding: 6px 9px; background: rgba(16,19,26,.72); }
+    #searchbar.open #results { left: auto; right: 0; width: min(76vw, 288px); }
+    #search { min-height: 40px; font-size: 14px; }
+    #results button.res { min-height: 44px; font-size: 14px; }
+    #favstations .fav-go { min-height: 40px; font-size: 13px; }
+    #favstations .fav-x { min-width: 40px; min-height: 40px; font-size: 12px; }
+    #selinfo { font-size: 12.5px; }
+    #selinfo button { min-width: 40px; min-height: 40px; font-size: 14px; padding: 0; }
+    .pop-stops li { padding: 8px 0; }
+    #toggles { gap: 6px; }
+    .tog { padding: 5px 8px; font-size: 11.5px; min-height: 40px; }
+    .pop-close { min-width: 40px; min-height: 40px; font-size: 13px; }
+    #counts { gap: 12px; }
+    .cnt b { font-size: 17px; }
+    .cnt span { font-size: 10px; }
+    #lang { top: calc(6px + env(safe-area-inset-top)); right: 8px; padding: 4px; }
+    #lang .seg button { padding: 9px 10px; min-width: 42px; }
+    #bar { left: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); padding: 4px 8px 4px 10px; }
+    #clock { font-size: 14px; min-width: 42px; }
+    /* Lizenzen auf dem Telefon: die Box hat rechts nicht genug Platz neben dem ⓘ, deshalb liegt sie
+       dort als schmales Panel über der Ecke - links und rechts am Rand, nichts läuft hinaus. */
+    #attribbox { position: fixed; left: 8px; right: 8px; width: auto;
+      bottom: calc(56px + env(safe-area-inset-bottom)); }
+    #row { gap: 8px; }
+    .seg button { padding: 9px 11px; min-height: 40px; }
+    #attribbtn { width: 34px; height: 34px; font-size: 15px; }
+    #attribbox { width: min(88vw, 340px); }
+    #popup { left: 8px; right: 8px; top: auto; width: auto; max-width: none; bottom: calc(60px + env(safe-area-inset-bottom)); max-height: 36vh; overflow-y: auto;
+      padding: 7px 9px 8px; }
+    /* Karte auf dem Telefon etwas gedrungener: kleinere Überschrift, engere Haltezeilen */
+    #popup .pop-title { font-size: 12.5px; }
+    #popup .pop-line { font-size: 12px; padding: 2px 7px; }
+    #popup .pop-delay { font-size: 11.5px; padding: 2px 8px; margin-top: 6px; }
+    #popup .pop-sub { font-size: 11px; margin-top: 6px; }
+    #popup .pop-stops { margin-top: 8px; }
+    #popup .pop-stops li { font-size: 12px; gap: 7px; }
+    #popup .pop-stops .st-line { font-size: 9.5px; }
+    #popup .pop-stops .st-rel { font-size: 11px; }
+    /* Panel als Schublade: standardmäßig offen, verschwindet beim Tippen auf die Karte.
+       Der Schalter sitzt IMMER an derselben Stelle (oben links, direkt über dem Panel) und ändert
+       Beschriftung und Symbol: „☰ Lines" öffnet, „✕ Close panel" schließt. So ist ohne Raten klar,
+       was der Knopf tut. Der Balken/das Sheet bleiben unten unberührt. */
+    body.panel-closed #head { display: none; }
+    #paneltoggle { display: inline-flex; align-items: center; gap: 7px; position: absolute; z-index: 5;
+      top: calc(6px + env(safe-area-inset-top)); left: 8px;
+      padding: 8px 11px; min-height: 44px; font: inherit; font-size: 12.5px; font-weight: 600;
+      color: var(--fg); cursor: pointer; }
+    #paneltoggle[aria-expanded="true"] { color: var(--accent); border-color: rgba(255,209,102,.45); }
+    #panelclose { display: inline-flex; align-items: center; justify-content: center; margin-left: auto; flex: none;
+      min-width: 40px; min-height: 40px; font-size: 14px; border-radius: 8px; background: rgba(255,255,255,.06);
+      border: 1px solid var(--line); color: var(--fg); cursor: pointer; }
+    /* Telefon: die Karte bleibt Bottom-Sheet, Ziehen ist dort aus (nur Maus) */
+    .pop-head { cursor: default; touch-action: auto; }
+    /* Wie am Rechner: nur DREI Halte sichtbar, alles Weitere scrollt, Balken unsichtbar.
+       Die Zeilenhöhe ist hier 44 px (Fingergröße, das padding kommt aus der Regel darunter). */
+    .pop-stops { --stop-row: 40px; max-height: calc(3 * var(--stop-row)); overflow-y: auto;
+      scrollbar-width: none; -ms-overflow-style: none; }
+    .pop-stops::-webkit-scrollbar { width: 0; height: 0; }
+    #banner { top: calc(70px + env(safe-area-inset-top)); font-size: 12px; }
+    #tip { display: none !important; }        /* auf Touch gibt es nur das Popup */
+  }
+  @media (min-width: 701px) {
+    #popup { max-height: 44vh; overflow-y: auto; }   /* Position und Breite kommen aus live.js/CSS-Basis */
+  }
+</style>
+</head>
+<body>
+<!-- Ohne JavaScript bliebe hier „Loading…" stehen: das ist das, was ein Crawler ohne Skript-Ausführung
+     liest, und es ist genau dieselbe Aussage wie auf der Karte — keine andere Fassung für Suchmaschinen. -->
+<noscript>
+  <p><strong>Nahverkehrskarte Darmstadt</strong></p>
+  <p lang="de">Diese Live-Karte braucht JavaScript, um die Fahrzeuge zu zeichnen. Sie zeigt Straßenbahnen,
+    Busse und Regionalbahnen in und um Darmstadt: Auf den Linien, die der Betreiber meldet, ist ein Punkt
+    seine eigene GPS-Position, auf allen anderen stammt die Position aus den Echtzeit-Prognosen des
+    offenen Datenstroms. Ein Tipp auf ein Fahrzeug zeigt Linie, Verspätung und die nächsten Halte.
+    <a href="https://darmstadtmap.com/">Live-Karte Darmstadt öffnen</a>.</p>
+  <p lang="en">This live map needs JavaScript to draw the vehicles. It shows trams, buses and regional
+    trains in and around Darmstadt: on the lines the operator reports, a dot is the operator's own GPS
+    position, on every other line the position is derived from the realtime stop prognoses of the open
+    feed. Tapping a vehicle shows its line, delay and next stops.
+    <a href="https://darmstadtmap.com/">Open the live map of Darmstadt</a>.</p>
+</noscript>
+<div id="map"></div>
+<!-- Fahrzeugmarken und Haltestellen: DOM-Elemente, von live.js positioniert (rund, weiß, mit Sinnbild) -->
+<div id="markers" aria-hidden="true"></div>
+<!-- Verbindungslinie vom Popup zum markierten Punkt (live.js zeichnet sie) -->
+<svg id="leader" aria-hidden="true"><path></path><circle r="3.5"></circle></svg>
+<!-- Telefon: Panel ist eine Schublade — dieser Schalter holt es zurück, wenn es sich geschlossen hat -->
+<button id="paneltoggle" class="panel" aria-expanded="true" data-i18n-aria="openPanel" aria-label="Show lines">
+  <span aria-hidden="true">☰</span> <span data-i18n="openPanel">Lines</span></button>
+<div id="loading" data-i18n="loading">Loading …</div>
+
+<!-- Haltestellensuche oben rechts neben dem Sprachumschalter (Kennungen unverändert: search.js und
+     die Suchlogik unten greifen über #search/#results zu). Telefon: zugeklappt hinter der Lupe. -->
+<div id="searchbar" role="search">
+  <button id="searchopen" type="button" aria-expanded="false" aria-controls="searchwrap"
+    data-i18n-aria="searchOpen" data-i18n-title="searchOpen">🔍</button>
+  <div id="searchwrap">
+    <input id="search" type="search" autocomplete="off" spellcheck="false"
+      data-i18n-placeholder="searchPlaceholder" data-i18n-aria="searchLabel"
+      placeholder="Search a stop …" aria-label="Search a stop">
+    <ul id="results" hidden></ul>
+  </div>
+</div>
+<div id="lang" class="panel">
+  <div class="seg" role="group" data-i18n-aria="langGroup" aria-label="Language">
+    <button data-lang="en" aria-pressed="true">EN</button><button data-lang="de" aria-pressed="false">DE</button>
+  </div>
+</div>
+
+<div id="head" class="panel">
+  <h1><span data-i18n="appTitle">Darmstadt Public Transport Map</span><span class="badge-live" id="livebadge" data-state="waiting"><i></i><span id="livebadgetxt" data-i18n="modeLive">Realtime prognoses</span></span><span id="dotlegend" data-i18n-title="dotLegendTitle" title="What the dots in the line list mean"><span class="lg"><i class="ldot" data-status="gps"></i><span data-i18n="dotGps">GPS</span></span><span class="lg"><i class="ldot" data-status="feed"></i><span data-i18n="dotFeed">Prognosis</span></span><span class="lg"><i class="ldot" data-status="none"></i><span data-i18n="dotNone">No service</span></span></span>
+    <button id="panelclose" class="panel-x" data-i18n-aria="closePanel" aria-label="Close panel">✕</button></h1>
+
+  <!-- Umschalter: immer nur ein Bereich sichtbar -> das Panel passt ohne Scrollbalken.
+       (Im Hybridbetrieb steht die Haltestellensuche oben rechts in #searchbar, auf der
+       veröffentlichten Seite hier im Panel — der frühe Inline-Schalter oben verschiebt sie.) -->
+  <div id="panelbar">
+    <div class="seg" id="panes" role="group">
+      <button data-pane="lines" class="on" aria-pressed="true" data-i18n="legendTitle">Lines</button><button data-pane="favs" aria-pressed="false" data-i18n="favTitle">Favourites</button><button data-pane="status" aria-pressed="false" data-i18n="presentation">Status &amp; filters</button>
+    </div>
+  </div>
+
+  <!-- Linienliste steht oben: sie ist das wichtigste Bedienelement, nicht die Statistik -->
+  <div class="sec" id="legend-sec">
+    <div id="selinfo"><span id="selname"></span><button id="selfav" data-i18n-title="favAdd" data-i18n-aria="favAdd" aria-label="Save this line">☆</button><button id="selclear" data-i18n-title="clear" data-i18n-aria="clear" aria-label="Clear highlight">✕</button></div>
+    <div id="legend"></div>
+  </div>
+
+  <!-- Favoriten: gemerkte Halte und Linien (localStorage, kein Server) -->
+  <div class="sec" id="favs">
+    <div class="lbl" data-i18n="favStations">Saved stops</div>
+    <ul id="favstations"></ul>
+    <div class="lbl" data-i18n="favLines">Saved lines</div>
+    <div id="favlines"></div>
+    <p class="pop-note" id="favempty" data-i18n="favEmpty">Nothing saved yet — tap the star on a stop card or on a line.</p>
+  </div>
+
+  <div class="sec" id="presentation">
+    <p data-i18n="subtitle">Tram, bus and regional rail — from the open realtime feed</p>
+    <div class="sec">
+      <div id="livestat2" data-i18n="waiting">waiting for first data …</div>
+      <div id="routenote" class="pop-note"></div>
+    </div>
+    <div class="sec">
+      <div class="lbl" data-i18n="showOnMap">Show on map</div>
+      <div id="toggles">
+        <button class="tog" data-mode="tram" aria-pressed="true"><span class="box"></span><i style="background:var(--tram)"></i><span data-i18n="togTram">Tram</span></button>
+        <button class="tog" data-mode="bus" aria-pressed="true"><span class="box"></span><i style="background:var(--bus)"></i><span data-i18n="togBus">Bus</span></button>
+        <button class="tog" data-mode="rail" aria-pressed="true"><span class="box"></span><i style="background:var(--rail)"></i><span data-i18n="togRail">Regional rail</span></button>
+      </div>
+    </div>
+    <div class="sec">
+      <div class="lbl" data-i18n="heading">On the road now</div>
+      <div id="counts">
+        <div class="cnt" data-mode="tram"><b id="n-tram">0</b><span><i style="background:var(--tram)"></i><span data-i18n="trams">Trams</span></span></div>
+        <div class="cnt" data-mode="bus"><b id="n-bus">0</b><span><i style="background:var(--bus)"></i><span data-i18n="buses">Buses</span></span></div>
+        <div class="cnt" data-mode="rail"><b id="n-rail">0</b><span><i style="background:var(--rail)"></i><span data-i18n="trains">Trains</span></span></div>
+      </div>
+      <div class="livestat" id="livestat"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Muss synchron laufen, VOR dem ersten Bildaufbau: live.js ist hier noch nicht geladen, deshalb
+  // dieselbe Bedingung wie dort. Hybridbetrieb -> data-hybrid sofort setzen (sonst blitzte das
+  // Suchfeld kurz in der falschen Ecke auf). Produktionsseite -> die Suche gehört ins linke Panel,
+  // genau wie vor dem Umbau.
+  (function () {
+    // Die Betreiberfassung ist jetzt der STANDARD der Seite (Wunsch des Betreibers 2026-10-15):
+    // die Fassung nur mit dem offenen Strom gibt es ausdrücklich über ?hybrid=0.
+    var q = String(location.search || '');
+    var plain = window.DLM_OPERATOR === false || /[?&]hybrid=0(?:&|$)/.test(q);
+    if (!plain) { document.documentElement.dataset.hybrid = '1'; return; }
+    var sb = document.getElementById('searchbar'), pb = document.getElementById('panelbar');
+    document.documentElement.dataset.search = 'panel';
+    if (sb && pb) pb.appendChild(sb);
+  })();
+</script>
+<!-- Ecke unten links: die Uhr und die Quellenangabe (Wunsch des Betreibers 2026-10-19: Uhr bleibt,
+     aber als ruhiges Beiwerk statt als Leiste; der Verspätungsbalken und der Tipp sind weg). Das ⓘ
+     trägt die Lizenzen (CC BY-SA, ODbL) und klappt erst auf Tipp auf. -->
+<div id="bar" class="panel">
+  <div id="row">
+    <span id="clock" aria-hidden="true">--:--</span>
+    <!-- Quellenangabe: standardmäßig zugeklappt, öffnet erst auf Tipp. Die Nennung bleibt damit
+         erreichbar (CC BY-SA), steht aber nicht dauerhaft im Bild. -->
+    <div id="attrib">
+      <button id="attribbtn" aria-expanded="false" data-i18n-aria="attribLabel" aria-label="Data sources">ⓘ</button>
+      <div id="attribbox" hidden>
+        <p data-i18n="attributionLive">Realtime: DELFI e.V. (CC BY-SA 4.0) via Transitous/MOTIS</p>
+        <p data-i18n="attributionMap">Base map: © OpenStreetMap contributors (ODbL) · CARTO</p>
+        <p class="attrib-sat" data-i18n="attributionSatellite">Satellite imagery: Esri, Maxar, Earthstar Geographics</p>
+        <p class="attrib-op" data-i18n="attributionOperator">Live vehicle positions (GPS): HEAG mobilo vehicle data via IVANTO, for the lines it reports</p>
+        <!-- Was die Punkte sind (und was nicht): gelb und fett, in beiden Sprachen, direkt in der
+             Quellenangabe — damit die Einordnung dort steht, wo man die Herkunft nachliest. Zwei
+             Quellen, eine je Linie: Betreiber-GPS für die Linien, die er meldet, sonst aus den
+             Prognosen des offenen Stroms (DELFI via Transitous) abgeleitet. -->
+        <p class="note-warn" data-i18n="attributionPosition">Positions are derived from realtime stop prognoses — the open feed carries no GPS. Data older than 45 s is marked stale, older than 2 min is dropped.</p>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="tip"></div>
+<div id="banner" hidden></div>
+<div id="popup" class="panel" role="dialog" data-i18n-aria="popup.dialog" aria-label="Vehicle details"></div>
+
+<!-- Erster Kontakt: Hinweis bei JEDEM Besuch, Einführung nur beim ersten Mal (Wunsch des Betreibers).
+     Fade über CSS; der Hinweis nennt die Herkunft der Positionen, damit nichts als GPS missverstanden wird. -->
+<div id="consent" class="panel" role="dialog" aria-modal="false" data-i18n-aria="consentTitle" aria-label="Cookies">
+  <p data-i18n="consentBody">Kurz: Diese Karte nutzt Google Analytics, um zu sehen, wie viele Leute sie nutzen. Das Skript wird erst geladen, wenn du zustimmst – sonst wird nichts gesendet.</p>
+  <div class="crow">
+    <button id="consent-yes" data-i18n="consentYes">Akzeptieren</button>
+    <button id="consent-no" data-i18n="consentNo">Nur nötig</button>
+  </div>
+</div>
+
+<div id="welcome" role="dialog" aria-modal="true" data-i18n-aria="welcomeDialog" aria-label="Welcome">
+  <div class="wcard panel">
+    <h2 id="wtitle" data-i18n="welcomeTitle">So liest du diese Karte</h2>
+    <p id="wbody" data-i18n="welcomeBody">Fahrzeugpositionen kommen aus dem Echtzeitstrom der Betreiber.</p>
+    <div id="wlang" hidden>
+      <div class="seg" role="group" data-i18n-aria="langGroup" aria-label="Language">
+        <button data-lang="en" aria-pressed="false">EN</button><button data-lang="de" aria-pressed="true">DE</button>
+      </div>
+      <p class="whint" data-i18n="chooseLangHint">Du kannst jederzeit umschalten.</p>
+    </div>
+    <div class="wrow">
+      <button id="wnav" class="wnav" data-i18n="welcomeOk">Got it</button>
+    </div>
+  </div>
+</div>
+
+<script src="../search.js?v=20261015-46"></script>
+<!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
+     antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
+<script src="../operator.js?v=20261015-46"></script>
+<script src="live.js?v=20261015-46"></script>
+<script>
+const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
+const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
+const esc = x => String(x == null ? '' : x).replace(/[&<>"']/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// Zustand: nur noch die Echtzeit-Ansicht. Die Ruheuhr (selAt) teilt sich diese Datei mit live.js:
+// eine gewählte Linie zeigt nur diese Linie; nach 10 s ohne Interaktion kommen die Haltestellen zurück.
+const state = { modes: { tram: true, bus: true, rail: true }, selLine: null, selAt: 0 };
+let META;
+
+// ---------- Karte
+const BASEMAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json';
+// CARTOs Vektor-Kacheln enden bei z14 (am 2026-10-14 gemessen: z14 = HTTP 200, z15 und tiefer = 404).
+// Die Style-Datei nennt kein maxzoom, deshalb fragt MapLibre beim Hineinzoomen Kacheln ab, die es
+// nicht gibt — die Grundkarte bleibt dann auf der zuletzt geladenen Zoomstufe stehen und wirkt beim
+// Zoomen "eingefroren". Darum wird die TileJSON-Quelle durch eine feste Vorlage mit maxzoom 14
+// ersetzt: darüber skaliert MapLibre die z14-Kacheln selbst (Overzoom), die Karte bleibt weich.
+const TILE_SUBS = ['a', 'b', 'c', 'd'];
+const TILE_MAXZOOM = 14;
+// Satellit: Esri World Imagery, ohne Schlüssel (am 2026-10-15 gemessen: z14–z18 = HTTP 200, JPEG).
+// Eine Raster-Ebene UNTER dem Vektorstil, die nur ihre Sichtbarkeit wechselt — kein setStyle(): das
+// würfe Quellen/Ebenen weg, holte den Stil neu und käme der deck.gl-Ebene und der Kachelgrenze oben in die Quere.
+const SAT_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const SAT_MAXZOOM = 18;                                  // gemessen bis z18; die Karte selbst endet bei 16
+// Karte (dritter Zustand): die klassische OpenStreetMap-Karte mit Straßen- und Ortsnamen.
+// Gemessen am 2026-10-15: tile.openstreetmap.de liefert echte Kacheln (z16/z18/z19, je Zoom und
+// Nachbarkachel unterschiedliche Prüfsumme). ACHTUNG: tile.openstreetmap.org UND CARTOs
+// /rastertiles/voyager/ liefern dagegen überall DIESELBE Kachel — eine Platzhalterkachel, keine
+// Karte. Ein Abruf mit HTTP 200 beweist also nichts; die Prüfsummen müssen sich unterscheiden.
+const CARTO_TILES = 'https://tile.openstreetmap.de/{z}/{x}/{y}.png';
+const CARTO_MAXZOOM = 19;
+// Drei Zustände: 'normal' = dunkler Vektorstil, 'satellite' = Luftbild, 'carto' = helle Straßenkarte
+// (der Startzustand). Der Betreiber wollte ausdrücklich alle drei.
+const BASEMAPS = ['normal', 'satellite', 'carto'];
+// Hybridbetrieb? Nur dort gibt es Grundkarten-Umschalter, Lupe und Ortung auf dem Rechner. Die
+// veröffentlichte Seite bleibt genau wie vorher (dunkle Karte, Suche im Panel, Ortung nur mobil).
+const HYBRID = !!(window.DarmstadtLive && window.DarmstadtLive.HYBRID_ON);
+const OWN_LAYERS = new Set(['sat', 'cartoimg', 'me-acc', 'me-dot']);   // nicht Grundkarte: bleiben stehen
+const BASE_VIS = new Map();                              // ursprüngliche Sichtbarkeit je Stil-Ebene
+// Startzustand ist die Kartenansicht (helle Straßenkarte) — Wunsch des Betreibers 2026-10-15, geändert
+// von der Nachtkarte. Eine früher gewählte Grundkarte wird bewusst NICHT wiederhergestellt, ein alter
+// Merker sogar entfernt. Innerhalb der Sitzung schaltet der Umschalter weiterhin um.
+let BASEMAP = 'carto', basemapBtn = null;
+try { localStorage.removeItem('dlm-basemap'); } catch (_) { /* Privatmodus */ }
+function basemap() { return BASEMAP; }
+function inlineTileSource() {
+  const style = map.getStyle();
+  const src = style.sources && style.sources.carto;
+  if (!src || !src.url) return false;                    // schon gepatcht oder unerwartete Struktur
+  src.tiles = TILE_SUBS.map(s =>
+    `https://tiles-${s}.basemaps.cartocdn.com/vectortiles/carto.streets/v1/{z}/{x}/{y}.mvt`);
+  src.minzoom = 0;
+  src.maxzoom = TILE_MAXZOOM;
+  delete src.url;                                        // sonst gilt weiter die Angabe der TileJSON
+  map.setStyle(style, { diff: false });
+  return true;
+}
+// Höchstens 1,5-fache Gerätepixel zeichnen: bei DPR 2 sind das 44 % weniger Pixel, und auf einer
+// bewegten Karte sieht man den Unterschied nicht. Betrifft nur die Grundkarte — Marken sind DOM.
+const RENDER_DPR = Math.min(window.devicePixelRatio || 1, 1.5);
+const map = new maplibregl.Map({
+  container: 'map',
+  pixelRatio: RENDER_DPR,
+  style: BASEMAP_STYLE,
+  center: [8.652, 49.872], zoom: 12.3, pitch: 0, bearing: 0, maxPitch: 60, maxZoom: 17,   // Nordansicht als Standard
+  // Der Datenraum ist Rhein-Main/Bergstraße, nicht die Welt. Ohne maxBounds ließ sich die Karte
+  // maxZoom 17 (statt 16): bei z16 war eine Pille noch ~60 m breit, also breiter als jede Straße —
+  // erst eine Stufe näher sieht man, dass Punkt und Fahrweg auf der Straße liegen. Wirkt in allen
+  // drei Kartenbildern (der dunkle Vektorstil überzoomt, die Rasterkacheln liefern bis z19).
+  // endlos nach oben schieben; minZoom verhindert zusätzlich das Herauszoomen, renderWorldCopies
+  // die Wiederholung der Weltkarte. Rahmen: um Darmstadt, Frankfurt/Wiesbaden/Mainz im Norden und
+  // Westen, Aschaffenburg/Miltenberg im Osten, Weinheim/Heidelberg im Süden — gemessen mit
+  // analysis/measure_extent.js (eigener Bestand: lat 49.29–50.23, lon 8.24–9.28).
+  maxBounds: [[7.85, 49.15], [9.45, 50.35]],
+  minZoom: 9, renderWorldCopies: false,
+  attributionControl: false             // Quellenangabe steckt im ⓘ im Balken (#attrib)
+});
+// Satellitenquelle einhängen: verborgen, als unterste Ebene (unter allem, was der Stil zeichnet, und
+// unter „Wo bin ich?“). Läuft vor dem Kachel-Patch: dessen getStyle() nimmt sie dann einfach mit.
+// Beide Rasterbilder werden OBEN angehängt (ohne beforeId). Der Stil beginnt mit einer
+// background-Ebene, die die ganze Fläche malt — darunter eingehängt wäre ein Raster unsichtbar.
+// Da im Luftbild- und im Kartenzustand alle Stil-Ebenen versteckt werden, stört die Reihenfolge nicht.
+function addRasters() {
+  const L = (map.getStyle() || {}).layers || [];
+  if (!map.getSource('sat')) {
+    map.addSource('sat', {
+      type: 'raster', tiles: [SAT_TILES], tileSize: 256, maxzoom: SAT_MAXZOOM,
+      attribution: window.I18N.t('attributionSatellite'),
+    });
+    map.addLayer({ id: 'sat', type: 'raster', source: 'sat', layout: { visibility: 'none' } });
+  }
+  if (!map.getSource('cartoimg')) {
+    map.addSource('cartoimg', {
+      type: 'raster', tiles: [CARTO_TILES], tileSize: 256, maxzoom: CARTO_MAXZOOM,
+      attribution: window.I18N.t('attributionMap'),
+    });
+    map.addLayer({ id: 'cartoimg', type: 'raster', source: 'cartoimg', layout: { visibility: 'none' } });
+  }
+}
+// Grundkarte anwenden: nur Sichtbarkeit umschalten. Vor dem Laden des Stils greift nur das Kennzeichen
+// am <html> (Quellenangabe, Pillen-Saum); die Ebenen folgen beim style.load.
+function applyBasemap() {
+  const normal = BASEMAP === 'normal';
+  document.documentElement.dataset.basemap = BASEMAP;   // Hooks für CSS (Pillen-Kontrast, Quellenangabe)
+  if (basemapBtn) {
+    // Der Knopf zeigt immer, was der NÄCHSTE Klick bringt.
+    const next = BASEMAPS[(BASEMAPS.indexOf(BASEMAP) + 1) % BASEMAPS.length];
+    const key = next === 'satellite' ? 'basemapToSatellite' : next === 'carto' ? 'basemapToMap' : 'basemapToNormal';
+    basemapBtn.setAttribute('aria-pressed', String(!normal));
+    basemapBtn.setAttribute('data-i18n-title', key);
+    basemapBtn.title = window.I18N.t(key);
+  }
+  let layers = [];
+  try { layers = (map.getStyle() || {}).layers || []; } catch (_) { /* Stil noch nicht geladen */ }
+  for (const l of layers) {
+    if (OWN_LAYERS.has(l.id)) continue;
+    if (!BASE_VIS.has(l.id)) BASE_VIS.set(l.id, (l.layout && l.layout.visibility) || 'visible');
+    try { map.setLayoutProperty(l.id, 'visibility', normal ? BASE_VIS.get(l.id) : 'none'); } catch (_) {}
+  }
+  const show = BASEMAP === 'satellite' ? 'sat' : BASEMAP === 'carto' ? 'cartoimg' : null;
+  for (const id of ['sat', 'cartoimg']) {
+    try { map.setLayoutProperty(id, 'visibility', id === show ? 'visible' : 'none'); } catch (_) {}
+  }
+}
+function setBasemap(which) {
+  // Bewusst keine Speicherung: beim nächsten Laden beginnt es wieder mit der Nachtkarte.
+  BASEMAP = BASEMAPS.includes(which) ? which : 'carto';   // unbekannt -> der Standard
+  applyBasemap();
+}
+let basemapCapped = false;
+map.on('style.load', () => {            // Satellit bei jedem Laden sicherstellen, Kachelgrenze nur einmal
+  try { if (HYBRID) { addRasters(); applyBasemap(); } }
+  catch (err) { console.warn('satellite-layer-failed', err); }
+  if (basemapCapped) return;
+  try { basemapCapped = inlineTileSource(); }
+  catch (err) { console.warn('basemap-tile-cap-failed', err); }
+});
+// Quellenangabe: kein MapLibre-Bedienelement mehr (das stand aufgeklappt im Bild). Stattdessen das
+// kleine ⓘ im Balken (#attrib im Markup), das erst auf Tipp aufgeht — die Nennung bleibt erreichbar.
+const overlay = new deck.MapboxOverlay({ interleaved: false, useDevicePixels: RENDER_DPR, layers: [] });
+map.addControl(overlay);
+window.__map = map;                      // nur auf dieser Testseite: Prüfzugriff auf die Ebenen
+map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
+
+// Eigener 3D-Schalter: MapLibre 4 kennt keinen Kipp-Knopf (der Kompass setzt nur Norden und Neigung
+// zurück), deshalb ein eigenes Bedienelement. Symbol statt Text, damit nichts zu übersetzen ist.
+class TiltButton {
+  onAdd(m) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'maplibregl-ctrl maplibregl-ctrl-group tilt3d';
+    b.setAttribute('aria-pressed', 'false');
+    b.setAttribute('data-i18n-aria', 'tilt3d');
+    b.setAttribute('data-i18n-title', 'tilt3d');
+    b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="#333">' +
+      '<path d="M12 3 3 8v8l9 5 9-5V8l-9-5zm0 2.3 6.5 3.6L12 12.5 5.5 8.9 12 5.3zM5 10.6l6 3.3v6.3l-6-3.3v-6.3zm14 0v6.3l-6 3.3v-6.3l6-3.3z"/></svg>';
+    b.onclick = () => {
+      const on = b.getAttribute('aria-pressed') !== 'true';
+      b.setAttribute('aria-pressed', String(on));
+      m.easeTo({ pitch: on ? 45 : 0, duration: 500 });
+    };
+    m.on('pitchend', () => b.setAttribute('aria-pressed', String(m.getPitch() > 5)));
+    this.el = b;
+    return b;
+  }
+  onRemove() { if (this.el) this.el.remove(); }
+}
+// Karte ⇄ Satellit: Symbol statt Text, aria-pressed="true" = Satellit. Steht vor dem Kipp-Schalter in
+// der Registrierung und damit direkt DARÜBER — auf Telefon und Rechner gleich, ohne Layout-Weiche.
+class BasemapButton {
+  onAdd() {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'maplibregl-ctrl maplibregl-ctrl-group basemap';
+    b.setAttribute('data-i18n-aria', 'basemapTitle');
+    b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="#333">' +
+      '<path d="M12 2 1.5 7.5 12 13l10.5-5.5L12 2zm-8.3 9.3L1.5 12.5 12 18l10.5-5.5-2.2-1.2L12 15.7l-8.3-4.4zm0 5L1.5 17.5 12 23l10.5-5.5-2.2-1.2L12 20.7l-8.3-4.4z"/></svg>';
+    b.onclick = () => setBasemap(BASEMAPS[(BASEMAPS.indexOf(basemap()) + 1) % BASEMAPS.length]);
+    basemapBtn = b;
+    this.el = b;
+    applyBasemap();                        // Zustand und Titel sofort richtig, auch bei gemerktem Satellit
+    return b;
+  }
+  onRemove() { if (this.el) this.el.remove(); basemapBtn = null; }
+}
+if (HYBRID) map.addControl(new BasemapButton(), 'bottom-right');   // über dem Kipp-Schalter, beide Layouts gleich
+map.addControl(new TiltButton(), 'bottom-right');
+
+const tip = document.getElementById('tip');
+
+// Fahrzeug- und Haltemarken in den Karten-Container hängen. Als Geschwister von #map lagen sie
+// NEBEN der Karte, und MapLibre hört auf Gesten (Ziehen, Zoomen, Touch) nur innerhalb seines
+// Containers: ein Wischen oder Zoomen, das auf einem Punkt begann, kam dort nie an — genau in der
+// dichten Mitte der Karte war sie damit nicht bedienbar. MapLibre hängt seine eigenen Marker aus
+// demselben Grund dort ein; die Koordinaten aus map.project() passen unverändert, weil der
+// Container selbst nicht verschoben wird.
+{
+  const host = document.getElementById('markers');
+  const canvasBox = map.getCanvasContainer();
+  if (host && canvasBox && canvasBox.appendChild) canvasBox.appendChild(host);
+}
+
+// Stationsnamen kürzen: "Darmstadt-Eberstadt Frankenstein" -> "Eberstadt Frankenstein"
+const shortStop = n => String(n == null ? '' : n).replace(/^Darmstadt[- ]/, '');
+const lineEnds = l => l.ends.map(shortStop).join(' ↔ ');
+
+  // Telefon-Erkennung: GENAU die Abfrage des CSS (dort hängt die Schublade daran). Vorher stand hier
+  // eine eigene Formel — ein Gerät konnte damit im Schubladen-Layout sein, während das Skript glaubte,
+  // es sei Desktop, und das Panel blieb nach der Auswahl offen stehen.
+  const DRAWER_QUERY = '(max-width: 700px), (hover: none) and (pointer: coarse)';
+  const touchLayout = () => !!(window.matchMedia && window.matchMedia(DRAWER_QUERY).matches);
+  let hidePanelNow = null;                  // wird von der Panel-Logik unten gesetzt
+  // Der Stern neben der Linienwahl wird erst in der Favoritenlogik weiter unten gesetzt. selectLine
+  // steht eine Ebene darüber; rief es den Stern direkt auf, lief der Aufruf ins Leere (Uncaught
+  // ReferenceError bei jeder Linienwahl und jedem Sprachwechsel). Vorbelegt wie hidePanelNow.
+  let paintLineStar = () => {};             // wird von der Favoritenlogik unten überschrieben
+
+function selectLine(li) {
+  state.selLine = state.selLine === li ? null : li;
+  state.selAt = Date.now();        // Ruheuhr: 10 s nach der Auswahl kommen die Haltestellen zurück
+  // Eine Linienwahl ersetzt die Fahrzeugauswahl: sonst bleibt die Karte, die Verbindungslinie und
+  // der Zug der vorher angetippten Fahrt stehen, während die Linie hervorgehoben wird.
+  if (state.selLine !== null && window.DarmstadtLive && window.DarmstadtLive.clearVehicle) {
+    window.DarmstadtLive.clearVehicle();
+  }
+  document.querySelectorAll('.chip').forEach(c => c.classList.toggle('sel', +c.dataset.line === state.selLine));
+  const info = document.getElementById('selinfo');
+  window.DarmstadtLive.render(true);
+  if (state.selLine === null) { info.style.display = 'none'; paintLineStar(); return; }
+  const l = META.lines[state.selLine];
+  document.getElementById('selname').innerHTML = `<b>${esc(l.name)}</b> <span style="color:var(--muted)">${esc(lineEnds(l))}</span>`;
+  info.style.display = 'flex';
+  paintLineStar();
+  const chip = document.querySelector(`.chip[data-line="${state.selLine}"]`);
+  if (chip) { chip.closest('details').open = true; chip.scrollIntoView({ block: 'nearest' }); }
+  // Auf dem Telefon nimmt sich das Panel nach der Linienwahl weg: er will die Linie auf der Karte
+  // sehen, nicht die Liste. (Löschen der Auswahl lässt das Panel offen.)
+  if (touchLayout() && hidePanelNow) hidePanelNow();
+}
+
+// „Wo bin ich?" — auf Telefon und Rechner (Wunsch des Betreibers 2026-10-15). Ein Tipp fragt die Position
+// ab, zeichnet Punkt und Genauigkeitskreis und schwenkt dorthin; während der Verfolgung bleibt die
+// Position in der Mitte. Die Koordinaten werden nur gezeichnet und verlassen das Gerät nicht.
+const GEO = { watch: null, on: false };
+function geoNotice(text) {                 // kurze Meldung in der vorhandenen Leiste
+  const b = document.getElementById('banner');
+  if (!b) return;
+  b.textContent = text; b.hidden = false;
+  clearTimeout(geoNotice._t);
+  geoNotice._t = setTimeout(() => { b.hidden = true; }, 6000);
+}
+// Genauigkeitskreis als Polygon (Meter -> Grad), sonst wäre der Kreis bei jedem Zoom falsch groß.
+function geoCircle(lat, lon, acc) {
+  const pts = [], dLat = acc / 111320, dLon = acc / (111320 * Math.cos(lat * Math.PI / 180) || 1);
+  for (let a = 0; a < 360; a += 10) {
+    pts.push([lon + dLon * Math.cos(a * Math.PI / 180), lat + dLat * Math.sin(a * Math.PI / 180)]);
+  }
+  pts.push(pts[0]);
+  return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [pts] }, properties: {} };
+}
+function geoPaint(lat, lon, acc) {
+  const data = { type: 'FeatureCollection', features: [
+    geoCircle(lat, lon, Math.max(15, acc || 0)),
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: {} },
+  ] };
+  const src = map.getSource('me');
+  if (src) src.setData(data);
+  else {
+    map.addSource('me', { type: 'geojson', data });
+    map.addLayer({ id: 'me-acc', type: 'fill', source: 'me', filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: { 'fill-color': 'rgba(90,170,255,.18)', 'fill-outline-color': 'rgba(90,170,255,.55)' } });
+    map.addLayer({ id: 'me-dot', type: 'circle', source: 'me', filter: ['==', ['geometry-type'], 'Point'],
+      paint: { 'circle-radius': 5, 'circle-color': '#5aaaff', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
+  }
+  if (GEO.on) map.easeTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 15.5), duration: 600 });
+}
+function geoStop(b) {
+  if (GEO.watch !== null && navigator.geolocation) { try { navigator.geolocation.clearWatch(GEO.watch); } catch (_) { /* egal */ } }
+  GEO.watch = null; GEO.on = false;
+  if (b && b.setAttribute) b.setAttribute('aria-pressed', 'false');
+  ['me-acc', 'me-dot'].forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
+  if (map.getSource('me')) map.removeSource('me');
+}
+function geoStart(b) {
+  if (!navigator.geolocation) { geoNotice(window.I18N.t('geoUnsupported')); return; }
+  GEO.on = true;
+  if (b) b.setAttribute('aria-pressed', 'true');
+  geoNotice(window.I18N.t('geoSearching'));
+  const ok = p => geoPaint(p.coords.latitude, p.coords.longitude, p.coords.accuracy);
+  const bad = () => { if (!GEO.on) return; geoStop(b); geoNotice(window.I18N.t('geoDenied')); };
+  navigator.geolocation.getCurrentPosition(ok, bad, { enableHighAccuracy: true, timeout: 12000 });
+  if (GEO.watch === null) {
+    GEO.watch = navigator.geolocation.watchPosition(ok, bad, { enableHighAccuracy: true, maximumAge: 5000 });
+  }
+}
+class LocateButton {
+  onAdd(m) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'maplibregl-ctrl maplibregl-ctrl-group locate';
+    b.setAttribute('aria-pressed', 'false');
+    b.setAttribute('data-i18n-aria', 'geoTitle');
+    b.setAttribute('data-i18n-title', 'geoTitle');
+    b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="#333"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 3h-1.06A8 8 0 0 0 13 4.06V3h-2v1.06A8 8 0 0 0 4.06 11H3v2h1.06A8 8 0 0 0 11 19.94V21h2v-1.06A8 8 0 0 0 19.94 13H21v-2zm-9 6.5a6.5 6.5 0 1 1 0-13 6.5 6.5 0 0 1 0 13z"/></svg>';
+    b.onclick = () => (GEO.on ? geoStop(b) : geoStart(b));
+    this.el = b;
+    return b;
+  }
+  onRemove() { geoStop(this.el); this.el.remove(); }
+}
+// Auf Telefon UND Rechner (eine Bedienleiste, ein Codepfad) — nur, wenn der Browser es kann. Der
+// Genauigkeitskreis kommt aus der Angabe des Browsers; am Rechner ist sie oft grob (WLAN/IP).
+// Ortung: auf dem Telefon wie bisher, auf dem Rechner nur im Hybridbetrieb.
+if ((touchLayout() || HYBRID) && navigator.geolocation) map.addControl(new LocateButton(), 'bottom-right');
+// Eigene Geste beendet das Verfolgen, die Markierung bleibt stehen.
+map.on('dragstart', () => { if (GEO.on) geoStop(document.querySelector('.locate')); });
+
+// Linienleiste nach Verkehrsart/Betreiber gruppiert
+const GROUPS = [
+  { key: 'grpTram', open: true, modes: ['tram'], test: l => l.mode === 'tram' },
+  { key: 'grpS', open: true, modes: ['rail'], test: l => l.mode === 'rail' && l.name.startsWith('S') },
+  { key: 'grpRegional', modes: ['rail'], test: l => l.mode === 'rail' },
+  { key: 'grpBusHeag', modes: ['bus'], test: l => l.agency === 'HEAG' },
+  { key: 'grpBusDadina', modes: ['bus'], test: l => l.agency === 'DADINA' },
+  { key: 'grpBusRmv', modes: ['bus'], test: l => l.agency === 'RMV' },
+  { key: 'grpBusOther', modes: ['bus'], test: () => true },
+];
+// Punkte in Linienliste und Favoriten aktuell halten. Ein Sekundentakt genügt: der Fahrzeugstrom
+// kommt alle 10 s, und die Liste soll nur nicht minutenlang veralten.
+function updateLineDots() {
+  const st = (window.DarmstadtLive && window.DarmstadtLive.lineStatus)
+    ? window.DarmstadtLive.lineStatus() : {};
+  document.querySelectorAll('.chip[data-line]').forEach(c => {
+    const d = c.querySelector('.ldot');
+    if (!d) return;
+    const s = st[+c.dataset.line] || 'none';
+    d.dataset.status = s;
+    // Der Punkt erklärt sich selbst: sonst ist die Farbe nur für Sehende eine Aussage.
+    const label = window.I18N
+      ? window.I18N.t(s === 'gps' ? 'dotGps' : s === 'feed' ? 'dotFeed' : 'dotNone') : s;
+    d.setAttribute('aria-label', label);     // nur für Vorleser: kein Hover-Fenster im Panel
+  });
+}
+setInterval(updateLineDots, 1000);
+
+function buildLegend() {
+  const lg = document.getElementById('legend'), done = new Set();
+  const T = k => (window.I18N ? window.I18N.t(k) : k);
+  const keepScroll = lg.scrollTop;                     // Scrollposition beim Neuaufbau halten
+  lg.innerHTML = '';                                  // nötig beim Sprachwechsel
+  const byName = (a, b) => a.l.name.localeCompare(b.l.name, window.I18N ? window.I18N.lang : 'de', { numeric: true });
+  for (const g of GROUPS) {
+    const items = META.lines.map((l, i) => ({ l, i })).filter(x => !done.has(x.i) && g.test(x.l)).sort(byName);
+    if (!items.length) continue;
+    items.forEach(x => done.add(x.i));
+    const det = document.createElement('details'); det.open = !!g.open;
+    // Bewusst ohne Anzahl der Linien: der Betreiber will nur die Linien sehen
+    det.innerHTML = `<summary>${esc(T(g.key))}</summary><div class="chips"></div>`;
+    const box = det.querySelector('.chips');
+    for (const { l, i } of items) {
+      const c = document.createElement('span'); c.className = 'chip'; c.dataset.line = i;
+      const dot = document.createElement('i'); dot.className = 'ldot';   // Farbe erst, wenn sie bekannt ist
+      const nm = document.createElement('span'); nm.textContent = l.name;
+      c.appendChild(dot); c.appendChild(nm);
+      c.style.background = l.color; c.onclick = () => selectLine(i);
+      // Kein Hover-Fenster mehr: im linken Panel soll beim Überfahren nichts aufklappen (Wunsch des
+      // Betreibers 2026-10-15). Die Linienenden stehen in der Fahrzeugkarte.
+      box.appendChild(c);
+    }
+    lg.appendChild(det);
+  }
+  lg.scrollTop = keepScroll;                          // Position wiederherstellen
+  updateLineDots();                                   // nicht eine Sekunde lang falsch rot
+}
+
+// Kartenbedienelemente immer über der unteren Leiste halten
+function placeCtrls() {
+  const bar = document.getElementById('bar');
+  const bh = bar ? bar.offsetHeight : 0, off = bh + 24 + 'px';
+  document.documentElement.style.setProperty('--head-max', `min(calc(100vh - ${bh + 30}px), 92vh)`);
+  document.querySelectorAll('.maplibregl-ctrl-bottom-right, .maplibregl-ctrl-bottom-left').forEach(e => e.style.bottom = off);
+}
+addEventListener('resize', placeCtrls); placeCtrls();
+if (window.ResizeObserver) new ResizeObserver(placeCtrls).observe(document.getElementById('bar'));
+
+// Verkehrsart ein-/ausblenden
+document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
+  const m = c.dataset.mode; state.modes[m] = !state.modes[m];
+  c.setAttribute('aria-pressed', state.modes[m]);
+  document.querySelector(`.cnt[data-mode="${m}"]`).classList.toggle('off', !state.modes[m]);
+  window.DarmstadtLive.render(true);
+});
+
+(async () => {
+  // GitHub Pages liefert auch das HTML mit 10 Minuten Cache (nachgemessen: `cache-control: max-age=600`);
+  // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
+  // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
+  // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
+  const APP_V = '20261015-46';
+  try {
+    const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
+    if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {
+      sessionStorage.setItem('dlm-v', fresh);
+      const qs = new URLSearchParams(location.search);   // hybrid=1 darf nicht verloren gehen
+      qs.set('v', fresh);
+      location.replace(location.pathname + '?' + qs.toString());
+      return;
+    }
+  } catch (_) { /* Privatmodus: dann eben ohne Selbstheilung */ }
+  // Hybridbetrieb: Wortlaut umstellen, BEVOR die Übersetzung greift — sonst verspricht die Seite
+  // GPS, wo keins ist (oder umgekehrt). live.js steht vor diesem Block, das Kennzeichen ist da.
+  if (window.DarmstadtLive) window.DarmstadtLive.activateHybridCopy();
+  window.I18N.init();                       // Sprache zuerst: Vorgabe EN, Merker in localStorage
+  // meta.json liefert Linien, Farben und Endpunkte für die Linienleiste
+  META = await fetch('../data/meta.json').then(r => r.json());
+  buildLegend();
+  // Die Tramgleise legt live.js beim attach() unter die Pillen (eigene Bestandsdaten, kein Abruf).
+  document.getElementById('selclear').onclick = () => selectLine(state.selLine);
+  // Das Mausrad über den Bedienfeldern darf die Karte darunter nicht zoomen
+  for (const id of ['head', 'bar', 'popup']) {
+    const n = document.getElementById(id);
+    if (n) n.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
+  }
+  // Umschalter im Panel: Linien ODER Status — damit passen beide ohne Scrollbalken
+  function setPane(name) {
+    document.body.dataset.pane = (name === 'status' || name === 'favs') ? name : 'lines';
+    const bar = document.getElementById('panes');
+    if (bar) bar.querySelectorAll('button').forEach(b => {
+      const on = b.dataset.pane === document.body.dataset.pane;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+  }
+  const paneBar = document.getElementById('panes');
+  if (paneBar) {
+    setPane('lines');
+    paneBar.querySelectorAll('button').forEach(b => b.onclick = () => setPane(b.dataset.pane));
+  }
+
+  // ---------- Haltestellensuche ----------
+  // Gesucht wird in unserem eigenen Bestand (meta.json, damit sie auch ohne Netz sofort Treffer
+  // liefert) und zusätzlich in den Halten des aktuellen Kartenausschnitts: die kennen die Kennung,
+  // mit der live.js die Abfahrten holt.
+  const S = window.DarmstadtSearch;
+  function searchIndex() {
+    const out = (META.stations || []).map(s => ({ name: String(s[0]), lon: s[1], lat: s[2], modes: s[3] || [] }));
+    const live = (window.DarmstadtLive && window.DarmstadtLive.stops) ? window.DarmstadtLive.stops() : [];
+    for (const s of live) if (s && s.name) out.push({ name: s.name, lon: s.lon, lat: s.lat, stopId: s.stopId, modes: s.modes || [] });
+    return out;
+  }
+  // Sprung zum Halt: Kamera sofort dorthin. Auf dem Telefon nimmt sich das Panel dabei weg (sonst
+  // verdeckt es genau den Halt), auf dem Rechner bleibt es stehen.
+  function jumpToStation(s) {
+    if (!s || !window.DarmstadtLive) return;
+    window.DarmstadtLive.openStation({ name: s.name, lat: s.lat, lon: s.lon, stopId: s.stopId, modes: s.modes }, true);
+    if (touchLayout() && hidePanelNow) hidePanelNow();
+  }
+  const searchInput = document.getElementById('search');
+  const resultsList = document.getElementById('results');
+  function closeResults() {
+    if (resultsList) { resultsList.hidden = true; resultsList.innerHTML = ''; }
+  }
+  function runSearch() {
+    if (!searchInput || !resultsList || !S) return;
+    const q = searchInput.value.trim();
+    if (q.length < 2) { closeResults(); return; }          // ein Buchstabe trifft fast alles
+    const hits = S.matchStations(q, searchIndex(), 7);
+    resultsList.innerHTML = '';
+    if (!hits.length) { resultsList.hidden = true; return; }
+    for (const s of hits) {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'res'; b.textContent = s.name;
+      b.onclick = () => { searchInput.value = ''; closeResults(); setSearchOpen(false); jumpToStation(s); };
+      li.appendChild(b); resultsList.appendChild(li);
+    }
+    resultsList.hidden = false;
+  }
+  if (searchInput && resultsList) {
+    searchInput.addEventListener('input', runSearch);
+    searchInput.addEventListener('focus', runSearch);
+    searchInput.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { searchInput.value = ''; closeResults(); setSearchOpen(false); }
+      if (e.key === 'Enter') { const first = resultsList.querySelector('button.res'); if (first) first.click(); }
+    });
+  }
+  // Telefon: die Suche steckt hinter der Lupe. Tipp öffnet und setzt den Fokus; zu geht sie, wenn der
+  // Fokus den Kasten verlässt, bei Escape, nach einem Treffer und beim Tipp auf die Karte. Am Rechner
+  // ist das Feld immer offen (CSS), die Klasse ändert dort nichts.
+  const searchBar = document.getElementById('searchbar');
+  const searchOpen = document.getElementById('searchopen');
+  function setSearchOpen(open) {
+    if (!searchBar) return;
+    searchBar.classList.toggle('open', !!open);
+    if (searchOpen) searchOpen.setAttribute('aria-expanded', String(!!open));
+    if (open && searchInput) searchInput.focus();
+  }
+  if (searchBar && searchOpen) {
+    searchOpen.onclick = () => setSearchOpen(!searchBar.classList.contains('open'));
+    // Erst nach einem Moment prüfen: ein Tipp auf einen Treffer nimmt dem Feld den Fokus, bevor sein
+    // Klick ankommt (Safari fokussiert Knöpfe nicht) — sofort zuklappen ließe den Klick ins Leere gehen.
+    searchBar.addEventListener('focusout', () => setTimeout(() => {
+      const a = document.activeElement;
+      if (!(a && searchBar.contains(a))) setSearchOpen(false);
+    }, 150));
+    map.on('click', () => setSearchOpen(false));
+  }
+
+  // ---------- Favoriten ----------
+  // Nur im Browser des Nutzers gespeichert (localStorage): die Seite ist statisch, es gibt keinen
+  // Server, der ein Cookie je Anfrage bekäme. Gespeichert werden Haltestellen (Name + Koordinaten)
+  // und Linien (Index in META.lines).
+  let favs = S ? S.load() : { stations: [], lines: [] };
+  const favApi = {
+    has: s => !!S && S.hasStation(favs, s) >= 0,
+    toggle: s => { if (!S) return; favs = S.toggleStation(favs, s); S.save(favs); renderFavs(); paintLineStar(); },
+  };
+  const favT = k => (window.I18N ? window.I18N.t(k) : k);
+  function renderFavs() {
+    const list = document.getElementById('favstations'), box = document.getElementById('favlines');
+    if (list) {
+      list.innerHTML = '';
+      for (const s of favs.stations) {
+        const li = document.createElement('li');
+        const go = document.createElement('button');
+        go.type = 'button'; go.className = 'fav-go'; go.textContent = s.name;
+        go.onclick = () => jumpToStation(s);
+        const x = document.createElement('button');
+        x.type = 'button'; x.className = 'fav-x'; x.textContent = '✕';
+        x.title = favT('favRemove'); x.setAttribute('aria-label', favT('favRemove'));
+        x.onclick = () => favApi.toggle(s);
+        li.appendChild(go); li.appendChild(x); list.appendChild(li);
+      }
+    }
+    if (box) {
+      box.innerHTML = '';
+      for (const i of favs.lines) {
+        const l = META.lines[i];
+        if (!l) continue;
+        const c = document.createElement('span');
+        c.className = 'chip favchip'; c.style.background = l.color; c.dataset.line = i;
+        const fdot = document.createElement('i'); fdot.className = 'ldot';   // s. o.: erst neutral
+        const fnm = document.createElement('span'); fnm.textContent = l.name;
+        c.appendChild(fdot); c.appendChild(fnm);
+        c.setAttribute('aria-label', l.name + ' — ' + lineEnds(l));   // unsichtbar, kein Hover-Fenster
+        c.onclick = () => selectLine(i);                    // Telefon: Panel nimmt sich dabei weg
+        const x = document.createElement('button');
+        x.type = 'button'; x.className = 'fav-x'; x.textContent = '✕';
+        x.title = favT('favRemove'); x.setAttribute('aria-label', favT('favRemove'));
+        x.onclick = e => { e.stopPropagation(); if (S) { favs = S.toggleLine(favs, i); S.save(favs); renderFavs(); paintLineStar(); } };
+        c.appendChild(x); box.appendChild(c);
+      }
+    }
+    const empty = document.getElementById('favempty');
+    if (empty) empty.hidden = !!(favs.stations.length || favs.lines.length);
+  }
+  paintLineStar = function paintLineStar() {
+    const b = document.getElementById('selfav');
+    if (!b) return;
+    const on = state.selLine !== null && !!S && S.hasLine(favs, state.selLine) >= 0;
+    b.textContent = on ? '★' : '☆';
+    b.classList.toggle('on', on);
+    b.title = favT(on ? 'favRemove' : 'favAdd');
+    b.setAttribute('aria-label', favT(on ? 'favRemove' : 'favAdd'));
+  };
+  const selfav = document.getElementById('selfav');
+  if (selfav) selfav.onclick = () => {
+    if (state.selLine === null || !S) return;
+    favs = S.toggleLine(favs, state.selLine); S.save(favs); renderFavs(); paintLineStar();
+  };
+  renderFavs();
+  paintLineStar();
+  // Telefon: das Panel ist eine Schublade — Tippen auf die Karte schließt sie, der Schalter oben links
+  // holt sie zurück bzw. schließt sie. Beschriftung und Symbol wechseln mit dem Zustand.
+  hidePanelNow = () => setPanel(false);
+  function setPanel(open) {
+    document.body.classList.toggle('panel-closed', !open);
+    const t = document.getElementById('paneltoggle');
+    if (!t) return;
+    t.setAttribute('aria-expanded', String(!!open));
+    const lbl = t.querySelector('[data-i18n]');
+    const ico = t.querySelector('span[aria-hidden]');
+    if (ico) ico.textContent = open ? '✕' : '☰';
+    if (lbl) {
+      lbl.dataset.i18n = open ? 'closePanel' : 'openPanel';
+      lbl.textContent = window.I18N.t(open ? 'closePanel' : 'openPanel');
+    }
+  }
+  const panelToggle = document.getElementById('paneltoggle');
+  const panelClose = document.getElementById('panelclose');
+  if (panelToggle || panelClose) {
+    if (panelToggle) panelToggle.onclick = () => setPanel(document.body.classList.contains('panel-closed'));
+    if (panelClose) panelClose.onclick = () => setPanel(false);
+    setPanel(true);                        // Start: offen, damit die Linien sofort wählbar sind
+  }
+  // Sicherheitsnetz: eine Wahl INNERHALB des Panels (Linie, Favorit) räumt die Schublade weg — auch
+  // wenn der Tipp die Karte nicht erreicht hat. Ausdrücklich NICHT bei Gruppen-Köpfen (<summary>):
+  // eine Liste auf- oder zuzuklappen ist kein Auswählen, und das Panel verschwand dabei (Wunsch 2026-10-15).
+  const headEl = document.getElementById('head');
+  if (headEl) headEl.addEventListener('click', e => {
+    if (!touchLayout() || !hidePanelNow) return;
+    if (e.target.closest('.chip, .fav-go')) hidePanelNow();
+  });
+  document.querySelectorAll('#lang button').forEach(b => b.onclick = () => window.I18N.set(b.dataset.lang));
+
+  // Hinweis bei JEDEM Besuch, Einführung nur beim ersten Mal (Wunsch des Betreibers 2026-10-15).
+  // Die Klasse `.on` setzt erst dieses Skript: bricht JavaScript, bleibt die Seite bedienbar.
+  (function welcome() {
+    const box = document.getElementById('welcome');
+    if (!box) return;
+    const el = id => document.getElementById(id);
+    const title = el('wtitle'), body = el('wbody'), nav = el('wnav'), langBox = el('wlang');
+    const T = k => window.I18N.t(k);
+    // Der Hinweistext hängt am Betrieb: auf der Hauptseite die zwei Punktarten (Betreiber-GPS als
+    // Standard), in der schlanken Fassung (?hybrid=0) der Hinweis, dass dort nichts GPS ist.
+    // Wichtig: dieses Skript setzt den Text selbst (T(...)), der Attributtausch aus
+    // activateHybridCopy() allein erreicht den Dialog also nicht.
+    const HYB = !!(window.DarmstadtLive && window.DarmstadtLive.HYBRID_ON);
+    const DOC_BODY = HYB ? 'welcomeBodyOperator' : 'welcomeBody';
+    // Zwei Phasen, keine Einführung: erst die Sprache fragen (nur wenn noch nie gewählt), dann den
+    // Hinweis. Der Hinweis erscheint weiterhin bei JEDEM Besuch.
+    let phase = window.I18N.stored() ? 'doc' : 'lang';
+    const syncLangBtns = () => {
+      langBox.querySelectorAll('button[data-lang]').forEach(b => {
+        const on = b.dataset.lang === window.I18N.lang;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+    };
+    const paint = () => {
+      const isLang = phase === 'lang';
+      langBox.hidden = !isLang;
+      body.hidden = isLang;                      // in der Sprachphase steht nur die Frage da
+      nav.hidden = isLang;                       // gewählt wird durch Antippen von EN oder DE
+      title.textContent = T(isLang ? 'chooseLang' : 'welcomeTitle');
+      if (!isLang) body.textContent = T(DOC_BODY);
+      nav.textContent = T('welcomeOk');
+      syncLangBtns();
+    };
+    const close = () => {
+      box.classList.remove('on');
+      setTimeout(() => { if (box.parentNode) box.parentNode.removeChild(box); }, 450);
+    };
+    window.addEventListener('langchange', () => paint());   // offener Dialog wechselt mit
+    langBox.querySelectorAll('button[data-lang]').forEach(b => b.onclick = () => {
+      window.I18N.set(b.dataset.lang);         // merkt die Wahl; langchange zeichnet neu
+      phase = 'doc';
+      paint();
+    });
+    nav.onclick = close;
+    paint();
+    requestAnimationFrame(() => box.classList.add('on'));
+  })();
+  // ---------- Einwilligung für Google Analytics ----------
+  // Absicht: nichts an Google senden, solange nicht ausdrücklich zugestimmt wurde, und nur EINMAL fragen —
+  // die Wahl (auch die Ablehnung) wird gespeichert, danach erscheint die Karte nie wieder.
+  (function consent() {
+    const KEY = 'darmstadt-live-consent';
+    const box = document.getElementById('consent');
+    let saved = null;
+    try { saved = localStorage.getItem(KEY); } catch (_) { /* Privatmodus */ }
+    const loadGA = () => {
+      if (loadGA.done) return;
+      loadGA.done = true;
+      const s = document.createElement('script');
+      s.async = true;
+      s.src = 'https://www.googletagmanager.com/gtag/js?id=G-GTEHNPPMW6';
+      document.head.appendChild(s);
+      window.dataLayer = window.dataLayer || [];
+      window.gtag = function gtag() { window.dataLayer.push(arguments); };
+      window.gtag('js', new Date());
+      window.gtag('config', 'G-GTEHNPPMW6');
+    };
+    if (saved === 'granted') { loadGA(); return; }     // zugestimmt: nie wieder fragen
+    if (saved === 'denied') return;                    // abgelehnt: auch nicht wieder fragen
+    if (!box) return;
+    const choose = value => {
+      try { localStorage.setItem(KEY, value); } catch (_) { /* egal */ }
+      box.classList.remove('on');
+      setTimeout(() => { if (box.parentNode) box.parentNode.removeChild(box); }, 300);
+      if (value === 'granted') loadGA();
+    };
+    document.getElementById('consent-yes').onclick = () => choose('granted');
+    document.getElementById('consent-no').onclick = () => choose('denied');
+    // Nicht mit dem Hinweis kollidieren: erst zeigen, wenn der Startdialog geschlossen ist. Die Karte
+    // sitzt über der unteren Leiste (deren Höhe ändert sich mit dem Layout).
+    const place = () => {
+      const bar = document.getElementById('bar');
+      box.style.bottom = ((bar ? bar.offsetHeight : 0) + 16) + 'px';
+    };
+    const show = () => { place(); box.classList.add('on'); };
+    window.addEventListener('resize', () => { if (box.classList.contains('on')) place(); });
+    const wl = document.getElementById('welcome');
+    // MutationObserver ausdrücklich prüfen: sehr alte Browser und die DOM-Attrappe im Teststand kennen
+    // ihn nicht — dort soll die Karte einfach sofort erscheinen statt das Skript zu sprengen.
+    if (wl && typeof MutationObserver === 'function') {
+      const mo = new MutationObserver(() => {
+        if (!wl.classList.contains('on')) { mo.disconnect(); show(); }
+      });
+      mo.observe(wl, { attributes: true, attributeFilter: ['class'] });
+      setTimeout(() => { if (!wl.classList.contains('on')) { mo.disconnect(); show(); } }, 1200);
+    } else show();
+  })();
+
+  // Quellenangabe: zugeklappt, bis man den ⓘ antippt; Tipp daneben schließt sie wieder
+  const attribBtn = document.getElementById('attribbtn');
+  const attribBox = document.getElementById('attribbox');
+  if (attribBtn && attribBox) {
+    const setAttribOpen = open => {
+      attribBox.hidden = !open;
+      attribBtn.setAttribute('aria-expanded', String(!!open));
+    };
+    attribBtn.onclick = e => { e.stopPropagation(); setAttribOpen(attribBox.hidden); };
+    attribBox.onclick = e => e.stopPropagation();
+    document.addEventListener('click', () => { if (!attribBox.hidden) setAttribOpen(false); });
+    setAttribOpen(false);
+  }
+  window.addEventListener('langchange', () => {
+    buildLegend();
+    renderFavs();
+    paintLineStar();
+    if (state.selLine !== null) { const keep = state.selLine; state.selLine = null; selectLine(keep); }
+    window.DarmstadtLive.setLang();
+  });
+  window.DarmstadtLive.attach({ map, overlay, deck, META, state, hex, shortStop, MODE_RGB, selectLine,
+    fav: favApi,                                                  // Stern auf der Haltestellenkarte
+    hidePanel: () => { if (touchLayout()) setPanel(false); } });   // Telefon: Karte/Linienwahl schiebt das Panel weg
+  document.getElementById('loading').remove();
+  const start = () => { document.body.classList.add('live'); window.DarmstadtLive.setOn(true); };
+  map.on('load', start);
+  if (map.loaded()) start();
+  // Marken folgen der Karte im Bildtakt (die Schleife unten setzt sie jeden Frame neu). Die zusätzlichen
+  // Listener auf move/zoom/rotate/pitch sind entfernt: sie taten dasselbe ein zweites Mal pro Frame.
+  (function loop() {
+    window.DarmstadtLive.tick();
+    window.DarmstadtLive.syncMarkers();
+    requestAnimationFrame(loop);
+  })();
+})();
+</script>
+</body>
+</html>

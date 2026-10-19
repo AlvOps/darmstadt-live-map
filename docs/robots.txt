@@ -5,3 +5,7 @@ User-agent: *
 Allow: /
 
 Sitemap: https://darmstadtmap.com/sitemap.xml
+
+# Testseite (nicht indexieren)
+User-agent: *
+Disallow: /pcanvas/
