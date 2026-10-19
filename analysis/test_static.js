@@ -425,10 +425,12 @@ function run(check, log = console.log) {
     /\.mk\[data-mode="bus"\] \{ background: var\(--bus\); \}/.test(css) &&
     /\.mk\[data-mode="rail"\] \{ background: var\(--rail\); \}/.test(css) &&
     /el\.dataset\.mode = v\.mode \|\| 'bus'/.test(liveSrc));
-  check('markers are repositioned while the map moves (they do not float)',
+  // Eine Stelle genügt: die rAF-Schleife setzt die Marken jeden Frame neu, auch während einer Geste
+  // (die Listener auf move/zoom/rotate/pitch taten dasselbe ein zweites Mal pro Frame).
+  check('markers are repositioned every frame while the map moves (they do not float)',
     /function syncMarkerPositions\(\)/.test(liveSrc) &&
     /syncMarkers: \(\) => syncMarkerPositions\(\)/.test(liveSrc) &&
-    /\['move', 'zoom', 'rotate', 'pitch'\]\.forEach\(ev => map\.on\(ev, \(\) => window\.DarmstadtLive\.syncMarkers\(\)\)\)/.test(html) &&
+    !/\['move', 'zoom', 'rotate', 'pitch'\]/.test(html) &&
     /window\.DarmstadtLive\.syncMarkers\(\);\n    requestAnimationFrame\(loop\);/.test(html));
   check('stop marker is a small, properly centred circle (yellow, green letter, 13px)',
     /\.stopmk \{[\s\S]*box-sizing: border-box; padding: 0; margin: 0;[\s\S]*width: 13px; height: 13px; border-radius: 50%;[\s\S]*align-items: center; justify-content: center;[\s\S]*background: var\(--accent\); color: #1d7a3d;/.test(css));
@@ -580,9 +582,12 @@ function run(check, log = console.log) {
   check('the search input lives next to the language toggle, not in the panel',
     /<div id="searchbar" role="search">[\s\S]*id="search"[\s\S]*<\/div>\s*<div id="lang"/.test(html) &&
     !/<div id="head"[\s\S]*id="search"[\s\S]*<div id="bar"/.test(html));
-  check('the search box is transparent and sits beside the language switch',
+  // Transparent bleibt transparent, aber ohne backdrop-filter (teuer beim Bewegen, kaum sichtbar):
+  // deshalb jetzt deckender statt unscharf.
+  check('the search box is translucent and sits beside the language switch',
     prop(rule('#searchbar'), 'background') === 'transparent' && /right: 118px/.test(rule('#searchbar') || '') &&
-    /rgba\(16,19,26,\.28\)/.test(prop(rule('#search'), 'background') || '') && /blur/.test(prop(rule('#search'), 'backdrop-filter') || ''));
+    /rgba\(16,19,26,\.\d+\)/.test(prop(rule('#search'), 'background') || '') &&
+    !/blur/.test(prop(rule('#search'), 'backdrop-filter') || ''));
   check('desktop hides the magnifier, phones collapse the search behind it',
     prop(rule('#searchopen'), 'display') === 'none' &&
     prop(rule('#searchopen', mob), 'display') === 'inline-flex' && /min-height: 44px/.test(rule('#searchopen', mob) || '') &&
