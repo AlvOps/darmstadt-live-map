@@ -60,7 +60,8 @@ function run(check, log = console.log) {
 
   // phones
   const mob = media('max-width: 700px');
-  check('mobile: popup is a bottom sheet above the measured bar (--bar-h)', /bottom:\s*calc\(var\(--bar-h/.test(rule('#popup', mob) || ''));
+  check('mobile: popup is a bottom sheet that clears the credits pill',
+    /bottom:\s*calc\(48px \+ env\(safe-area-inset-bottom\)\)/.test(rule('#popup', mob) || ''));
   check('mobile: popup uses safe-area inset', /safe-area-inset-bottom/.test(rule('#popup', mob) || ''));
   // Wunsch des Betreibers: die Telefonkarte zeigt — wie die Karte am Rechner — genau DREI Halte,
   // alles Weitere scrollt, und der Balken bleibt unsichtbar. Die Zeilen sind hier 44 px hoch.
@@ -74,7 +75,13 @@ function run(check, log = console.log) {
   check('mobile: mode toggles >=40px', /min-height:\s*4\dpx/.test(rule('.tog', mob) || ''));
   check('mobile: hover tooltip suppressed', /display:\s*none/.test(rule('#tip', mob) || ''));
   check('viewport-fit=cover for safe areas', /viewport-fit=cover/.test(html));
-  check('index.html measures the bar into --bar-h', /setProperty\('--bar-h'/.test(html));
+  // Uhr und Lizenzen sitzen als kleine Ecke unten links (Wunsch 2026-10-19); der Verspätungsbalken
+  // und der Tipp sind weg. Die Uhr braucht tabellarische Ziffern, sonst springt sie beim Minutenwechsel.
+  check('the bottom corner holds the clock and the credits ⓘ - but no histogram any more',
+    /<span id="clock"/.test(html) && /id="attribbtn"/.test(html) && /id="attribbox"/.test(html) &&
+    !/id="timeline"/.test(html) && !/id="tl"/.test(html) && !/paintHistogram/.test(html) &&
+    /#clock \{[^}]*font-variant-numeric: tabular-nums/.test(css) &&
+    /id="clock"[^>]*aria-hidden="true"/.test(html));
 
   // scrollbars
   check('Firefox: thin scrollbars with themed colour', /scrollbar-width:\s*thin/.test(css) && /scrollbar-color:\s*var\(--scroll-thumb\)\s+transparent/.test(css));
@@ -161,7 +168,10 @@ function run(check, log = console.log) {
   check(`phone line chips are thumb-sized (${chipMob}px >= 40px)`, chipMob >= 40);
   const sumMob = parseFloat((prop(rule('#legend summary', mob), 'min-height') || '0').replace('px', ''));
   check(`phone group headers are thumb-sized (${sumMob}px >= 40px)`, sumMob >= 40);
-  check('phone panel is height-limited so the map stays visible', /#head \{[^}]*max-height:\s*6\dvh/.test(mob));
+  // Der Betreiber wollte das Panel noch einmal ~15 % kleiner; geprüft wird die Absicht (die Karte
+  // bleibt sichtbar), nicht die alte Zahl: höchstens 60vh, mindestens ein Drittel des Schirms.
+  check('phone panel is height-limited so the map stays visible (35-60vh)',
+    /#head \{[^}]*max-height:\s*[3-6]\dvh/.test(mob));
   const popupW = parseFloat((rule('#popup').match(/width:\s*([\d.]+)px/) || [])[1] || '0');
   check(`vehicle card is wide enough for line + destination + time (${popupW}px >= 280px)`, popupW >= 280);
   check('departure/stop clock time has its own prominent style', /\.pop-stops \.st-clock \{/.test(css));

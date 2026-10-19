@@ -69,7 +69,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261015-34';
+  const VERSION = '20261015-35';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -841,9 +841,8 @@
     if (force || Date.now() - lastPaint > 1000) {     // Statistik nur ~1x je Sekunde neu zeichnen
       lastPaint = Date.now();
       paintStats(cur);
-      paintHistogram(cur);
       updateStat();
-      const cl = document.getElementById('clock');    // im Live-Modus zeigt die Uhr die echte Uhrzeit
+      const cl = document.getElementById('clock');    // Ecke unten links: echte Uhrzeit im Live-Betrieb
       if (cl) cl.textContent = new Date().toTimeString().slice(0, 5);
     }
   }
@@ -1676,41 +1675,6 @@
     }
   }
 
-  // Verspätungsverteilung auf der Zeitleisten-Canvas (Echtzeit-Modus)
-  function paintHistogram(cur) {
-    const cv = document.getElementById('tl');
-    if (!cv || !ctx) return;
-    const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
-    cv.width = w * dpr; cv.height = h * dpr;
-    const c = cv.getContext('2d');
-    c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    c.clearRect(0, 0, w, h);
-    const vis = cur.filter(x => ctx.state.modes[x.v.mode] && x.v.delayMin !== null);
-    if (!vis.length) {
-      c.fillStyle = '#8a90a0'; c.font = '11px system-ui';
-      c.fillText(T('noData'), 4, 24);
-      return;
-    }
-    const BIN = 2, bins = new Map();
-    for (const x of vis) {
-      const k = Math.max(-6, Math.min(20, Math.round(x.v.delayMin / BIN) * BIN));
-      bins.set(k, (bins.get(k) || 0) + 1);
-    }
-    const keys = Array.from(bins.keys()).sort((a, b) => a - b);
-    const max = Math.max(...bins.values());
-    const bw = w / keys.length, top = 14, H = h - top;
-    keys.forEach((k, i) => {
-      const bh = bins.get(k) / max * H;
-      c.fillStyle = k >= 5 ? 'rgba(255,90,80,.75)' : k >= 1 ? 'rgba(255,209,102,.75)' : k <= -1 ? 'rgba(120,220,160,.7)' : 'rgba(232,234,240,.55)';
-      c.fillRect(i * bw + 1, h - bh, Math.max(1, bw - 2), bh);
-      if (keys.length <= 14) {
-        c.fillStyle = '#8a90a0'; c.font = '10px system-ui';
-        c.fillText(k > 0 ? '+' + k : String(k), i * bw + 2, 10);
-      }
-    });
-    c.fillStyle = '#8a90a0'; c.font = '10px system-ui';
-    c.fillText(T('delayHistogram'), Math.max(4, w - 260), 10);
-  }
 
   // Frischezustand der Daten: frisch / veraltet / überholt. Er steuert das Badge und die Statuszeile
   // und ist die einzige Stelle, an der "Echtzeit" ehrlich werden kann. Reine Rechnung (testbar).

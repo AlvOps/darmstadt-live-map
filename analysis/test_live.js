@@ -163,7 +163,6 @@ sandbox.window.DarmstadtLive.attach({
   console.log('  #n-tram/#n-bus/#n-rail:', el('n-tram').textContent, '/', el('n-bus').textContent, '/', el('n-rail').textContent);
   console.log('  #livestat:', el('livestat').innerHTML.replace(/<[^>]+>/g, ''));
   console.log('  #livestat2:', el('livestat2').innerHTML.replace(/<[^>]+>/g, ''));
-  console.log('  #clock:', el('clock').textContent);
 
   console.log('\n=== Beispiele ===');
   for (const d of heads.data.slice(0, 6)) {

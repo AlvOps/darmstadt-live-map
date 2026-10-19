@@ -144,14 +144,16 @@ which is why a tracked tram follows the rails instead of cutting across a buildi
   is **no sticky follow** — a tap centres the vehicle once, **above the bottom sheet** so the bus you
   picked is actually visible, and the map then belongs to you. Picking a line swings the camera to
   the vehicles of that line.
-- **Delay histogram.** The bar under the map shows the live clock and the current spread of delays
-  across the vehicles in view (`#tl`, drawn by `live.js`).
 - **EN/DE toggle** in the top-right corner. **German is the default** — it is a Darmstadt map, and the
   first visit asks before anything else is shown; English comes after an explicit choice. The choice is
   remembered (`localStorage`). Everything switches — panels, legend, tooltips, popup, banner, histogram
   caption, `aria-label`s, document title and the map attribution.
   `analysis/test_i18n.js` fails if a key is missing in one language or if markup/JS contains
   hardcoded human-readable text.
+- **The corner.** Bottom left: a small pill with the live clock (tabular figures, so it does not jitter
+  between minutes) and the ⓘ that opens the source and licence list — BMVI/DELFI (CC BY-SA 4.0),
+  OpenStreetMap (ODbL), CARTO, Esri for the satellite layer, and HEAG mobilo/IVANTO for the operator
+  positions. Deliberately not a bar: no delay histogram, no hint line, nothing that eats map.
 - **Phone-first UI.** Touch is detected by **pointer**, not just width — a landscape phone is wider
   than 700 px and used to miss the drawer entirely. The panel is a **drawer** with a handle that
   always sits in the same place (top-left, directly above the panel) and says what it does:
