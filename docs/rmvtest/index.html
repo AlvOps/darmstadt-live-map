@@ -1474,6 +1474,9 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
       let tries = 0;
       const timer = setInterval(() => {
         tries += 1;
+        // Testseite ohne Startschleuse: Sprache/Disclaimer ueberspringen, damit nur die Karte zaehlt.
+        const gate = document.getElementById('wnav');
+        if (gate && gate.offsetParent !== null) { gate.click(); }
         const L = window.DarmstadtLive;
         if (L && typeof L.initRmvBar === 'function') {
           L.initRmvBar().catch(() => {});
