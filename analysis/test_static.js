@@ -432,7 +432,7 @@ function run(check, log = console.log) {
     /syncMarkers: \(\) => syncMarkerPositions\(\)/.test(liveSrc) &&
     !/\['move', 'zoom', 'rotate', 'pitch'\]/.test(html) &&
     /window\.DarmstadtLive\.tick\(\);/.test(html) &&
-    /if \(!NO_LOOP \|\| performance\.now\(\) - slowAt > 2000\) \{[\s\S]{0,160}syncMarkers\(\);/.test(html));
+    /if \(!NO_LOOP \|\| Date\.now\(\) - slowAt > 2000\) \{[\s\S]{0,160}syncMarkers\(\);/.test(html));
   check('stop marker is a small, properly centred circle (yellow, green letter, 13px)',
     /\.stopmk \{[\s\S]*box-sizing: border-box; padding: 0; margin: 0;[\s\S]*width: 13px; height: 13px; border-radius: 50%;[\s\S]*align-items: center; justify-content: center;[\s\S]*background: var\(--accent\); color: #1d7a3d;/.test(css));
   // Die Linie einer Fahrt folgt den Straßen: echte Geometrie (legGeometry) vor Luftlinie.

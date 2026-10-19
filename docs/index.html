@@ -1414,8 +1414,8 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // aber unsere Arbeit pro Frame fällt weg — damit lässt sich messen, ob die Schleife der Bremser ist.
   let slowAt = 0;
   (function loop() {
-    if (!NO_LOOP || performance.now() - slowAt > 2000) {
-      slowAt = performance.now();
+    if (!NO_LOOP || Date.now() - slowAt > 2000) {
+      slowAt = Date.now();
       window.DarmstadtLive.tick();
       window.DarmstadtLive.syncMarkers();
     }
