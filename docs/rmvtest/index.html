@@ -1475,10 +1475,11 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
       const timer = setInterval(() => {
         tries += 1;
         // Testseite ohne Startschleuse: Sprache/Disclaimer ueberspringen, damit nur die Karte zaehlt.
+        const shown = el => !!el && el.getBoundingClientRect().width > 0;   // offsetParent ist bei fixed null
         const lang = document.querySelector('#wlang button[data-lang="de"]');
-        if (lang && lang.offsetParent !== null) { lang.click(); }
+        if (shown(lang)) { lang.click(); }
         const gate = document.getElementById('wnav');
-        if (gate && gate.offsetParent !== null) { gate.click(); }
+        if (shown(gate)) { gate.click(); }
         const L = window.DarmstadtLive;
         if (L && typeof L.initRmvBar === 'function') {
           L.initRmvBar().catch(() => {});
