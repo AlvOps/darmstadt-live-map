@@ -55,17 +55,24 @@ restarts the quiet timer (`state.selAt`, shared by `index.html` and `live.js`), 
 lost just because the map moved. Picking a **line** replaces a vehicle selection: the card, the
 connector and the drawn run disappear before the line is highlighted.
 
-In realtime mode positions are **interpolated locally** between polls, so a 30 s poll interval
-still yields smooth movement.
+Open-feed positions are **interpolated locally** between polls (30 s), so movement stays smooth without
+extra requests. Operator vehicles are different: their report says how old it is (roughly every 20 s), and
+the marker replays the **encoded street path** between reports instead of gliding on a straight chord —
+which is why a tracked tram follows the rails instead of cutting across a building.
 
 ## Features
 
-- **The night map is always the first thing you see.** The dark vector basemap is the start state on
-  every load, and a previously chosen view is deliberately **not** restored (the stored preference is
-  discarded). The toggle — hybrid build only — cycles normal → satellite → light cartographic OSM and
-  works within the session. Tram tracks are drawn from our own `docs/data/meta.json` (`tram_tracks`,
-  399 polylines) as a thin layer under the markers, because the dark basemap carries no transit layer
-  at all, and the map zooms to z17 so a marker and the street beneath it can be told apart.
+- **The cartographic map is the start state.** Every load begins on the light OSM street map; a previously
+  chosen view is deliberately **not** restored (the stored preference is discarded). The toggle cycles
+  cartographic → standard (dark vector) → satellite and works within the session. Tram tracks are drawn
+  from our own `docs/data/meta.json` (`tram_tracks`, 399 polylines) as a thin layer under the markers —
+  OSM tiles carry no transit layer — and the map zooms to z17 so a marker and the street beneath it can be
+  told apart.
+- **A short start, in your language.** On the first visit the page asks *Choose language* (the same
+  EN | DE toggle as the header, only bigger to hit) and then shows the guide: what the two kinds of dots
+  are, what the times are, that this is a personal project and not an official app. The guide returns on
+  every visit; the language question only until a language has been chosen once. The four-step tour that
+  used to follow the guide is currently switched off — its strings stay in `docs/i18n.js` for later.
 - **Stop search.** The field beside the pane switcher searches the stops we ship plus the live stops
   of the current view: umlaut- and case-folded, ranked name-start > word-start > mid-name, duplicates
   dropped, capped at 7. Picking a hit jumps the camera to that stop instantly and opens its card (the
@@ -74,10 +81,11 @@ still yields smooth movement.
 - **Favourites.** A third pane holds saved stops (star on a stop card) and saved lines (star in the
   selected-line row), both removable, both one tap away again. Stored in `localStorage` — this is a
   static page with no server that could receive a cookie (`docs/search.js`, key `darmstadt-live-favs`).
-- **Proof of provenance, twice.** Every vehicle card and the credits box (`ⓘ`) state in bold and in the
-  accent colour, in both languages, that positions are **derived from realtime stop prognoses** — the
-  open feed carries no GPS. The credits are where a reader checks the source, so the note lives there
-  too, not only in the card.
+- **Proof of provenance, twice.** Every vehicle card and the credits box (`ⓘ`) say which kind of position
+  is shown, in bold, in the accent colour and in both languages: the operator's own **GPS fix** on the
+  lines HEAG reports (with the age of that report), or a position **derived from realtime stop prognoses**
+  where only the open feed speaks — that feed carries no GPS at all. The credits are where a reader checks
+  the source, so the note lives there too, not only in the card.
 - **Labelled vehicle markers, always on.** Every vehicle is a rounded pill carrying a mode pictogram
   (bus / tram / rail as inline SVG) and its line number in dark text. The pill takes the **colour of
   its mode** — tram red, bus turquoise, rail purple, the same colours as the switches in the panel —
@@ -94,11 +102,16 @@ still yields smooth movement.
   trip in order — the stretches already covered included — using the trip's own **street geometry**
   (`legGeometry`, decoded at 1e7), and removes it again when the card closes. Straight stop-to-stop
   segments remain only as a fallback for trips that carry no geometry.
-- **One source, honestly labelled.** The map draws the open feed only. An operator feed with real
-  coordinates exists (HEAG mobilo's app backend) but merging it produced duplicate markers for one
-  vehicle, so it was removed again — the measurements and the clean rule for a retry are recorded in
-  [`HEAG-POSITIONS.md`](HEAG-POSITIONS.md). Every vehicle card still states, in bold and in the accent
-  colour, that the position is derived from realtime stop prognoses.
+- **Two sources, one per line — and the panel says which.** The page merges HEAG's own vehicle reports
+  (IVANTO SRS) with the open feed: on the lines the operator reports, the marker is the operator's GPS fix;
+  every other line stays derived from stop prognoses. Each **line chip** in the panel carries a dot —
+  **green** = this line has an operator GPS vehicle, **blue** = it runs from prognoses only, **red** = it is
+  not running at all right now — with a matching legend beside the header's realtime badge. Red is a
+  network-wide statement: it comes from a separate, slow city-wide poll (one request per minute), not from
+  whatever happens to be visible in the current view. Its limits are properties of the data: the snapshot
+  can be a minute old, a line running without realtime data still shows red, and "city-wide" is the
+  Darmstadt + Umland box. The feed measurements and the merge rule are in
+  [`HEAG-POSITIONS.md`](HEAG-POSITIONS.md).
 - **Big, tappable markers.** A pill is roughly 30 × 22 px with 12.5 px text, so a thumb hits the right
   vehicle without zooming first — much easier than the 6.5 px dots this replaced.
 - **The drawn line follows the streets.** Tapping a vehicle shows its whole line using the trip's own
@@ -146,8 +159,8 @@ still yields smooth movement.
   *Status & filters* so both fit without scrollbars, the card becomes a bottom sheet, every **button**
   is at least 40 px tall (stop dots are 13 px on screen with a 33 px tap target), safe-area insets are
   respected and hover-only tooltips are disabled on touch devices.
-- **Honest labelling.** The popup states that positions are derived from realtime stop prognoses,
-  because the open feed contains no GPS. The header badge and the status line say how old the data
+- **Honest labelling.** The popup states where the position comes from: the operator's GPS fix with its age,
+  or a position derived from realtime stop prognoses, because the open feed itself contains no GPS. The header badge and the status line say how old the data
   really is: **fresh** (< 45 s, pulsing), **stale** (45 s – 2 min, grey and *not* pulsing) or
   **out of date** (> 2 min, red, no pulse) — an outage can no longer look like a live feed. The status
   line reports the **fetch** time (“fetched N s ago”), not the age of the data upstream, and a hop that
@@ -211,7 +224,7 @@ in [`HEAG-POSITIONS.md`](HEAG-POSITIONS.md).
 
 Established by direct measurement; every claim is reproducible with the scripts in `analysis/`.
 
-* **There is no GPS.** A `GET /api/v1/map/trips` entry is a **stop-to-stop hop** of a trip, not a
+* **There is no GPS in the open feed.** A `GET /api/v1/map/trips` entry is a **stop-to-stop hop** of a
   vehicle position: `from`/`to` (stops with `lat`/`lon`), `departure`/`arrival` (actual times),
   `scheduledDeparture`/`scheduledArrival`, `realTime`, `polyline` (the hop's geometry),
   `trips[0].tripId`, `routeShortName`. The polyline starts exactly at `from` and ends exactly at

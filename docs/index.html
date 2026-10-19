@@ -387,16 +387,18 @@
   /* Auch für Touch-Geräte über 700 px Breite (Telefon im Querformat), sonst gäbe es dort weder
      Schublade noch Schalter und das Panel bliebe einfach stehen. */
   @media (max-width: 700px), (hover: none) and (pointer: coarse) {
-    #head { top: calc(56px + env(safe-area-inset-top)); left: 8px; right: 72px; padding: 9px 11px 10px;
-      max-width: none; max-height: 62vh; overflow-y: auto; overscroll-behavior: contain; }
-    #head h1 { font-size: 15px; }
-    #head p { font-size: 11.5px; }
+    /* Telefon: Panel und Karten bewusst eine Spur kompakter als am Rechner (Wunsch des Betreibers
+       2026-10-15) — weniger Rand, kleinere Schrift, niedrigere Zeilen; Treffer bleiben ≥ 36 px hoch. */
+    #head { top: calc(56px + env(safe-area-inset-top)); left: 8px; right: 72px; padding: 8px 10px 9px;
+      max-width: none; max-height: 60vh; overflow-y: auto; overscroll-behavior: contain; }
+    #head h1 { font-size: 14px; }
+    #head p { font-size: 11px; }
     #legend { overflow: visible; max-height: none; min-height: 0; margin-right: 0; padding-right: 0; scrollbar-gutter: auto; }
-    #legend summary { padding: 12px 0; font-size: 14px; min-height: 44px; }
-    #legend .chips { gap: 6px; padding: 0 0 12px 0; }
-    .chip { font-size: 13.5px; padding: 9px 13px; min-height: 40px; border-radius: 8px; }
+    #legend summary { padding: 9px 0; font-size: 13px; min-height: 40px; }
+    #legend .chips { gap: 5px; padding: 0 0 10px 0; }
+    .chip { font-size: 12.5px; padding: 6px 10px; min-height: 40px; border-radius: 8px; }
     #panes { align-self: stretch; display: flex; }
-    #panes button { flex: 1 1 0; min-height: 44px; font-size: 13.5px; }
+    #panes button { flex: 1 1 0; min-height: 40px; font-size: 12.5px; }
     /* Suche: zugeklappt nur die Lupe (links neben EN/DE, ≥ 44 px), aufgeklappt über die volle Breite
        der Kopfzeile. Zu bei Fokusverlust, Escape, Treffer oder Tipp auf die Karte. */
     #searchbar { top: calc(6px + env(safe-area-inset-top)); right: 110px; height: 50px; }
@@ -416,17 +418,17 @@
     #searchbar.open #results { left: auto; right: 0; width: min(76vw, 288px); }
     #search { min-height: 40px; font-size: 14px; }
     #results button.res { min-height: 44px; font-size: 14px; }
-    #favstations .fav-go { min-height: 44px; font-size: 14px; }
-    #favstations .fav-x { min-width: 40px; min-height: 40px; font-size: 13px; }
-    #selinfo { font-size: 13.5px; }
-    #selinfo button { min-width: 40px; min-height: 40px; font-size: 15px; padding: 0; }
-    .pop-stops li { padding: 11px 0; }
+    #favstations .fav-go { min-height: 40px; font-size: 13px; }
+    #favstations .fav-x { min-width: 40px; min-height: 40px; font-size: 12px; }
+    #selinfo { font-size: 12.5px; }
+    #selinfo button { min-width: 40px; min-height: 40px; font-size: 14px; padding: 0; }
+    .pop-stops li { padding: 8px 0; }
     #toggles { gap: 6px; }
-    .tog { padding: 6px 9px; font-size: 12px; min-height: 40px; }
-    .pop-close { min-width: 40px; min-height: 40px; font-size: 14px; }
-    #counts { gap: 14px; }
-    .cnt b { font-size: 19px; }
-    .cnt span { font-size: 10.5px; }
+    .tog { padding: 5px 8px; font-size: 11.5px; min-height: 40px; }
+    .pop-close { min-width: 40px; min-height: 40px; font-size: 13px; }
+    #counts { gap: 12px; }
+    .cnt b { font-size: 17px; }
+    .cnt span { font-size: 10px; }
     #lang { top: calc(6px + env(safe-area-inset-top)); right: 8px; padding: 4px; }
     #lang .seg button { padding: 9px 10px; min-width: 42px; }
     #bar { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); padding: 9px 12px 10px; }
@@ -437,7 +439,17 @@
     #hint { font-size: 11px; max-width: none; }
     #attribbtn { width: 34px; height: 34px; font-size: 15px; }
     #attribbox { width: min(88vw, 340px); }
-    #popup { left: 8px; right: 8px; top: auto; width: auto; max-width: none; bottom: calc(var(--bar-h, 104px) + 16px + env(safe-area-inset-bottom)); max-height: 46vh; overflow-y: auto; }
+    #popup { left: 8px; right: 8px; top: auto; width: auto; max-width: none; bottom: calc(var(--bar-h, 104px) + 16px + env(safe-area-inset-bottom)); max-height: 42vh; overflow-y: auto;
+      padding: 8px 10px 9px; }
+    /* Karte auf dem Telefon etwas gedrungener: kleinere Überschrift, engere Haltezeilen */
+    #popup .pop-title { font-size: 12.5px; }
+    #popup .pop-line { font-size: 12px; padding: 2px 7px; }
+    #popup .pop-delay { font-size: 11.5px; padding: 2px 8px; margin-top: 6px; }
+    #popup .pop-sub { font-size: 11px; margin-top: 6px; }
+    #popup .pop-stops { margin-top: 8px; }
+    #popup .pop-stops li { font-size: 12px; gap: 7px; }
+    #popup .pop-stops .st-line { font-size: 9.5px; }
+    #popup .pop-stops .st-rel { font-size: 11px; }
     /* Panel als Schublade: standardmäßig offen, verschwindet beim Tippen auf die Karte.
        Der Schalter sitzt IMMER an derselben Stelle (oben links, direkt über dem Panel) und ändert
        Beschriftung und Symbol: „☰ Lines" öffnet, „✕ Close panel" schließt. So ist ohne Raten klar,
@@ -445,17 +457,17 @@
     body.panel-closed #head { display: none; }
     #paneltoggle { display: inline-flex; align-items: center; gap: 7px; position: absolute; z-index: 5;
       top: calc(6px + env(safe-area-inset-top)); left: 8px;
-      padding: 10px 13px; min-height: 44px; font: inherit; font-size: 13.5px; font-weight: 600;
+      padding: 8px 11px; min-height: 44px; font: inherit; font-size: 12.5px; font-weight: 600;
       color: var(--fg); cursor: pointer; }
     #paneltoggle[aria-expanded="true"] { color: var(--accent); border-color: rgba(255,209,102,.45); }
     #panelclose { display: inline-flex; align-items: center; justify-content: center; margin-left: auto; flex: none;
-      min-width: 40px; min-height: 40px; font-size: 15px; border-radius: 8px; background: rgba(255,255,255,.06);
+      min-width: 40px; min-height: 40px; font-size: 14px; border-radius: 8px; background: rgba(255,255,255,.06);
       border: 1px solid var(--line); color: var(--fg); cursor: pointer; }
     /* Telefon: die Karte bleibt Bottom-Sheet, Ziehen ist dort aus (nur Maus) */
     .pop-head { cursor: default; touch-action: auto; }
     /* Wie am Rechner: nur DREI Halte sichtbar, alles Weitere scrollt, Balken unsichtbar.
        Die Zeilenhöhe ist hier 44 px (Fingergröße, das padding kommt aus der Regel darunter). */
-    .pop-stops { --stop-row: 44px; max-height: calc(3 * var(--stop-row)); overflow-y: auto;
+    .pop-stops { --stop-row: 40px; max-height: calc(3 * var(--stop-row)); overflow-y: auto;
       scrollbar-width: none; -ms-overflow-style: none; }
     .pop-stops::-webkit-scrollbar { width: 0; height: 0; }
     #banner { top: calc(70px + env(safe-area-inset-top)); font-size: 12px; }

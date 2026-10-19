@@ -68,7 +68,7 @@ function run(check, log = console.log) {
   check('mobile: the card shows exactly three stops, the rest scrolls with no visible bar',
     prop(mobList, 'max-height') === 'calc(3 * var(--stop-row))' &&
     prop(mobList, 'overflow-y') === 'auto' && prop(mobList, 'scrollbar-width') === 'none' &&
-    /--stop-row:\s*44px/.test(mobList));
+    /--stop-row:\s*4\dpx/.test(mobList));      // >= 40px: Fingergröße, nicht mehr zwingend 44
   check('mobile: close button is a >=40px touch target', /min-height:\s*4\dpx/.test(rule('.pop-close', mob) || '') && /min-width:\s*4\dpx/.test(rule('.pop-close', mob) || ''));
   check('mobile: segmented buttons >=40px', /min-height:\s*4\dpx/.test(rule('.seg button', mob) || ''));
   check('mobile: mode toggles >=40px', /min-height:\s*4\dpx/.test(rule('.tog', mob) || ''));
@@ -149,8 +149,11 @@ function run(check, log = console.log) {
   check(`phone pane switcher is thumb-sized (${paneMob})`, parseFloat(paneMob) >= 40);
   const selMob = prop(rule('#selinfo button', mob), 'min-height') || '0';
   check(`phone 'clear line' button is thumb-sized (${selMob})`, parseFloat(selMob) >= 40);
-  check('phone vehicle-card rows are tall enough to tap',
-    parseFloat((prop(rule('.pop-stops li', mob), 'padding') || '0')) >= 10);
+  // Die Zeilenhöhe kommt seit dem Kompakter-Machen aus `min-height: var(--stop-row)` (>= 40 px), nicht
+  // mehr aus 11 px Innenabstand. Geprüft wird die Höhe, die den Finger trifft.
+  check('phone vehicle-card rows are tall enough to tap (min-height = --stop-row, >= 40px)',
+    parseFloat((/--stop-row:\s*(\d+)px/.exec(mobList) || [])[1] || '0') >= 40 &&
+    /min-height:\s*var\(--stop-row\)/.test(rule('.pop-stops li', css) || ''));
   check('panel sits at the very top', /#head \{ top:\s*[0-8]px;/.test(css));
   check('phones keep the line browser visible (no display:none)', !/#legend-sec\s*\{\s*display:\s*none/.test(mob));
   check('phones get one scroll area, not a nested mini-scrollbar', /#legend \{[^}]*overflow:\s*visible/.test(mob));
@@ -367,9 +370,9 @@ function run(check, log = console.log) {
   check('stop search keeps its ids and the shared strings (search.js unchanged)',
     /<input id="search"[^>]*data-i18n-placeholder="searchPlaceholder"/.test(html) &&
     /<ul id="results" hidden><\/ul>/.test(html) && /search\.js\?v=\d{8}-\d+/.test(html));
-  check('search results and saved stops are thumb-sized on phones',
+  check('search results and saved stops are thumb-sized on phones (>= 40px)',
     /#search \{ min-height: 40px/.test(mob) && /#results button\.res \{ min-height: 44px/.test(mob) &&
-    /#favstations \.fav-go \{ min-height: 44px/.test(mob));
+    /#favstations \.fav-go \{ min-height: 4\dpx/.test(mob));
   check('favourites live in localStorage (a static page has no server to receive a cookie)',
     /localStorage/.test(searchSrc) && !/document\.cookie/.test(searchSrc) && /darmstadt-live-favs/.test(searchSrc));
   // Der Hinweis „Position abgeleitet, kein GPS" soll auffallen: gelb und fett, in der Karte UND in
