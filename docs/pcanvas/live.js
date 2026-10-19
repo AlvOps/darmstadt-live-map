@@ -685,52 +685,104 @@
 
   function emptyFeatureCollection() { return { type: 'FeatureCollection', features: [] }; }
 
-  const PILL_COLORS = { tram: '#ff6b6b', bus: '#2ec4b6', rail: '#c77dff' };
+  // Pixelgenaue Nachbildung der Pillen aus docs/index.html (.mk): SVG-Sinnbild der Verkehrsart +
+  // Liniennummer, padding 3/9/3/7, gap 5, Schrift 12.5px/800, Rand 1.5px rgba(10,14,22,.35),
+  // Schatten 0 1px 5px rgba(0,0,0,.5), Kapselradius, Betreiber-Punkt 7px aussen oben rechts.
+  // Die Farben werden zur Laufzeit aus den CSS-Variablen der Seite gelesen, damit Karte und
+  // Testseite nie auseinanderlaufen.
+  const PILL_ICONS = {
+    tram: [{ d: 'M12 1l4 2.5V5H8V3.5L12 1zM5 7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7zm3 1v4h8V8H8z' },
+           { cx: 9, cy: 19.5, r: 1.8 }, { cx: 15, cy: 19.5, r: 1.8 }],
+    bus: [{ d: 'M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm2 3v5h12V6H6z' },
+          { cx: 7, cy: 19.5, r: 1.8 }, { cx: 17, cy: 19.5, r: 1.8 }],
+    rail: [{ d: 'M6 2h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-1l2 3v1h-2.4l-1.8-2.5h-5.6L7.4 21H5v-1l2-3H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm1 3v5h10V5H7z' },
+           { cx: 9, cy: 18.6, r: 1.7 }, { cx: 15, cy: 18.6, r: 1.7 }],
+  };
+  const PILL_FALLBACK = { tram: '#ff6b6b', bus: '#2ec4b6', rail: '#c77dff' };
+
+  function pillColor(mode) {
+    try {
+      const v = getComputedStyle(document.documentElement).getPropertyValue('--' + mode).trim();
+      if (v) return v;
+    } catch (err) { /* Fallback unten */ }
+    return PILL_FALLBACK[mode] || PILL_FALLBACK.bus;
+  }
 
   // Rasterize the HTML pill once per line: this avoids depending on glyphs in the basemap style.
-  function makeVehiclePill(label, mode, hasOperator) {
-    const scale = 2, height = 26, radius = height / 2;
+  function makeVehiclePill(label, mode, hasOperator, scaled) {
+    const S = 2;                       // device pixels per CSS pixel
+    // #markers.scaled in docs/index.html: font 11px, padding 2/7/2/6, icon 12px below zoom 14.
+    const PAD_T = scaled ? 2 : 3, PAD_R = scaled ? 7 : 9, PAD_B = scaled ? 2 : 3, PAD_L = scaled ? 6 : 7;
+    const GAP = 5, ICON = scaled ? 12 : 14;
+    const FONT_SIZE = scaled ? 11 : 12.5, WEIGHT = 800, LINE_H = FONT_SIZE * 1.15, BORDER = 1.5;
+    const MARGIN = 5;                  // room for the operator dot that overhangs the pill
+    const font = WEIGHT + ' ' + FONT_SIZE + 'px system-ui, -apple-system, "Segoe UI", sans-serif';
+
+    const meas = document.createElement('canvas').getContext('2d');
+    meas.font = font;
+    const textW = meas.measureText(label).width;
+    const w = PAD_L + ICON + GAP + textW + PAD_R + BORDER * 2;
+    const h = LINE_H + PAD_T + PAD_B + BORDER * 2;
+
     const canvas = document.createElement('canvas');
-    const draw = canvas.getContext('2d');
-    const font = '800 12.5px system-ui, sans-serif';
-    draw.font = font;
-    const width = Math.max(height, Math.ceil(draw.measureText(label).width + 16));
-    canvas.width = width * scale;
-    canvas.height = height * scale;
+    canvas.width = Math.ceil((w + MARGIN * 2) * S);
+    canvas.height = Math.ceil((h + MARGIN * 2) * S);
     const c = canvas.getContext('2d');
-    c.scale(scale, scale);
-    c.font = font;
-    c.textAlign = 'center';
-    c.textBaseline = 'middle';
-    c.fillStyle = PILL_COLORS[mode] || PILL_COLORS.bus;
-    c.strokeStyle = '#10131a';
-    c.lineWidth = 1;
+    c.scale(S, S);
+    const x = MARGIN, y = MARGIN, r = h / 2;
+
+    // capsule + shadow + hairline border, exactly like .mk
+    c.save();
+    c.shadowColor = 'rgba(0,0,0,.5)';
+    c.shadowBlur = 5 * S / S, c.shadowOffsetY = 1;
     c.beginPath();
-    c.moveTo(radius, 0.5);
-    c.lineTo(width - radius, 0.5);
-    c.quadraticCurveTo(width - 0.5, 0.5, width - 0.5, radius);
-    c.lineTo(width - 0.5, height - radius);
-    c.quadraticCurveTo(width - 0.5, height - 0.5, width - radius, height - 0.5);
-    c.lineTo(radius, height - 0.5);
-    c.quadraticCurveTo(0.5, height - 0.5, 0.5, height - radius);
-    c.lineTo(0.5, radius);
-    c.quadraticCurveTo(0.5, 0.5, radius, 0.5);
+    c.moveTo(x + r, y);
+    c.lineTo(x + w - r, y);
+    c.arc(x + w - r, y + r, r, -Math.PI / 2, Math.PI / 2);
+    c.lineTo(x + r, y + h);
+    c.arc(x + r, y + r, r, Math.PI / 2, Math.PI * 1.5);
     c.closePath();
+    c.fillStyle = pillColor(mode);
     c.fill();
+    c.restore();
+    c.lineWidth = BORDER;
+    c.strokeStyle = 'rgba(10,14,22,.35)';
     c.stroke();
+
+    // mode icon, 14px box, scaled from the 24px viewBox
+    const icons = PILL_ICONS[mode] || PILL_ICONS.bus;
+    c.save();
+    c.translate(x + BORDER + PAD_L, y + BORDER + PAD_T + (LINE_H - ICON) / 2);
+    c.scale(ICON / 24, ICON / 24);
     c.fillStyle = '#10131a';
-    c.fillText(label, width / 2, height / 2 + 0.25);
-    if (hasOperator) {
+    c.fill(new Path2D(icons[0].d));
+    for (let i = 1; i < icons.length; i++) {
       c.beginPath();
-      c.arc(width - 4.5, 4, 3.5, 0, Math.PI * 2);
+      c.arc(icons[i].cx, icons[i].cy, icons[i].r, 0, Math.PI * 2);
+      c.fill();
+    }
+    c.restore();
+
+    // line number
+    c.font = font;
+    c.textAlign = 'left';
+    c.textBaseline = 'middle';
+    c.fillStyle = '#10131a';
+    c.fillText(label, x + BORDER + PAD_L + ICON + GAP, y + h / 2 + 0.5);
+
+    // operator GPS dot: 7px, outside top-right, 1.5px dark ring (== .mk[data-src="operator"]::after)
+    if (hasOperator) {
+      const cx = x + w - 3, cy = y + 3, dr = 3.5;
+      c.beginPath();
+      c.arc(cx, cy, dr + 1.5, 0, Math.PI * 2);
+      c.fillStyle = '#10131a';
+      c.fill();
+      c.beginPath();
+      c.arc(cx, cy, dr, 0, Math.PI * 2);
       c.fillStyle = '#78dca0';
       c.fill();
-      c.lineWidth = 1.5;
-      c.strokeStyle = '#10131a';
-      c.stroke();
     }
-    // MapLibre cannot read a <canvas> handed to addImage here (it sees 0x0 and throws
-    // "mismatched image size"); it does accept ImageData, so hand over the pixels instead.
+
     return c.getImageData(0, 0, canvas.width, canvas.height);
   }
 
@@ -744,13 +796,14 @@
       if (isOp(v)) line.operator = true;
     }
     for (const [label, line] of lines) {
-      const id = 'pill-' + label;
+      const id = 'pill-' + label, smallId = 'pills-' + label;
       const signature = line.mode + '|' + (line.operator ? 'operator' : 'open');
-      if (canvasPillSignatures.get(label) === signature && m.hasImage(id)) continue;
+      if (canvasPillSignatures.get(label) === signature && m.hasImage(id) && m.hasImage(smallId)) continue;
       try {
-        const image = makeVehiclePill(label, line.mode, line.operator);
-        if (m.hasImage(id)) m.updateImage(id, image);
-        else m.addImage(id, image, { pixelRatio: 2 });
+        const image = makeVehiclePill(label, line.mode, line.operator, false);
+        const small = makeVehiclePill(label, line.mode, line.operator, true);
+        if (m.hasImage(id)) m.updateImage(id, image); else m.addImage(id, image, { pixelRatio: 2 });
+        if (m.hasImage(smallId)) m.updateImage(smallId, small); else m.addImage(smallId, small, { pixelRatio: 2 });
         canvasPillSignatures.set(label, signature);
       } catch (err) {
         // A failed custom image should not prevent the map or its other features from rendering.
@@ -798,7 +851,7 @@
     if (!m.getLayer(VEHICLE_LABELS)) m.addLayer({
       id: VEHICLE_LABELS, type: 'symbol', source: VEHICLE_SOURCE,
       layout: {
-        'icon-image': ['concat', 'pill-', ['get', 'label']],
+        'icon-image': ['get', 'pillimg'],
         'icon-size': ['interpolate', ['linear'], ['zoom'], 12, 1, 17, 1.15],
         'icon-anchor': 'center',
         'icon-allow-overlap': true, 'icon-ignore-placement': true,
@@ -852,7 +905,9 @@
       vehiclesFC.features.push({
         type: 'Feature', geometry: { type: 'Point', coordinates: c.pos },
         properties: {
-          kind: 'vehicle', key: id, label: String(v.lineName || '?'), mode: v.mode || 'bus',
+          kind: 'vehicle', key: id, label: String(v.lineName || '?'),
+          pillimg: (ctx.map.getZoom() < 14 ? 'pills-' : 'pill-') + String(v.lineName || '?'),
+          mode: v.mode || 'bus',
           source: isOp(v) ? 'operator' : 'open', focus: id === String(focusTrip),
           dim: !!focusTrip && id !== String(focusTrip),
         },
