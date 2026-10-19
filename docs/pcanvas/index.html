@@ -781,7 +781,8 @@ function applyBasemap() {
   let layers = [];
   try { layers = (map.getStyle() || {}).layers || []; } catch (_) { /* Stil noch nicht geladen */ }
   for (const l of layers) {
-    if (OWN_LAYERS.has(l.id)) continue;
+    // Die Fahrzeug- und Haltestellen-Ebenen sind Inhalt, nicht Grundkarte: im Luftbild bleiben sie stehen.
+    if (OWN_LAYERS.has(l.id) || /^pcanvas-/.test(l.id)) continue;
     if (!BASE_VIS.has(l.id)) BASE_VIS.set(l.id, (l.layout && l.layout.visibility) || 'visible');
     try { map.setLayoutProperty(l.id, 'visibility', normal ? BASE_VIS.get(l.id) : 'none'); } catch (_) {}
   }
