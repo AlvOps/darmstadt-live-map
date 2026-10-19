@@ -171,7 +171,7 @@ function markupFindings(html) {
 
 function run(check, log = console.log) {
   const html = read('index.html');
-  const sources = { 'live.js': read('live.js'), 'i18n.js': read('i18n.js') };
+  const sources = { 'live.js': read('live.js'), 'rmv.js': read('rmv.js'), 'i18n.js': read('i18n.js') };
   const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(x => x[1]).join('\n');
   sources['index.html<script>'] = inline;
 
