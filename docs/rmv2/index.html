@@ -7,116 +7,156 @@
 <meta name="theme-color" content="#0b0e14">
 <title>[RMV-Test] Meldungsleiste</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #0b0e14; color: #e6e9ef; }
-  #frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-  /* Die Leiste liegt bewusst ausserhalb des iframes: sie kann dessen Start nie blockieren. */
-  #bar {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
-    background: rgba(13, 17, 24, .96); border-top: 1px solid rgba(255, 255, 255, .14);
-    font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; color: #e6e9ef;
-    max-height: 46vh; display: flex; flex-direction: column;
-  }
-  #bar[hidden] { display: none; }
-  #head {
-    display: flex; align-items: center; gap: 8px; width: 100%; min-height: 42px;
-    padding: 0 12px; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer;
-  }
-  #head .badge { background: #ffd166; color: #10131a; font-weight: 800; font-size: 11px; padding: 2px 6px; border-radius: 5px; }
-  #head .count { font-weight: 700; }
-  #head .spacer { flex: 1; }
-  #head .state { color: #9aa4b2; font-size: 11px; }
-  #list { overflow: auto; margin: 0; padding: 0 0 6px; list-style: none; }
-  #list[hidden] { display: none; }
-  #list li { display: flex; gap: 8px; align-items: baseline; padding: 7px 12px; border-top: 1px solid rgba(255,255,255,.06); }
-  .line { flex: none; font-weight: 800; font-size: 11px; color: #10131a; background: #2ec4b6; padding: 2px 6px; border-radius: 5px; }
-  .text { flex: 1; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-  .when { flex: none; color: #9aa4b2; font-size: 11px; }
+  :root { --bg:#0b0e14; --panel:#121722; --line:rgba(255,255,255,.09); --fg:#e6e9ef; --muted:#93a0b4; --accent:#ffd166; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); overflow:hidden;
+    font:14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  /* Spalte: die Karte bekommt genau den Platz, den die Leiste nicht braucht. Nichts ueberlappt. */
+  #shell { display:flex; flex-direction:column; height:100%; }
+  #stage { position:relative; flex:1 1 auto; min-height:0; }
+  #frame { position:absolute; inset:0; width:100%; height:100%; border:0; background:var(--bg); }
+
+  #bar { flex:0 0 auto; background:var(--panel); border-top:1px solid var(--line);
+    padding-bottom:env(safe-area-inset-bottom, 0px); }
+  #bar[hidden] { display:none; }
+  #head { display:flex; align-items:center; gap:9px; width:100%; min-height:48px; padding:0 14px;
+    background:none; border:0; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+  #head:active { background:rgba(255,255,255,.04); }
+  .badge { flex:none; background:var(--accent); color:#10131a; font-weight:800; font-size:10.5px;
+    letter-spacing:.02em; padding:2px 7px; border-radius:6px; }
+  #count { flex:none; font-weight:700; font-size:13.5px; }
+  .spacer { flex:1; }
+  #meta { flex:none; color:var(--muted); font-size:11px; }
+  #lang { flex:none; background:rgba(255,255,255,.07); border:1px solid var(--line); color:var(--fg);
+    font:inherit; font-size:11px; font-weight:800; padding:4px 9px; border-radius:6px; cursor:pointer; }
+  #caret { flex:none; color:var(--muted); font-size:12px; }
+
+  #list { list-style:none; margin:0; padding:0; max-height:36vh; overflow-y:auto;
+    -webkit-overflow-scrolling:touch; border-top:1px solid var(--line); }
+  #list[hidden] { display:none; }
+  #list li { display:flex; gap:9px; align-items:flex-start; padding:10px 14px;
+    border-bottom:1px solid rgba(255,255,255,.05); }
+  #list li:last-child { border-bottom:0; }
+  .line { flex:none; min-width:36px; text-align:center; font-weight:800; font-size:10.5px; color:#10131a;
+    background:#2ec4b6; padding:2px 6px; border-radius:6px; margin-top:1px; }
+  .body { flex:1; min-width:0; }
+  .text { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-size:13px; }
+  .when { color:var(--muted); font-size:11px; margin-top:2px; }
 </style>
 </head>
 <body>
-<iframe id="frame" src="/?rmvtest=1" title="Karte"></iframe>
+<div id="shell">
+  <div id="stage"><iframe id="frame" src="/" title="Karte"></iframe></div>
+  <div id="bar" hidden>
+    <button id="head" type="button" aria-expanded="false">
+      <span class="badge">RMV</span>
+      <span id="count">…</span>
+      <span class="spacer"></span>
+      <span id="meta">RMV HAFAS</span>
+      <button id="lang" type="button" title="Sprache der Meldungen">EN</button>
+      <span id="caret">⌃</span>
+    </button>
+    <ul id="list" hidden></ul>
+  </div>
+</div>
 
 <script>
-  // Testseite: die echte Karte in einem iframe (gleiche Herkunft), die Meldungsleiste aussen herum.
-  // Vorteil: die Karte kann durch die Leiste nie am Laden gehindert werden. Nachteil: keine Rueckmeldung
-  // in die Karte - fuer einen Test der RMV-Daten reicht es.
+  // Testseite: echte Karte im iframe (gleiche Herkunft), Meldungen in einer Leiste, die der Karte Platz laesst.
+  // Uebersetzung ueber ein Glossar (kein externer Dienst, kein Schluessel); das deutsche Original bleibt Tooltip.
   (function () {
     var BASE = 'https://talos.taild11d3b.ts.net';
-    var frame = document.getElementById('frame');
-    var bar, list, countEl, stateEl, expanded = false;
+    var lang = 'en';
+    var items = [];
+    var expanded = false;
 
-    function el(tag, cls, text) {
-      var n = document.createElement(tag);
-      if (cls) n.className = cls;
-      if (text != null) n.textContent = text;
-      return n;
-    }
+    var GLOSSARY = [
+      ['Haltestellenänderung', 'stop change'], ['Haltestellenverlegung', 'stop relocation'],
+      ['Haltestellen entfallen', 'stops cancelled'], ['Haltestellen', 'stops'], ['Haltestelle', 'stop'],
+      ['Fahrplanänderungen', 'schedule changes'], ['Fahrplanänderung', 'schedule change'],
+      ['Teilausfälle', 'partial cancellations'], ['Teilausfall', 'partial cancellation'],
+      ['Zugausfälle', 'train cancellations'], ['Ausfälle', 'cancellations'], ['Ausfall', 'cancellation'],
+      ['Streckensperrung', 'line closure'], ['Umleitungen', 'diversions'], ['Umleitung', 'diversion'],
+      ['Bauarbeiten', 'construction works'], ['Baustelle', 'roadworks'], ['Fahrplan', 'timetable'],
+      ['Verspätungen', 'delays'], ['Verspätung', 'delay'], ['entfällt', 'cancelled'], ['entfallen', 'cancelled'],
+      ['verlegt', 'relocated'], ['einzelnen', 'individual'], ['einzelne', 'individual'],
+      ['Nächten', 'nights'], ['nachts', 'at night'], ['Wegen', 'Due to'], ['wegen', 'due to'],
+      ['Störung', 'disruption'], ['Gleis', 'track'], ['Meldung', 'notice'], ['Busse', 'buses'],
+      ['Ersatzverkehr', 'replacement service'], ['SEV', 'rail replacement service'],
+      ['Rathaus', 'town hall'], ['Hauptbahnhof', 'main station'], ['Bahnhof', 'station']
+    ];
 
-    function build() {
-      if (bar) return;
-      bar = el('div'); bar.id = 'bar'; bar.hidden = true;
-      var head = el('button'); head.id = 'head'; head.type = 'button'; head.setAttribute('aria-expanded', 'false');
-      head.appendChild(el('span', 'badge', 'RMV'));
-      countEl = el('span', 'count', 'lade …'); head.appendChild(countEl);
-      head.appendChild(el('span', 'spacer'));
-      stateEl = el('span', 'state', ''); head.appendChild(stateEl);
-      head.onclick = function () {
-        expanded = !expanded;
-        list.hidden = !expanded;
-        head.setAttribute('aria-expanded', String(expanded));
-      };
-      list = el('ul'); list.id = 'list'; list.hidden = true;
-      bar.appendChild(head); bar.appendChild(list);
-      document.body.appendChild(bar);
+    function translate(de) {
+      if (lang !== 'en' || !de) return de;
+      var out = String(de);
+      GLOSSARY.forEach(function (p) { out = out.split(p[0]).join(p[1]); });
+      return out;
     }
 
     function rel(iso) {
       var t = Date.parse(iso || '');
       if (!isFinite(t)) return '';
       var m = Math.round((Date.now() - t) / 60000);
-      if (m < 2) return 'gerade eben';
-      if (m < 60) return 'vor ' + m + ' Min';
+      if (m < 2) return lang === 'en' ? 'just now' : 'gerade eben';
+      if (m < 60) return lang === 'en' ? m + ' min ago' : 'vor ' + m + ' Min';
       var h = Math.round(m / 60);
-      if (h < 36) return 'vor ' + h + ' Std';
-      return 'vor ' + Math.round(h / 24) + ' Tagen';
+      if (h < 36) return lang === 'en' ? h + ' hr ago' : 'vor ' + h + ' Std';
+      var d = Math.round(h / 24);
+      return lang === 'en' ? d + ' days ago' : 'vor ' + d + ' Tagen';
     }
 
     function colour(line) {
-      var l = String(line || '');
-      if (/^(RE|RB|S\d|SEV|IC|ICE)/i.test(l)) return '#c77dff';
+      var l = String(line || '').trim();
       if (/^\d/.test(l)) return '#ff6b6b';
+      if (/^(S\d|SEV|RE|RB|IC|ICE|HLB)/i.test(l)) return '#c77dff';
       return '#2ec4b6';
     }
 
-    function render(items) {
-      build();
+    var bar = document.getElementById('bar');
+    var head = document.getElementById('head');
+    var list = document.getElementById('list');
+    var countEl = document.getElementById('count');
+    var metaEl = document.getElementById('meta');
+    var caret = document.getElementById('caret');
+    var langBtn = document.getElementById('lang');
+
+    function render() {
       list.textContent = '';
-      if (!items.length) {
-        bar.hidden = true;
-        return;
-      }
-      items.slice().sort(function (a, b) {
-        return (Date.parse(b.validFrom) || 0) - (Date.parse(a.validFrom) || 0);
-      }).forEach(function (n) {
-        var li = el('li');
-        var chip = el('span', 'line', n.line || '?');
+      items.forEach(function (n) {
+        var li = document.createElement('li');
+        var chip = document.createElement('span');
+        chip.className = 'line';
+        chip.textContent = n.line || '?';
         chip.style.background = colour(n.line);
-        li.appendChild(chip);
-        li.appendChild(el('span', 'text', n.headline || n.text || ''));
-        li.appendChild(el('span', 'when', rel(n.validFrom)));
+        var body = document.createElement('div'); body.className = 'body';
+        var text = document.createElement('div'); text.className = 'text';
+        var original = n.headline || n.text || '';
+        text.textContent = translate(original);
+        text.title = original;
+        var when = document.createElement('div'); when.className = 'when';
+        when.textContent = rel(n.validFrom);
+        body.appendChild(text); body.appendChild(when);
+        li.appendChild(chip); li.appendChild(body);
         list.appendChild(li);
       });
-      countEl.textContent = items.length + (items.length === 1 ? ' Meldung' : ' Meldungen');
-      stateEl.textContent = 'RMV HAFAS';
-      bar.hidden = false;
+      countEl.textContent = items.length + ' ' + (lang === 'en'
+        ? (items.length === 1 ? 'notice' : 'notices')
+        : (items.length === 1 ? 'Meldung' : 'Meldungen'));
     }
 
-    function fail(msg) {
-      build();
-      countEl.textContent = 'keine Daten';
-      stateEl.textContent = msg;
-      bar.hidden = false;
-    }
+    head.onclick = function (ev) {
+      if (ev.target === langBtn) return;
+      expanded = !expanded;
+      list.hidden = !expanded;
+      head.setAttribute('aria-expanded', String(expanded));
+      caret.textContent = expanded ? '⌄' : '⌃';
+    };
+
+    langBtn.onclick = function (ev) {
+      ev.stopPropagation();
+      lang = lang === 'en' ? 'de' : 'en';
+      langBtn.textContent = lang.toUpperCase();
+      render();
+    };
 
     function get(path) {
       var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
@@ -130,10 +170,20 @@
       var rows = (board && (board.departures || board.rows)) || [];
       var ids = [];
       rows.forEach(function (r) { if (r.lineId && ids.indexOf(r.lineId) < 0) ids.push(r.lineId); });
-      if (!ids.length) { fail('keine Linien'); return; }
-      return get('/notices?lineIds=' + encodeURIComponent(ids.slice(0, 50).join('|')))
-        .then(function (data) { render((data && data.notices) || []); });
-    }).catch(function (e) { fail(String((e && e.message) || e)); });
+      if (!ids.length) throw new Error('keine Linien');
+      return get('/notices?lineIds=' + encodeURIComponent(ids.slice(0, 50).join('|')));
+    }).then(function (data) {
+      items = ((data && data.notices) || []).slice().sort(function (a, b) {
+        return (Date.parse(b.validFrom) || 0) - (Date.parse(a.validFrom) || 0);
+      });
+      if (!items.length) { bar.hidden = true; return; }
+      bar.hidden = false;
+      render();
+    }).catch(function (e) {
+      bar.hidden = false;
+      countEl.textContent = lang === 'en' ? 'no data' : 'keine Daten';
+      metaEl.textContent = String((e && e.message) || e);
+    });
   })();
 </script>
 </body>
