@@ -109,18 +109,30 @@ function run(check, log = console.log) {
   // Ausdrücklicher Wunsch des Betreibers (2026-10-15): die Liniennummer steht in JEDEM Zoom in der
   // Marke. Ein reiner Punkt-Modus beim Herauszoomen und eine hochgezogene Sprechblase gab es
   // zwischenzeitlich — beides ist wieder entfernt; die Pille sitzt wieder mittig auf dem Punkt.
+  // Seit die Pillen Kartenebenen sind, gilt das für das gerasterte Bild: mittig verankert, nie
+  // ausgeblendet (allow-overlap/ignore-placement), unter z14 nur die kompakte Fassung.
   check('every marker keeps its line tag at every zoom, centred on the point',
-    /classList\.toggle\('scaled', ctx\.map\.getZoom\(\) < 14\)/.test(liveNow) &&
-    !/toggle\('dots'/.test(liveNow) && !/toggle\('callout'/.test(liveNow) &&
-    /translate\(x, y\)|'translate\(' \+ Math\.round/.test(liveNow) &&
-    /translate\(-50%,-50%\)/.test(liveNow) && !/'-100%'/.test(liveNow) &&
+    /'icon-anchor': 'center'/.test(liveNow) && !/'icon-offset'/.test(liveNow) &&
+    /'icon-allow-overlap': true, 'icon-ignore-placement': true/.test(liveNow) &&
+    /const SCALED_BELOW_ZOOM = 14;/.test(liveNow) &&
+    /const scaled = ctx\.map\.getZoom\(\) < SCALED_BELOW_ZOOM;/.test(liveNow) &&
+    /pillimg: pillImageId\(label, focus, scaled\)/.test(liveNow) &&
+    !/toggle\('dots'/.test(liveNow) && !/toggle\('callout'/.test(liveNow) && !/'-100%'/.test(liveNow) &&
     !/#markers\.dots/.test(css) && !/#markers\.callout/.test(css) && !/\.mk::before \{/.test(css));
+  // Die kompakte Pille ist die alte #markers.scaled-Regel, in Zahlen nachgebaut (CSS bleibt die Vorlage).
   check('the markers keep symbol and label in the compact variant too',
     /#markers\.scaled \.mk \{ font-size: 11px; padding: 2px 7px 2px 6px; \}/.test(css) &&
-    !/#markers\.scaled \.mk (svg|span)[^{]*\{[^}]*display: none/.test(css));
-  // Der Betreiber-GPS-Punkt oben rechts bleibt die einzige Zusatzmarke am Fahrzeug.
-  check('the operator provenance mark is the only extra pseudo-element on a marker',
-    /\.mk\[data-src="operator"\]::after/.test(css) && !/\.mk::before/.test(css));
+    /#markers\.scaled \.mk svg \{ width: 12px; height: 12px; \}/.test(css) &&
+    /const PAD_T = scaled \? 2 : 3, PAD_R = scaled \? 7 : 9, PAD_B = scaled \? 2 : 3, PAD_L = scaled \? 6 : 7;/.test(liveNow) &&
+    /const GAP = 5, ICON = scaled \? 12 : 14;/.test(liveNow) &&
+    /const FONT_SIZE = scaled \? 11 : 12\.5, WEIGHT = 800, LINE_H = FONT_SIZE \* 1\.15, BORDER = 1\.5;/.test(liveNow) &&
+    /makeVehiclePill\(label, line\.mode, line\.operator, true, false\)/.test(liveNow));
+  // Der Betreiber-GPS-Punkt oben rechts bleibt die einzige Zusatzmarke am Fahrzeug (7px, dunkler Ring).
+  check('the operator provenance mark is the only extra mark on a pill',
+    /\.mk\[data-src="operator"\]::after \{[^}]*width: 7px; height: 7px;[^}]*background: #78dca0; box-shadow: 0 0 0 1\.5px #10131a;/.test(css) &&
+    /if \(hasOperator\) \{\n      const cx = x \+ w - 3, cy = y \+ 3, dr = 3\.5;/.test(liveNow) &&
+    /c\.arc\(cx, cy, dr \+ 1\.5, 0, Math\.PI \* 2\);\n      c\.fillStyle = '#10131a';/.test(liveNow) &&
+    /c\.fillStyle = '#78dca0';/.test(liveNow) && !/\.mk::before/.test(css));
   // Eigene Tramgleise unter den Pillen: die dunkle Grundkarte zeichnet sie nicht, Nebenstraßen erst
   // ab z13 — deshalb wirkten korrekt gesetzte Bahnpillen wie schwebend. Aus meta.json, kein Abruf.
   check('tram corridors are drawn under the pills from the repository data',
@@ -391,49 +403,85 @@ function run(check, log = console.log) {
     /\.note-warn \{ color: var\(--accent\); font-weight: 700; \}/.test(css) &&
     /class="pop-note note-warn"/.test(liveSrc) &&
     /<p class="note-warn" data-i18n="attributionPosition">/.test(html));
-  // Marken sind DOM-Elemente: wirklich rund, weiß, mit SVG-Sinnbild für Bus/Bahn/Zug — und sie
-  // bekommen den Tipp vor der Karte (sonst öffnete sich der Halt dahinter).
-  check('vehicle markers are round white pills with a mode pictogram (DOM, not a text layer)',
-    /id="markers"/.test(html) && /#markers \{ position: absolute/.test(css) &&
-    /\.mk \{[\s\S]*border-radius: 999px; background: #fff; color: #10131a;/.test(css) &&
-    /\.mk svg \{ width: 14px; height: 14px; flex: none; fill: currentColor; \}/.test(css) &&
-    /const MODE_SVG = \{/.test(liveSrc) &&
-    /tram: '<svg viewBox="0 0 24 24"/.test(liveSrc) && /bus: '<svg viewBox="0 0 24 24"/.test(liveSrc) &&
-    /rail: '<svg viewBox="0 0 24 24"/.test(liveSrc) &&
-    /function renderMarkers\(vis, shownStops, focusTrip\)/.test(liveSrc) &&
-    /el\.className = 'mk'/.test(liveSrc) && !/live-labels/.test(liveSrc));
+  // Marken sind Kartenebenen (GPU), keine DOM-Elemente mehr: eine GeoJSON-Quelle, eine unsichtbare
+  // Kreisebene als Tippziel und eine Symbolebene, deren Bild je Linie selbst gerastert wird. Das Bild
+  // geht als ImageData an addImage — ein <canvas> wirft in dieser MapLibre-Fassung „mismatched image size".
+  const PILL_DS = [...liveSrc.matchAll(/(tram|bus|rail): \[\{ d: '([^']+)' \}/g)].map(m => m[2]);
+  check('vehicle markers are GPU pills: GeoJSON source + symbol layer with one raster image per line',
+    !/className = 'mk'/.test(liveSrc) && !/className = 'stopmk'/.test(liveSrc) &&
+    !/getElementById\('markers'\)/.test(liveSrc) && !/function renderMarkers/.test(liveSrc) &&
+    !/markerPool|stopPool|markerHtml|MODE_SVG/.test(liveSrc) && !/live-labels/.test(liveSrc) &&
+    /const VEHICLE_SOURCE = 'live-vehicles';/.test(liveSrc) && /const VEHICLE_PILLS = 'live-vehicle-pills';/.test(liveSrc) &&
+    /const VEHICLE_HIT = 'live-vehicle-hit';/.test(liveSrc) &&
+    /m\.addSource\(VEHICLE_SOURCE, \{ type: 'geojson'/.test(liveSrc) &&
+    /id: VEHICLE_PILLS, type: 'symbol', source: VEHICLE_SOURCE,/.test(liveSrc) &&
+    /'icon-image': \['get', 'pillimg'\]/.test(liveSrc) &&
+    /id: VEHICLE_HIT, type: 'circle', source: VEHICLE_SOURCE,[\s\S]{0,400}'circle-opacity': 0/.test(liveSrc) &&
+    /function makeVehiclePill\(label, mode, hasOperator, scaled, focus\)/.test(liveSrc) &&
+    /return c\.getImageData\(0, 0, canvas\.width, canvas\.height\);/.test(liveSrc) &&
+    /m\.addImage\(id, images\[i\], \{ pixelRatio: 2 \}\)/.test(liveSrc) && !/addImage\([^)]*canvas/.test(liveSrc) &&
+    PILL_DS.length === 3 && new Set(PILL_DS).size === 3,
+    `${PILL_DS.length} Sinnbilder`);
+  // Das freigegebene Aussehen ist die .mk-Pille: dieselben Zahlen im Rasterbild wie im CSS.
+  check('the raster pill reproduces the .mk look (padding, gap, font, border, shadow, capsule)',
+    /\.mk \{[^}]*gap: 5px;[^}]*padding: 3px 9px 3px 7px; border-radius: 999px;[^}]*font-size: 12\.5px; font-weight: 800; line-height: 1\.15;[^}]*border: 1\.5px solid rgba\(10, 14, 22, \.35\); box-shadow: 0 1px 5px rgba\(0, 0, 0, \.5\);/.test(css) &&
+    /c\.shadowColor = 'rgba\(0,0,0,\.5\)';\n    c\.shadowBlur = 5; c\.shadowOffsetY = 1;/.test(liveSrc) &&
+    /c\.strokeStyle = focus \? '#fff' : 'rgba\(10,14,22,\.35\)';/.test(liveSrc) &&
+    /const r = h \/ 2;/.test(liveSrc) && /c\.fillStyle = '#10131a';\n    c\.fillText\(label|c\.fillStyle = '#10131a';\n    c\.fillText/.test(liveSrc) &&
+    /const font = WEIGHT \+ ' ' \+ FONT_SIZE \+ 'px ' \+ pageFont\(\);/.test(liveSrc));
   // Ein Tipp auf ein Fahrzeug gehört dem Fahrzeug: Panel weg, Linienauswahl aufheben, Fahrzeug zeigen.
+  // Getippt wird über queryRenderedFeatures; das Fahrzeug gewinnt vor dem Halt darunter.
   check('a tap on a vehicle shows the vehicle, not the stop behind it and not the line',
     /function tapVehicle\(v\)/.test(liveSrc) &&
     /if \(ctx\.state\.selLine !== null && ctx\.selectLine\) ctx\.selectLine\(null\)/.test(liveSrc) &&
-    /ev\.stopPropagation\(\); tapVehicle\(v\)/.test(liveSrc) &&
-    /renderMarkers\(vis, shownStops, focusTrip\)/.test(liveSrc) &&
+    /function canvasTap\(point\)/.test(liveSrc) &&
+    /m\.queryRenderedFeatures\(\[point\.x, point\.y\], \{ layers: TAP_LAYERS \}\)/.test(liveSrc) &&
+    /const TAP_LAYERS = \[VEHICLE_PILLS, VEHICLE_HIT, STOP_LABELS, STOP_CIRCLES, STOP_HIT\];/.test(liveSrc) &&
+    /const veh = hits\.find\(f => f && f\.properties && f\.properties\.kind === 'vehicle'\);\n    const feature = veh \|\| hits\.find/.test(liveSrc) &&
+    /if \(v\) \{ tapVehicle\(v\); return 'vehicle'; \}/.test(liveSrc) &&
+    /m\.on\('click', e => canvasTap\(/.test(liveSrc) &&
+    /onClick: null/.test(liveSrc) && !/onClick: click/.test(liveSrc) &&
     /function click\(info\) \{[\s\S]*stopFollow\(\); closePopup\(\);/.test(liveSrc));
   check('stops are circles with a letter, localised and switching without a reload',
-    /\.stopmk \{[\s\S]*border-radius: 50%/.test(css) &&
-    /el\.className = 'stopmk'/.test(liveSrc) &&
-    /if \(el\.textContent !== letter\) el\.textContent = letter/.test(liveSrc) &&
-    /const letter = T\('stopMark'\)/.test(liveSrc));
+    /id: STOP_CIRCLES, type: 'circle', source: STOP_SOURCE,/.test(liveSrc) &&
+    /'text-field': \['get', 'mark'\]/.test(liveSrc) &&
+    /const letter = T\('stopMark'\)/.test(liveSrc) && /mark: letter, focus: !!stop\.focus/.test(liveSrc) &&
+    /setLang\(\) \{[\s\S]{0,200}if \(ctx\) render\(true\);/.test(liveSrc));
+  // .mk.focus (weißer Rand + 2,5px Akzentring) ist ein drittes Bild je Linie; die anderen treten zurück.
   check('focus sits on the marker itself and the others step back',
     /\.mk\.focus \{ border-color: #fff; box-shadow: 0 0 0 2\.5px var\(--accent\)/.test(css) &&
     /\.mk\.dim \{ opacity: \.55; \}/.test(css) &&
-    /el\.classList\.toggle\('focus', id === focusTrip\)/.test(liveSrc) &&
-    /el\.classList\.toggle\('dim', !!focusTrip && id !== focusTrip\)/.test(liveSrc));
-  // Farbe nach Verkehrsart wie die Schalter im Panel, und die Marken folgen der Karte (kein Schweben).
-  check('pills take the mode colour of the panel switches (tram red, bus turquoise, rail purple)',
-    /\.mk\[data-mode="tram"\] \{ background: var\(--tram\); \}/.test(css) &&
-    /\.mk\[data-mode="bus"\] \{ background: var\(--bus\); \}/.test(css) &&
-    /\.mk\[data-mode="rail"\] \{ background: var\(--rail\); \}/.test(css) &&
-    /el\.dataset\.mode = v\.mode \|\| 'bus'/.test(liveSrc));
-  // Eine Stelle genügt: die rAF-Schleife setzt die Marken jeden Frame neu, auch während einer Geste
-  // (die Listener auf move/zoom/rotate/pitch taten dasselbe ein zweites Mal pro Frame).
-  check('markers are repositioned every frame while the map moves (they do not float)',
-    /function syncMarkerPositions\(\)/.test(liveSrc) &&
-    /syncMarkers: \(\) => syncMarkerPositions\(\)/.test(liveSrc) &&
+    /const PILL_PREFIX = \{ normal: 'pill-', scaled: 'pills-', focus: 'pillf-' \};/.test(liveSrc) &&
+    /const RING = focus \? 2\.5 : 0;/.test(liveSrc) && /pillColor\('accent'\)/.test(liveSrc) &&
+    /makeVehiclePill\(label, line\.mode, line\.operator, false, true\)/.test(liveSrc) &&
+    /'icon-opacity': \['case', \['get', 'dim'\], 0\.55, 1\]/.test(liveSrc) &&
+    /dim: !!focusId && !focus/.test(liveSrc));
+  // Farbe nach Verkehrsart wie die Schalter im Panel: zur Laufzeit aus den CSS-Variablen gelesen; der
+  // Rückfall muss dieselben Werte tragen.
+  {
+    const fb = (liveSrc.match(/const PILL_FALLBACK = \{ tram: '(#[0-9a-f]+)', bus: '(#[0-9a-f]+)', rail: '(#[0-9a-f]+)', accent: '(#[0-9a-f]+)' \};/i) || []).slice(1);
+    check('pills take the mode colour of the panel switches (tram red, bus turquoise, rail purple)',
+      /\.mk\[data-mode="tram"\] \{ background: var\(--tram\); \}/.test(css) &&
+      /getComputedStyle\(document\.documentElement\)\.getPropertyValue\('--' \+ mode\)/.test(liveSrc) &&
+      /c\.fillStyle = pillColor\(mode\);/.test(liveSrc) &&
+      fb.length === 4 && fb[0] === VARS.tram && fb[1] === VARS.bus && fb[2] === VARS.rail && fb[3] === VARS.accent,
+      `fallback ${fb.join(',')} | css ${VARS.tram},${VARS.bus},${VARS.rail},${VARS.accent}`);
+  }
+  // Die Marken bewegen sich mit der Karte, weil MapLibre sie zeichnet — keine DOM-Schreibzugriffe je
+  // Frame mehr. syncMarkers bleibt als leere Funktion, weil die rAF-Schleife der Seite sie ruft.
+  check('markers move with the map (map layers, no per-frame DOM writes, no move listeners)',
+    !/function syncMarkerPositions/.test(liveSrc) && !/function placeMarker/.test(liveSrc) &&
+    !/style\.transform = 'translate\('/.test(liveSrc) &&
+    /syncMarkers: \(\) => \{\},/.test(liveSrc) &&
+    /if \(vehicleSource\) vehicleSource\.setData\(vehiclesFC\);/.test(liveSrc) &&
+    /updateCanvasLayers\(vis, shownStops, focusTrip\);/.test(liveSrc) &&
     !/\['move', 'zoom', 'rotate', 'pitch'\]/.test(html) &&
     /window\.DarmstadtLive\.tick\(\);\n    window\.DarmstadtLive\.syncMarkers\(\);\n    requestAnimationFrame\(loop\);/.test(html));
-  check('stop marker is a small, properly centred circle (yellow, green letter, 13px)',
-    /\.stopmk \{[\s\S]*box-sizing: border-box; padding: 0; margin: 0;[\s\S]*width: 13px; height: 13px; border-radius: 50%;[\s\S]*align-items: center; justify-content: center;[\s\S]*background: var\(--accent\); color: #1d7a3d;/.test(css));
+  check('stop marker is a small circle (yellow, green ring and letter, ~13px)',
+    /'circle-radius': \['case', \['get', 'focus'\], 7, 6\],\n        'circle-color': '#ffd166', 'circle-stroke-color': '#1d7a3d', 'circle-stroke-width': 1\.5,/.test(liveSrc) &&
+    /'text-size': 8/.test(liveSrc) && VARS.accent === '#ffd166' &&
+    // Tippziel wie früher .stopmk::before: deutlich größer als der Punkt (WCAG 2.2: mindestens 24px)
+    /id: STOP_HIT, type: 'circle', source: STOP_SOURCE,\n      paint: \{ 'circle-radius': 13, 'circle-color': '#000', 'circle-opacity': 0,/.test(liveSrc));
   // Die Linie einer Fahrt folgt den Straßen: echte Geometrie (legGeometry) vor Luftlinie.
   check('route line uses the trip street geometry, stops only as fallback',
     /leg\.legGeometry && leg\.legGeometry\.points/.test(liveSrc) &&
@@ -573,10 +621,16 @@ function run(check, log = console.log) {
     /#attribbox \.attrib-sat \{ display: none; \}/.test(css) &&
     /html\[data-basemap="satellite"\] #attribbox \.attrib-sat \{ display: block; \}/.test(css) &&
     /attributionSatellite: 'Satellite imagery: Esri, Maxar, Earthstar Geographics'/.test(fs.readFileSync(path.join(DOCS, 'i18n.js'), 'utf8')));
-  check('marker pills get a dark outline on the two light basemaps (focus ring kept)',
-    /html:not\(\[data-basemap="normal"\]\) \.mk \{ box-shadow: 0 0 0 1\.5px rgba\(0,0,0,\.55\)/.test(css) &&
-    /html:not\(\[data-basemap="normal"\]\) \.mk\.focus \{ box-shadow:[^}]*var\(--accent\)/.test(css) &&
-    !/(^|\n)\s*\.mk \{[^}]*rgba\(0,0,0,\.55\)/.test(css));
+  // Die Grundkarten-Umschaltung blendet jede Stil-Ebene aus, die sie nicht als eigene kennt — die
+  // Marken-Ebenen sind Inhalt: applyBasemap überspringt sie, und live.js holt sich die Sichtbarkeit
+  // zusätzlich bei jedem Zeichnen zurück (Luftbild ließ alle Pillen verschwinden).
+  const markerRe = (html.match(/const MARKER_LAYER = \/(.+)\/;/) || [])[1];
+  const layerIds = [...liveSrc.matchAll(/const (?:VEHICLE_HIT|VEHICLE_PILLS|STOP_CIRCLES|STOP_LABELS|STOP_HIT) = '([^']+)';/g)].map(m => m[1]);
+  check('vehicle and stop layers stay visible on every basemap',
+    /if \(OWN_LAYERS\.has\(l\.id\) \|\| MARKER_LAYER\.test\(l\.id\)\) continue;/.test(html) &&
+    !!markerRe && layerIds.length === 5 && layerIds.every(id => new RegExp(markerRe).test(id)) &&
+    /const CANVAS_LAYERS = \[STOP_HIT, STOP_CIRCLES, STOP_LABELS, VEHICLE_HIT, VEHICLE_PILLS\];/.test(liveSrc) &&
+    /if \(m\.getLayoutProperty\(id, 'visibility'\) === 'none'\) m\.setLayoutProperty\(id, 'visibility', 'visible'\);/.test(liveSrc));
 
   // Suche oben rechts neben EN/DE (Wunsch 2026-10-15), Telefon: hinter der Lupe
   check('the search input lives next to the language toggle, not in the panel',

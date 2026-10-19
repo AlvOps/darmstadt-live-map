@@ -704,6 +704,9 @@ const BASEMAPS = ['normal', 'satellite', 'carto'];
 // veröffentlichte Seite bleibt genau wie vorher (dunkle Karte, Suche im Panel, Ortung nur mobil).
 const HYBRID = !!(window.DarmstadtLive && window.DarmstadtLive.HYBRID_ON);
 const OWN_LAYERS = new Set(['sat', 'cartoimg', 'me-acc', 'me-dot']);   // nicht Grundkarte: bleiben stehen
+// Fahrzeug- und Haltemarken sind Kartenebenen aus live.js (live-vehicle-*, live-stop-*): Inhalt, keine
+// Grundkarte — sie bleiben in jeder Ansicht sichtbar (vorher verschwanden die Pillen im Luftbild).
+const MARKER_LAYER = /^live-(vehicle|stop)-/;
 const BASE_VIS = new Map();                              // ursprüngliche Sichtbarkeit je Stil-Ebene
 // Startzustand ist die Kartenansicht (helle Straßenkarte) — Wunsch des Betreibers 2026-10-15, geändert
 // von der Nachtkarte. Eine früher gewählte Grundkarte wird bewusst NICHT wiederhergestellt, ein alter
@@ -781,7 +784,7 @@ function applyBasemap() {
   let layers = [];
   try { layers = (map.getStyle() || {}).layers || []; } catch (_) { /* Stil noch nicht geladen */ }
   for (const l of layers) {
-    if (OWN_LAYERS.has(l.id)) continue;
+    if (OWN_LAYERS.has(l.id) || MARKER_LAYER.test(l.id)) continue;
     if (!BASE_VIS.has(l.id)) BASE_VIS.set(l.id, (l.layout && l.layout.visibility) || 'visible');
     try { map.setLayoutProperty(l.id, 'visibility', normal ? BASE_VIS.get(l.id) : 'none'); } catch (_) {}
   }

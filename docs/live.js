@@ -642,30 +642,340 @@
   }
 
   // ---------- Darstellung
-  // ---------- Fahrzeugmarken und Haltestellen als DOM-Elemente ----------
-  // Warum nicht als deck.gl-Textlayer: dessen Hintergrund ist ein Rechteck ohne Rundung, und deck.gl
-  // kennt keine eigenen Sinnbilder — die Marken waren deshalb eckig und ohne Verkehrsart. Als
-  // DOM-Element ist das Pill wirklich rund, weiß, mit dunkler Schrift und einem SVG-Sinnbild für Bus,
-  // Bahn oder Zug. Und es bekommt den Tipp VOR der Karte — sonst öffnete sich die Haltestelle dahinter.
-  const MODE_SVG = {
-    tram: '<svg viewBox="0 0 24 24" fill-rule="evenodd" aria-hidden="true"><path d="M12 1l4 2.5V5H8V3.5L12 1zM5 7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7zm3 1v4h8V8H8z"/><circle cx="9" cy="19.5" r="1.8"/><circle cx="15" cy="19.5" r="1.8"/></svg>',
-    bus: '<svg viewBox="0 0 24 24" fill-rule="evenodd" aria-hidden="true"><path d="M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm2 3v5h12V6H6z"/><circle cx="7" cy="19.5" r="1.8"/><circle cx="17" cy="19.5" r="1.8"/></svg>',
-    rail: '<svg viewBox="0 0 24 24" fill-rule="evenodd" aria-hidden="true"><path d="M6 2h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-1l2 3v1h-2.4l-1.8-2.5h-5.6L7.4 21H5v-1l2-3H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm1 3v5h10V5H7z"/><circle cx="9" cy="18.6" r="1.7"/><circle cx="15" cy="18.6" r="1.7"/></svg>',
-  };
-  const markerPool = new Map();          // tripId -> Element
-  const stopPool = new Map();            // Haltestellenname -> Element
-  let markerBox = null;
+  // ---------- Fahrzeugmarken und Haltestellen als Kartenebenen (GPU, keine DOM-Elemente) ----------
+  // Vorher war jede Marke ein <button> über der Karte, dessen Position in JEDEM Frame aus
+  // map.project() neu geschrieben wurde (~100 Schreibzugriffe pro Frame, gemessen 30 statt 60 fps beim
+  // Ziehen). Jetzt zeichnet MapLibre die Pillen selbst: eine GeoJSON-Quelle, eine Symbolebene mit
+  // einem selbst gerasterten Bild je Linie und eine unsichtbare Kreisebene als großzügiges Tippziel.
+  // Getippt wird über queryRenderedFeatures im Klick der Karte. Die Schrift kommt NICHT aus den
+  // Glyphen des Stils (über der Rasterkarte fiel die Beschriftung sonst stumm weg) — die Pille ist ein
+  // Bild, das hier mit Canvas 2D gezeichnet und als ImageData übergeben wird (ein <canvas> direkt an
+  // addImage wirft in dieser MapLibre-Fassung „mismatched image size").
+  const VEHICLE_SOURCE = 'live-vehicles';
+  const STOP_SOURCE = 'live-stops';
+  const VEHICLE_HIT = 'live-vehicle-hit';          // unsichtbar (circle-opacity 0), nur Tippziel
+  const VEHICLE_PILLS = 'live-vehicle-pills';      // die sichtbaren Pillen (icon-image = pillimg)
+  const STOP_CIRCLES = 'live-stop-circles';
+  const STOP_LABELS = 'live-stop-labels';
+  const STOP_HIT = 'live-stop-hit';                // unsichtbar: 26px Tippziel um den 13px-Punkt (WCAG 24px)
+  const CANVAS_LAYERS = [STOP_HIT, STOP_CIRCLES, STOP_LABELS, VEHICLE_HIT, VEHICLE_PILLS];
+  const TAP_LAYERS = [VEHICLE_PILLS, VEHICLE_HIT, STOP_LABELS, STOP_CIRCLES, STOP_HIT];   // Fahrzeug vor Halt
+  // Bildnamen je Linie: normal ab z14, kompakt darunter (wie früher #markers.scaled), Fokus.
+  const PILL_PREFIX = { normal: 'pill-', scaled: 'pills-', focus: 'pillf-' };
+  const SCALED_BELOW_ZOOM = 14;
+  let canvasEventsReady = false;
+  let canvasVehicleById = new Map();
+  let canvasStopByKey = new Map();
+  let canvasHover = false;               // Zeiger über einer Marke -> Cursor „pointer"
+  let canvasLog = { vehicles: [], stops: [] };   // zuletzt übergebene Features (Tests/Diagnose)
+  const canvasPillSignatures = new Map();
   let markerLog = [];                    // zuletzt gezeichnete Fahrzeuge (Tests/Diagnose)
 
-  // Weiße Marke: SVG-Sinnbild der Verkehrsart + Liniennummer. Eigene Funktion, damit Tests sie ohne
-  // laufende Daten prüfen können.
-  function markerHtml(mode, line) {
-    return (MODE_SVG[mode] || MODE_SVG.bus) + '<span>' + esc(line) + '</span>';
+  function emptyFeatureCollection() { return { type: 'FeatureCollection', features: [] }; }
+
+  // Pixelgenaue Nachbildung der Pillen aus docs/index.html (.mk): SVG-Sinnbild der Verkehrsart +
+  // Liniennummer, padding 3/9/3/7, gap 5, Schrift 12.5px/800, Rand 1.5px rgba(10,14,22,.35),
+  // Schatten 0 1px 5px rgba(0,0,0,.5), Kapselradius, Betreiber-Punkt 7px aussen oben rechts.
+  // Die Farben werden zur Laufzeit aus den CSS-Variablen der Seite gelesen, damit Karte und Panel
+  // nie auseinanderlaufen.
+  const PILL_ICONS = {
+    tram: [{ d: 'M12 1l4 2.5V5H8V3.5L12 1zM5 7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7zm3 1v4h8V8H8z' },
+           { cx: 9, cy: 19.5, r: 1.8 }, { cx: 15, cy: 19.5, r: 1.8 }],
+    bus: [{ d: 'M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm2 3v5h12V6H6z' },
+          { cx: 7, cy: 19.5, r: 1.8 }, { cx: 17, cy: 19.5, r: 1.8 }],
+    rail: [{ d: 'M6 2h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-1l2 3v1h-2.4l-1.8-2.5h-5.6L7.4 21H5v-1l2-3H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm1 3v5h10V5H7z' },
+           { cx: 9, cy: 18.6, r: 1.7 }, { cx: 15, cy: 18.6, r: 1.7 }],
+  };
+  const PILL_FALLBACK = { tram: '#ff6b6b', bus: '#2ec4b6', rail: '#c77dff', accent: '#ffd166' };
+
+  function pillColor(mode) {
+    try {
+      const v = getComputedStyle(document.documentElement).getPropertyValue('--' + mode).trim();
+      if (v) return v;
+    } catch (err) { /* Fallback unten */ }
+    return PILL_FALLBACK[mode] || PILL_FALLBACK.bus;
   }
 
-  function markerHost() {
-    if (!markerBox) markerBox = document.getElementById('markers');
-    return markerBox;
+  // Schrift der Seite übernehmen (wie die .mk-Pille sie erbte) statt einer eigenen Schriftliste.
+  function pageFont() {
+    try {
+      const f = getComputedStyle(document.body).fontFamily;
+      if (f) return f;
+    } catch (err) { /* Fallback unten */ }
+    return 'sans-serif';
+  }
+
+  function capsule(c, x, y, w, h) {
+    const r = h / 2;
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.lineTo(x + w - r, y);
+    c.arc(x + w - r, y + r, r, -Math.PI / 2, Math.PI / 2);
+    c.lineTo(x + r, y + h);
+    c.arc(x + r, y + r, r, Math.PI / 2, Math.PI * 1.5);
+    c.closePath();
+  }
+
+  // Die Pille einmal je Linie rastern. scaled = kompakte Fassung unter z14 (#markers.scaled: Schrift
+  // 11px, padding 2/7/2/6, Sinnbild 12px); focus = .mk.focus (weißer Rand + 2,5px Akzentring).
+  function makeVehiclePill(label, mode, hasOperator, scaled, focus) {
+    const S = 2;                       // Gerätepixel je CSS-Pixel (addImage mit pixelRatio 2)
+    const PAD_T = scaled ? 2 : 3, PAD_R = scaled ? 7 : 9, PAD_B = scaled ? 2 : 3, PAD_L = scaled ? 6 : 7;
+    const GAP = 5, ICON = scaled ? 12 : 14;
+    const FONT_SIZE = scaled ? 11 : 12.5, WEIGHT = 800, LINE_H = FONT_SIZE * 1.15, BORDER = 1.5;
+    const RING = focus ? 2.5 : 0;      // .mk.focus: box-shadow 0 0 0 2.5px var(--accent)
+    const MARGIN = 5 + RING;           // Platz für den überstehenden Betreiber-Punkt, Schatten und Ring
+    const font = WEIGHT + ' ' + FONT_SIZE + 'px ' + pageFont();   // dieselbe Schrift wie die Seite
+
+    const meas = document.createElement('canvas').getContext('2d');
+    meas.font = font;
+    const textW = meas.measureText(label).width;
+    const w = PAD_L + ICON + GAP + textW + PAD_R + BORDER * 2;
+    const h = LINE_H + PAD_T + PAD_B + BORDER * 2;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil((w + MARGIN * 2) * S);
+    canvas.height = Math.ceil((h + MARGIN * 2) * S);
+    const c = canvas.getContext('2d');
+    c.scale(S, S);
+    const x = MARGIN, y = MARGIN;
+
+    // Kapsel + Schatten (+ Fokusring) + feiner Rand, genau wie .mk
+    c.save();
+    c.shadowColor = 'rgba(0,0,0,.5)';
+    c.shadowBlur = 5; c.shadowOffsetY = 1;
+    if (focus) {
+      capsule(c, x - RING, y - RING, w + RING * 2, h + RING * 2);
+      c.fillStyle = pillColor('accent') || PILL_FALLBACK.accent;
+      c.fill();
+      c.restore();
+      c.save();
+    }
+    capsule(c, x, y, w, h);
+    c.fillStyle = pillColor(mode);
+    c.fill();
+    c.restore();
+    capsule(c, x, y, w, h);
+    c.lineWidth = BORDER;
+    c.strokeStyle = focus ? '#fff' : 'rgba(10,14,22,.35)';   // .mk.focus { border-color: #fff }
+    c.stroke();
+
+    // Sinnbild der Verkehrsart im 14px-Feld, aus dem 24px-viewBox skaliert
+    const icons = PILL_ICONS[mode] || PILL_ICONS.bus;
+    c.save();
+    c.translate(x + BORDER + PAD_L, y + BORDER + PAD_T + (LINE_H - ICON) / 2);
+    c.scale(ICON / 24, ICON / 24);
+    c.fillStyle = '#10131a';
+    c.fill(new Path2D(icons[0].d));
+    for (let i = 1; i < icons.length; i++) {
+      c.beginPath();
+      c.arc(icons[i].cx, icons[i].cy, icons[i].r, 0, Math.PI * 2);
+      c.fill();
+    }
+    c.restore();
+
+    // Liniennummer
+    c.font = font;
+    c.textAlign = 'left';
+    c.textBaseline = 'middle';
+    c.fillStyle = '#10131a';
+    c.fillText(label, x + BORDER + PAD_L + ICON + GAP, y + h / 2 + 0.5);
+
+    // Betreiber-GPS: 7px, aussen oben rechts, 1,5px dunkler Ring (== .mk[data-src="operator"]::after)
+    if (hasOperator) {
+      const cx = x + w - 3, cy = y + 3, dr = 3.5;
+      c.beginPath();
+      c.arc(cx, cy, dr + 1.5, 0, Math.PI * 2);
+      c.fillStyle = '#10131a';
+      c.fill();
+      c.beginPath();
+      c.arc(cx, cy, dr, 0, Math.PI * 2);
+      c.fillStyle = '#78dca0';
+      c.fill();
+    }
+
+    return c.getImageData(0, 0, canvas.width, canvas.height);
+  }
+
+  function pillImageId(label, focus, scaled) {
+    return (focus ? PILL_PREFIX.focus : scaled ? PILL_PREFIX.scaled : PILL_PREFIX.normal) + label;
+  }
+
+  // Drei Bilder je Linie: normal, kompakt, Fokus. Nur neu rastern, wenn sich Verkehrsart oder
+  // Betreiber-Kennzeichen der Linie ändert (oder ein setStyle die Bilder weggeworfen hat).
+  function ensureCanvasPillImages(vis) {
+    const m = ctx.map, lines = new Map();
+    for (const item of vis || []) {
+      const v = item.v;
+      const label = String(v.lineName || '?');
+      let line = lines.get(label);
+      if (!line) { line = { mode: v.mode || 'bus', operator: false }; lines.set(label, line); }
+      if (isOp(v)) line.operator = true;
+    }
+    for (const [label, line] of lines) {
+      const ids = [pillImageId(label, false, false), pillImageId(label, false, true), pillImageId(label, true, false)];
+      const signature = line.mode + '|' + (line.operator ? 'operator' : 'open');
+      if (canvasPillSignatures.get(label) === signature && ids.every(id => m.hasImage(id))) continue;
+      try {
+        const images = [
+          makeVehiclePill(label, line.mode, line.operator, false, false),
+          makeVehiclePill(label, line.mode, line.operator, true, false),
+          makeVehiclePill(label, line.mode, line.operator, false, true),
+        ];
+        ids.forEach((id, i) => {
+          // updateImage verlangt dieselbe Größe; bei geändertem Betreiber-Kennzeichen bleibt sie gleich.
+          if (m.hasImage(id)) {
+            const old = m.getImage && m.getImage(id);
+            const od = old && (old.data || old);
+            if (od && od.width === images[i].width && od.height === images[i].height) { m.updateImage(id, images[i]); return; }
+            m.removeImage(id);
+          }
+          m.addImage(id, images[i], { pixelRatio: 2 });
+        });
+        canvasPillSignatures.set(label, signature);
+      } catch (err) {
+        // Ein misslungenes Bild darf die Karte und die übrigen Marken nicht mitreißen.
+        console.warn('vehicle-pill-image-failed', label, err);
+      }
+    }
+  }
+
+  function ensureCanvasLayers(vis) {
+    if (!ctx || !ctx.map || typeof ctx.map.addSource !== 'function') return false;
+    const m = ctx.map;
+    if (typeof m.isStyleLoaded === 'function' && !m.isStyleLoaded()) return false;
+    // Bilder vor den Features, die sie über pillimg verlangen.
+    ensureCanvasPillImages(vis);
+    if (!m.getSource(STOP_SOURCE)) m.addSource(STOP_SOURCE, { type: 'geojson', data: emptyFeatureCollection() });
+    if (!m.getLayer(STOP_HIT)) m.addLayer({
+      id: STOP_HIT, type: 'circle', source: STOP_SOURCE,
+      paint: { 'circle-radius': 13, 'circle-color': '#000', 'circle-opacity': 0, 'circle-stroke-width': 0 },
+    });
+    if (!m.getLayer(STOP_CIRCLES)) m.addLayer({
+      id: STOP_CIRCLES, type: 'circle', source: STOP_SOURCE,
+      paint: {
+        'circle-radius': ['case', ['get', 'focus'], 7, 6],
+        'circle-color': '#ffd166', 'circle-stroke-color': '#1d7a3d', 'circle-stroke-width': 1.5,
+      },
+    });
+    if (!m.getLayer(STOP_LABELS)) m.addLayer({
+      id: STOP_LABELS, type: 'symbol', source: STOP_SOURCE,
+      layout: {
+        'text-field': ['get', 'mark'], 'text-size': 8, 'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+        'text-allow-overlap': true, 'text-ignore-placement': true, 'text-anchor': 'center',
+      },
+      paint: { 'text-color': '#1d7a3d', 'text-halo-color': '#ffd166', 'text-halo-width': 0.4 },
+    });
+    if (!m.getSource(VEHICLE_SOURCE)) m.addSource(VEHICLE_SOURCE, { type: 'geojson', data: emptyFeatureCollection() });
+    if (!m.getLayer(VEHICLE_HIT)) m.addLayer({
+      id: VEHICLE_HIT, type: 'circle', source: VEHICLE_SOURCE,
+      paint: {
+        'circle-radius': ['case', ['get', 'focus'], 11, 9],
+        'circle-color': '#000',
+        // Die Pille ist die sichtbare Marke; der Kreis bleibt unsichtbar, ist aber ein großzügiges
+        // Tippziel (die Trefferprüfung ignoriert die Deckkraft).
+        'circle-opacity': 0, 'circle-stroke-width': 0,
+      },
+    });
+    if (!m.getLayer(VEHICLE_PILLS)) m.addLayer({
+      id: VEHICLE_PILLS, type: 'symbol', source: VEHICLE_SOURCE,
+      layout: {
+        'icon-image': ['get', 'pillimg'],
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 12, 1, 17, 1.15],
+        'icon-anchor': 'center',                      // immer mittig auf dem Punkt
+        'icon-allow-overlap': true, 'icon-ignore-placement': true,   // nichts wird weggelassen
+      },
+      paint: { 'icon-opacity': ['case', ['get', 'dim'], 0.55, 1] },  // == .mk.dim { opacity: .55 }
+    });
+    // Die Grundkarten-Umschaltung in index.html blendet jede Stil-Ebene aus, die sie nicht als eigene
+    // kennt — die Marken müssen aber in jeder Grundkarte sichtbar bleiben.
+    if (typeof m.getLayoutProperty === 'function') {
+      for (const id of CANVAS_LAYERS) {
+        try { if (m.getLayoutProperty(id, 'visibility') === 'none') m.setLayoutProperty(id, 'visibility', 'visible'); }
+        catch (_) { /* Ebene gerade nicht da */ }
+      }
+    }
+    registerCanvasEvents();
+    return true;
+  }
+
+  // Ein Tipp auf die Karte: Fahrzeug vor Haltestelle, sonst ins Leere (Karte schließen).
+  function canvasTap(point) {
+    const m = ctx.map;
+    let hits = [];
+    try { hits = m.queryRenderedFeatures([point.x, point.y], { layers: TAP_LAYERS }) || []; }
+    catch (_) { /* Stil wechselt gerade */ }
+    const veh = hits.find(f => f && f.properties && f.properties.kind === 'vehicle');
+    const feature = veh || hits.find(f => f && f.properties && f.properties.kind === 'stop');
+    if (feature) {
+      const props = feature.properties;
+      if (props.kind === 'vehicle') {
+        const v = canvasVehicleById.get(String(props.key)) || drawn.find(x => String(x.tripId) === String(props.key));
+        if (v) { tapVehicle(v); return 'vehicle'; }
+      } else {
+        const stop = canvasStopByKey.get(String(props.key));
+        if (stop) { tapStop(stop); return 'stop'; }
+      }
+    }
+    click({ x: point.x, y: point.y, object: null });
+    return 'map';
+  }
+
+  function registerCanvasEvents() {
+    if (canvasEventsReady || !ctx || !ctx.map) return;
+    const m = ctx.map;
+    m.on('click', e => canvasTap((e && e.point) || { x: NaN, y: NaN }));
+    const canvas = m.getCanvas && m.getCanvas();
+    TAP_LAYERS.forEach(id => {
+      m.on('mouseenter', id, () => { canvasHover = true; if (canvas && canvas.style) canvas.style.cursor = 'pointer'; });
+      m.on('mouseleave', id, () => { canvasHover = false; if (canvas && canvas.style) canvas.style.cursor = ''; });
+    });
+    canvasEventsReady = true;
+  }
+
+  function updateCanvasLayers(vis, shownStops, focusTrip) {
+    markerLog = vis.map(c => ({ v: c.v, pos: c.pos, rest: c.rest, u: c.u }));
+    if (!ensureCanvasLayers(vis)) return;
+    const scaled = ctx.map.getZoom() < SCALED_BELOW_ZOOM;   // kompakte Pille beim Herauszoomen
+    const focusId = focusTrip == null ? null : String(focusTrip);
+    const vehiclesFC = emptyFeatureCollection();
+    canvasVehicleById = new Map();
+    for (const c of vis) {
+      const v = c.v, id = String(v.tripId);
+      if (!c.pos || !Number.isFinite(c.pos[0]) || !Number.isFinite(c.pos[1])) continue;
+      canvasVehicleById.set(id, v);
+      const label = String(v.lineName || '?');
+      const focus = id === focusId;
+      vehiclesFC.features.push({
+        type: 'Feature', geometry: { type: 'Point', coordinates: c.pos },
+        properties: {
+          kind: 'vehicle', key: id, label,
+          // Der Fokus behält die volle Größe auch unter z14: er soll herausstechen.
+          pillimg: pillImageId(label, focus, scaled),
+          mode: v.mode || 'bus',
+          source: isOp(v) ? 'operator' : 'open', focus,
+          dim: !!focusId && !focus,
+        },
+      });
+    }
+    const letter = T('stopMark');                       // "H" in beiden Sprachen (Haltestelle)
+    const stopsFC = emptyFeatureCollection();
+    canvasStopByKey = new Map();
+    for (const stop of shownStops || []) {
+      if (!stop || !Number.isFinite(stop.lon) || !Number.isFinite(stop.lat)) continue;
+      const key = String(stop.name || stop.stopId || '');
+      if (!key) continue;
+      canvasStopByKey.set(key, stop);
+      stopsFC.features.push({
+        type: 'Feature', geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] },
+        properties: { kind: 'stop', key, name: String(stop.name || ''), mark: letter, focus: !!stop.focus },
+      });
+    }
+    canvasLog = { vehicles: vehiclesFC.features, stops: stopsFC.features };
+    const vehicleSource = ctx.map.getSource(VEHICLE_SOURCE);
+    const stopSource = ctx.map.getSource(STOP_SOURCE);
+    if (vehicleSource) vehicleSource.setData(vehiclesFC);
+    if (stopSource) stopSource.setData(stopsFC);
   }
 
   // Ein Tipp auf ein Fahrzeug gehört dem Fahrzeug: Linienauswahl aufheben (sonst sieht man die Linie
@@ -688,87 +998,6 @@
     openStation(stop, false, true);
     announceStation(stop);
   }
-
-  function placeMarker(el, pos) {
-    el._geo = pos;                                  // merken: danach kann die Position neu gesetzt werden
-    const p = ctx.map.project([pos[0], pos[1]]);
-    // Immer mittig auf dem Punkt — die Liniennummer steht in jedem Zoom in der Pille.
-    el.style.transform = 'translate(' + Math.round(p.x) + 'px,' + Math.round(p.y) + 'px)translate(-50%,-50%)';
-    // Reihenfolge in 8-px-Stufen und nur bei Änderung schreiben: jede zIndex-Schreiboperation lässt den
-    // Browser die Zeichenreihenfolge der Marken neu bestimmen (bei 100+ Marken pro Frame teuer).
-    const z = 1000 + Math.round(p.y / 8) * 8;
-    if (el._z !== z) { el._z = z; el.style.zIndex = String(z); }
-  }
-
-  // Positionen ohne Neuaufbau nachziehen. Nötig, weil render() während einer Kartenbewegung absichtlich
-  // früh aussteigt (Layer-Aufbau soll die Geste nicht ausbremsen) — ohne das blieben die Marken stehen
-  // und „schwebten" über der Karte.
-  function syncMarkerPositions() {
-    if (!markerBox) return;
-    for (const el of Array.from(markerBox.children || [])) if (el._geo) placeMarker(el, el._geo);
-  }
-
-  function renderMarkers(vis, shownStops, focusTrip) {
-    markerLog = vis.map(c => ({ v: c.v, pos: c.pos, rest: c.rest, u: c.u }));
-    const host = markerHost();
-    if (!host) return;
-    // Nur die kompakte Pille beim Herauszoomen; die Liniennummer bleibt in jedem Zoom sichtbar.
-    host.classList.toggle('scaled', ctx.map.getZoom() < 14);
-    const letter = T('stopMark');                       // "H" in beiden Sprachen (Haltestelle)
-    // Zuerst aufräumen: alles, was nicht mehr dazugehört, verschwindet. Über die Kinder im DOM, damit
-    // auch nach einem Modul-Neustart keine Waisen stehen bleiben (nicht nur über den Pool).
-    const wanted = new Set();
-    for (const c of vis) wanted.add('v:' + c.v.tripId);
-    for (const s of shownStops) wanted.add('s:' + String(s.name || s.stopId || ''));
-    for (const child of Array.from(host.children || [])) {
-      if (!wanted.has(child.dataset && child.dataset.key)) child.remove();
-    }
-    const keepV = new Set();
-    for (const c of vis) {
-      const v = c.v, id = v.tripId;
-      keepV.add(id);
-      let el = markerPool.get(id);
-      if (!el) {
-        el = document.createElement('button');
-        el.type = 'button';
-        el.className = 'mk';
-        el.dataset.key = 'v:' + id;
-        host.appendChild(el);
-        markerPool.set(id, el);
-      }
-      el.dataset.mode = v.mode || 'bus';                 // Farbe nach Verkehrsart (wie im Panel)
-      el.dataset.src = isOp(v) ? 'operator' : 'open';    // Herkunft der Position (GPS-Punkt per CSS)
-      const html = markerHtml(v.mode, v.lineName);
-      if (el.dataset.sig !== html) { el.innerHTML = html; el.dataset.sig = html; }
-      el.classList.toggle('focus', id === focusTrip);
-      el.classList.toggle('dim', !!focusTrip && id !== focusTrip);
-      el.onclick = ev => { ev.stopPropagation(); tapVehicle(v); };
-      if (id === focusTrip) host.appendChild(el);        // der gewählte Punkt liegt oben
-      placeMarker(el, c.pos);
-    }
-    for (const [id, el] of Array.from(markerPool)) if (!keepV.has(id)) { el.remove(); markerPool.delete(id); }
-    const keepS = new Set();
-    for (const s of shownStops) {
-      const key = String(s.name || s.stopId || '');
-      if (!key) continue;
-      keepS.add(key);
-      let el = stopPool.get(key);
-      if (!el) {
-        el = document.createElement('button');
-        el.type = 'button';
-        el.className = 'stopmk';
-        el.dataset.key = 's:' + key;
-        host.appendChild(el);
-        stopPool.set(key, el);
-      }
-      if (el.textContent !== letter) el.textContent = letter;   // Sprachwechsel ohne Neuladen
-      el.classList.toggle('focus', !!s.focus);
-      el.onclick = ev => { ev.stopPropagation(); tapStop(s); };
-      placeMarker(el, [s.lon, s.lat]);
-    }
-    for (const [key, el] of Array.from(stopPool)) if (!keepS.has(key)) { el.remove(); stopPool.delete(key); }
-  }
-
 
   function render(force) {
     if (!ctx) return;
@@ -823,7 +1052,7 @@
 
     const layers = [
       // Verlauf: der Rest der Fahrt, dünn in der Linienfarbe (deck.gl zeichnet nur Linien, die
-      // Fahrzeugmarken und Halte sind DOM-Elemente).
+      // Fahrzeugmarken und Halte sind MapLibre-Ebenen).
       new ctx.deck.PathLayer({
         id: 'live-trails', data: vis, getPath: d => d.rest,
         getColor: d => { const c = colorFor(d.v); return [...c, 70]; },
@@ -837,10 +1066,11 @@
         widthUnits: 'pixels', getWidth: 4, capRounded: true, jointRounded: true,
       }) : null,
     ].filter(Boolean);
-    // Marken und Halte zuletzt: als DOM-Elemente liegen sie über der Karte und bekommen den Tipp
-    // zuerst — deshalb öffnet ein Tipp auf ein Fahrzeug immer das Fahrzeug, nie den Halt dahinter.
-    renderMarkers(vis, shownStops, focusTrip);
-    ctx.overlay.setProps({ layers, onHover: hover, onClick: click, getCursor: cursor });
+    // Marken und Halte als Kartenebenen: MapLibre zeichnet sie mit der Karte, keine DOM-Arbeit pro
+    // Frame. Getippt wird über den Klick der Karte (canvasTap: Fahrzeug vor Halt, sonst ins Leere) —
+    // deck.gl bekommt deshalb KEIN onClick, sonst schlösse sein Leer-Tipp die eben geöffnete Karte.
+    updateCanvasLayers(vis, shownStops, focusTrip);
+    ctx.overlay.setProps({ layers, onHover: hover, onClick: null, getCursor: cursor });
     if (force || Date.now() - lastPaint > 1000) {     // Statistik nur ~1x je Sekunde neu zeichnen
       lastPaint = Date.now();
       paintStats(cur);
@@ -874,8 +1104,8 @@
     tip.style.left = info.x + 14 + 'px'; tip.style.top = info.y + 14 + 'px';
   }
 
-  // Die Fahrzeug- und Haltemarken sind DOM-Elemente und behandeln ihren Tipp selbst (siehe
-  // tapVehicle/tapStop). Hier bleibt nur der Tipp ins Leere: Karte schließen, Auswahl aufheben.
+  // Die Fahrzeug- und Haltemarken sind Kartenebenen; canvasTap() prüft sie zuerst (tapVehicle/
+  // tapStop). Hier bleibt nur der Tipp ins Leere: Karte schließen, Auswahl aufheben.
   function click(info) {
     if (ctx.state) ctx.state.selAt = Date.now();
     if (ctx.hidePanel) ctx.hidePanel();
@@ -915,7 +1145,7 @@
     announceStation(target);
   }
 
-  const cursor = ({ isHovering }) => (isHovering ? 'pointer' : 'grab');
+  const cursor = ({ isHovering }) => (isHovering || canvasHover ? 'pointer' : 'grab');
 
   // ---------- Popup: Linie, Verspätungsstatus, nächste Halte
   // "Verspätet · +3 Min." / "Pünktlich" / "Zu früh · −2 Min." — der Status steht als Wort vorn,
@@ -1834,7 +2064,9 @@
     openPopup: v => openPopup(v, false),
     openStation: (s, instant) => openStation(s, false, instant),
     stops: () => stops,                  // für Suche/Favoriten: Halte des aktuellen Ausschnitts
-    syncMarkers: () => syncMarkerPositions(),   // Marken an die Karte hängen (auch während der Bewegung)
+    // Früher: DOM-Marken je Frame nachziehen. Die Marken sind jetzt Kartenebenen und bewegen sich mit
+    // der Karte; index.html ruft das im Bildtakt weiter auf, deshalb bleibt es als leere Funktion.
+    syncMarkers: () => {},
     info() {
       return {
         active, count: drawn.length, stops: stops.length, lastOk,
@@ -1858,8 +2090,11 @@
              OP_FRESH_MS, OP_HOLD_MS, OP_SCOPE_M, OP_STALE_MS, OP_MAX_AGE_MS, OP_TICK_MS, OP_REPLAY_MS, OP_PATH_END_M, OP_PATH_MAX_M, opTrack, havM, resetOperator() { opSeen = new Map(); },
              setCoverage(o) { coverageLines = o; }, coverage: () => coverageLines,
              departureRow, stationShell, freshness, focusLine, focusLineWide, CITY_BOX,
-             dedupeStops, markers: () => markerLog, markerNode: () => markerBox, markerHtml,
-             syncMarkers: () => syncMarkerPositions(), decodePolyline,
+             dedupeStops, markers: () => markerLog, canvasFeatures: () => canvasLog, canvasTap,
+             makeVehiclePill, pillImageId, PILL_PREFIX, SCALED_BELOW_ZOOM,
+             CANVAS: { VEHICLE_SOURCE, STOP_SOURCE, VEHICLE_HIT, VEHICLE_PILLS, STOP_CIRCLES, STOP_LABELS, STOP_HIT },
+             map: () => (ctx ? ctx.map : null),   // Prüfzugriff (Browser-Smoke): die Marken leben in der Karte
+             syncMarkers: () => {}, decodePolyline,
              tapVehicle, tapStop,
              tripChain, chain: () => chainCache,
              goToStop, nextStops, stops: () => stops, popupStopList: () => popupStopList,

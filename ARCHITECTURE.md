@@ -10,7 +10,7 @@ docs/index.html   markup + CSS + the app shell: creates the MapLibre map, the de
                   the panel/pane switcher, search wiring, favourites, drawer, attribution.
                   It owns `state` (mode switches, selected line index, quiet-timer `state.selAt`).
 docs/live.js      the realtime module (one IIFE, exposed as `window.DarmstadtLive`):
-                  feed client → vehicle model → interpolation → DOM markers → cards → camera → stats.
+                  feed client → vehicle model → interpolation → map-layer markers → cards → camera → stats.
 docs/i18n.js      EN/DE string table, `I18N.t/detect/apply/set`, `langchange` event.
 docs/search.js    pure functions: stop matching + favourites in localStorage (`darmstadt-live-favs`).
 docs/data/meta.json  72 lines (name, mode, agency, colour, endpoints) and the station dump.
@@ -29,7 +29,7 @@ GET /api/v1/map/stops  (same bbox, static content)  ─┤ every 30 s, and 700 m
                                                      ▼
                                     buildVehicles()  →  running hop per trip
                                                      ▼
-       DOM markers (one element per vehicle)     vehiclesAt(t) → interpolated [lon, lat] per frame
+  GeoJSON features (one per vehicle)          vehiclesAt(t) → interpolated [lon, lat] per frame
                                                      ▼
    click: GET /api/v1/trip?tripId=…  → stop sequence + street geometry (drawn run, next 3 stops)
    click a stop: GET /api/v1/stoptimes?stopId=… → next departures
@@ -77,11 +77,19 @@ Escape release the desktop camera follow after `FOLLOW_MS` (2 s).
 
 ## Markers
 
-Markers and stop dots are DOM buttons (round pills, mode-coloured, with an inline SVG pictogram), not
-deck.gl layers: deck.gl cannot draw a rounded background or a per-mode symbol. `#markers` is moved into
-`map.getCanvasContainer()` at start-up, so a pan/pinch/wheel gesture that begins **on a marker** still
-reaches MapLibre's handlers while taps go to the marker first. Positions come from `map.project()` and
-are refreshed in every animation frame (`syncMarkers()`), decoupled from the throttled layer rebuild.
+Vehicle pills and stop dots are **MapLibre layers**, not DOM elements and not deck.gl layers. Two
+GeoJSON sources (`live-vehicles`, `live-stops`) feed an invisible circle layer (`live-vehicle-hit`, tap
+target), a symbol layer (`live-vehicle-pills`), the stop circle/letter layers and an invisible 26 px
+stop tap target (`live-stop-hit`). The pill is an image
+rasterised once per line by `makeVehiclePill()` and registered as ImageData (`map.addImage` rejects a
+`<canvas>` with "mismatched image size" in this MapLibre build) in three variants: `pill-<line>` (z ≥ 14),
+`pills-<line>` (compact, below z14) and `pillf-<line>` (focused: white border + accent ring, full size at
+every zoom). Each feature carries `label/mode/source/pillimg/focus/dim`; render() only swaps the source
+data, so there is no per-frame DOM work. Taps go through the map's own `click` →
+`queryRenderedFeatures` (vehicle before stop, otherwise an empty-map tap); deck.gl gets no `onClick`.
+`applyBasemap()` in `index.html` skips these layers (`MARKER_LAYER`), and `live.js` re-shows them if
+anything else hides them. Known trade-off: the deck.gl canvas (trails, drawn run) sits above the map
+canvas, so those lines paint over the pills.
 
 ## Tests and CI
 

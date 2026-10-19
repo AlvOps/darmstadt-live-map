@@ -6,6 +6,7 @@
 const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
+const { canvas2d, installGl, Path2D } = require('./gl_stub');
 
 const DOCS = path.join(__dirname, '..', 'docs');
 const META = JSON.parse(fs.readFileSync(path.join(DOCS, 'data', 'meta.json'), 'utf8'));
@@ -33,7 +34,7 @@ function el(id) {
       contains(c) { return this._s.has(c); } },
     querySelector(sel) { return el(id + sel); },
     querySelectorAll() { return []; },        // live.js verdrahtet Klick-Ziele in den Popup-Zeilen
-    getContext() { return { setTransform() {}, clearRect() {}, fillRect() {}, fillText() {}, set fillStyle(v) {}, set font(v) {} }; },
+    getContext() { return canvas2d(o); },     // Pillen werden mit Canvas 2D gerastert
   };
   // className und classList hängen zusammen — genau wie im echten DOM, sonst prüfen Tests ins Leere.
   let cn = '';
@@ -58,6 +59,7 @@ const realFetch = (url, opts) => fetch(url, { ...(opts || {}), headers: { ...((o
 const sandbox = {
   console, Math, JSON, Date, Number, String, Array, Object, Map, Set, parseInt, parseFloat, isNaN, isFinite,
   setTimeout, clearTimeout, setInterval, clearInterval, Promise, Float64Array, Error, Uint16Array, CustomEvent: class {},
+  Path2D,
   navigator: { language: 'en-GB' },
   localStorage: { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
   fetch: async (url, opts) => {
@@ -106,16 +108,19 @@ const mapContainer = {
   clientWidth: 1280, clientHeight: 800,
   addEventListener: (ev, fn) => { (containerListeners[ev] = containerListeners[ev] || []).push(fn); },
 };
+let mapZoom = 14;
 const map = {
   getBounds: () => ({ getWest: () => 8.63, getSouth: () => 49.86, getEast: () => 8.68, getNorth: () => 49.89 }),
-  getZoom: () => 14, on(ev, fn) { mapHandlers[ev] = fn; },
+  getZoom: () => mapZoom, on(ev, fn) { mapHandlers[ev] = fn; },
   getContainer: () => mapContainer,
   // lineare Näherung um Darmstadt, damit die Popup-Platzierung nachrechenbar ist
   project: ([lon, lat]) => ({ x: 640 + (lon - 8.652) * 9000, y: 400 - (lat - 49.872) * 9000 }),
   easeTo: opts => { easeCalls.push(opts); },
   isMoving: () => false,
 };
-const overlay = { setProps(p) { cap.layers = p.layers; if (p.onClick) cap.onClick = p.onClick; } };
+// Quellen, Ebenen, Bilder und Trefferabfrage wie MapLibre (die Pillen sind Kartenebenen)
+const gl = installGl(map);
+const overlay = { setProps(p) { cap.layers = p.layers; cap.props = p; if (p.onClick) cap.onClick = p.onClick; } };
 const state = { modes: { tram: true, bus: true, rail: true }, selLine: null, selAt: 0 };
 let hideCalls = 0;                          // zählt, ob die Karte auf dem Telefon das Panel wegschickt
 
@@ -144,6 +149,16 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('jedes Fahrzeug hat realTime', heads.every(d => d.v.realTime === true));
   check('keine ungültigen Koordinaten', heads.every(d => isFinite(d.pos[0]) && isFinite(d.pos[1])));
   check('jedes Fahrzeug bringt Restgeometrie mit', heads.every(d => Array.isArray(d.rest)));
+  {
+    // Echte Daten: jedes gezeichnete Fahrzeug ist genau ein Feature, jede Linie hat ihren Bildsatz.
+    const fs0 = gl.features(L._test.CANVAS.VEHICLE_SOURCE);
+    const ls0 = [...new Set(fs0.map(f => f.properties.label))];
+    const miss0 = ls0.filter(l => !['pill-', 'pills-', 'pillf-'].every(pre => gl.images.has(pre + l)));
+    console.log(`  Canvas: ${fs0.length} Features, ${ls0.length} Linien, ${gl.images.size} Bilder, ohne Bildsatz ${miss0.length}`);
+    check('echte Fahrzeuge: ein Feature je Fahrzeug, mit Bildsatz je Linie',
+      fs0.length === heads.length && fs0.length > 0 && miss0.length === 0 &&
+      fs0.every(f => f.properties.pillimg === 'pill-' + f.properties.label && gl.images.has(f.properties.pillimg)));
+  }
 
   // Diese Prüfungen zitieren englische Wortlaute, also Englisch hier ausdrücklich setzen: seit
   // 2026-10-15 ist Deutsch die Vorgabe der Seite.
@@ -205,10 +220,15 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     check('Popup nennt die Uhrzeiten der Halte', /class="st-clock"/.test(p.innerHTML));
     check('Popup nennt Status und Verspätung als Wort', /On time|Delayed|Early/.test(p.innerHTML));
     sandbox.DarmstadtLive.render(true);          // Marken neu aufbauen, damit die Hervorhebung sitzt
-    const focusEl = ((L._test.markerNode() || { children: [] }).children || [])
-      .find(n => n.classList.contains('mk') && n.classList.contains('focus'));
+    const focusF = L._test.canvasFeatures().vehicles.find(f => f.properties.focus);
+    const focusImg = focusF && gl.images.get(focusF.properties.pillimg);
+    const focusOps = (focusImg && focusImg.data.ops) || [];
     check('das angetippte Fahrzeug ist an seiner Marke hervorgehoben (Akzentrand)',
-      !!focusEl, focusEl ? 'Marke hervorgehoben' : 'keine Marke hervorgehoben');
+      !!focusF && focusF.properties.key === String(pv.tripId) &&
+      focusF.properties.pillimg === 'pillf-' + String(pv.lineName) && !!focusImg &&
+      focusOps.some(o => o.op === 'stroke' && o.strokeStyle === '#fff') &&
+      focusOps.some(o => o.op === 'fill' && o.fillStyle === '#ffd166'),
+      focusF ? `${focusF.properties.pillimg}, weißer Rand + Akzent` : 'keine Marke hervorgehoben');
 
     console.log('\n=== Kamera folgt dem Fahrzeug, gibt nach 2 s frei ===');
     easeCalls.length = 0;
@@ -271,17 +291,25 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       await sandbox.DarmstadtLive.closePopup();
       await sandbox.DarmstadtLive.openPopup(heads.map(d => d.v)[0]);
     } else {
-    check('Haltestellen liegen als Daten vor und haben Marken im DOM',
-      sts.length > 0 && ((L._test.markerNode() || { children: [] }).children || [])
-        .some(n => n.classList.contains('stopmk')));
+    const stopF = gl.features(L._test.CANVAS.STOP_SOURCE);
+    check('Haltestellen liegen als Daten vor und als Features in der Haltestellen-Quelle',
+      sts.length > 0 && stopF.length > 0 && stopF.every(f => f.properties.kind === 'stop'),
+      `${stopF.length} Features`);
     check('Halte haben echte Koordinaten und eine stopId',
       sts.length > 0 && sts.every(s => Number.isFinite(s.lat) && Number.isFinite(s.lon) && !!s.stopId));
     check('Halte liegen im Darmstadt-Ausschnitt (keine Fantasiekoordinaten)',
       sts.length > 0 && sts.every(s => s.lat > 49.6 && s.lat < 50.2 && s.lon > 8.3 && s.lon < 9.0));
-    const stopEls = ((L._test.markerNode() || { children: [] }).children || []).filter(n => n.classList.contains('stopmk'));
+    // Antippbar = die Trefferabfrage an der Stelle des Halts liefert genau diesen Halt.
+    const hitOk = stopF.slice(0, 10).filter(f => {
+      const pt = map.project(f.geometry.coordinates);
+      const hits = map.queryRenderedFeatures([pt.x, pt.y], { layers: [L._test.CANVAS.STOP_LABELS, L._test.CANVAS.STOP_CIRCLES] });
+      // 11px neben dem Punkt trifft nur noch das unsichtbare Tippziel (26px), nicht der 13px-Kreis
+      const near = map.queryRenderedFeatures([pt.x + 11, pt.y], { layers: [L._test.CANVAS.STOP_HIT] });
+      return hits.some(h => h.properties.key === f.properties.key) && near.some(h => h.properties.key === f.properties.key);
+    }).length;
     check('Halte sind als Marken antippbar (Kreis mit Buchstabe)',
-      stopEls.length > 0 && stopEls.every(n => n.type === 'button' && String(n.textContent).length === 1),
-      `${stopEls.length} Marken`);
+      stopF.length > 0 && stopF.every(f => String(f.properties.mark).length === 1) && hitOk === Math.min(10, stopF.length),
+      `${stopF.length} Marken, ${hitOk} getroffen`);
 
     let found = null, deps = null;
     for (const cand of sts.slice(0, 6)) {                 // erster Halt mit gemeldeten Abfahrten
@@ -332,9 +360,8 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   }
 
   // Gezeichnete Halte = Haltemarken im DOM (die Karte selbst zeichnet nur Linien).
-  const shownStopsNow = () => ((L._test.markerNode() || { children: [] }).children || [])
-    .filter(n => n.classList.contains('stopmk'))
-    .map(n => ({ name: n.textContent, focus: n.classList.contains('focus') }));
+  const shownStopsNow = () => gl.features(L._test.CANVAS.STOP_SOURCE)
+    .map(f => ({ name: f.properties.mark, focus: f.properties.focus === true }));
 
   console.log('\n=== Linie wählen -> nur diese Linie auf der Karte ===');
   {
@@ -351,6 +378,9 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       const st = shownStopsNow();
       console.log(`  Linie ${META.lines[lineIdx].name}: ${before} Fahrzeuge vorher, ${shown.length} gezeichnet, Halte ${st.length}`);
       check('nur Fahrzeuge der gewählten Linie werden gezeichnet', shown.length > 0 && shown.every(d => d.v.lineIdx === lineIdx));
+      const lineF = gl.features(L._test.CANVAS.VEHICLE_SOURCE);
+      check('… und genau diese liegen in der Fahrzeug-Quelle', lineF.length === shown.length &&
+        lineF.every(f => shown.some(d => String(d.v.tripId) === f.properties.key)), `${lineF.length} Features`);
       check('und keine Haltestellen (kein Rauschen)', st.length === 0);
 
       await sandbox.DarmstadtLive.openPopup(shown[0].v);
@@ -424,7 +454,10 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 
     // Tippen auf die Karte schließt auf dem Telefon das Panel
     const before = hideCalls;
-    cap.onClick({ object: null });
+    check('deck.gl bekommt kein onClick (sonst schlösse sein Leer-Tipp die eben geöffnete Karte)',
+      !!cap.props && cap.props.onClick === null);
+    check('die Karte hat einen Klick-Handler für die Marken-Ebenen', typeof mapHandlers.click === 'function');
+    mapHandlers.click({ point: { x: -5000, y: -5000 } });     // Tipp ins Leere, über den Klick der Karte
     check('Tipp auf die Karte schließt das Panel (Telefon-Haken wird gerufen)', hideCalls === before + 1);
     check('und startet die 10-s-Ruheuhr neu', typeof state.selAt === 'number' && state.selAt > 0);
     sandbox.DarmstadtLive.closePopup();
@@ -684,34 +717,98 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   check('auf dem Rechner bleibt das Panel stehen', hideCalls === 0, `${hideCalls}`);
   L.closePopup();
 
-  console.log('\n=== Marken: rund, weiß, mit Sinnbild ===');
+  console.log('\n=== Marken: GPU-Pillen (Kartenebenen statt DOM) ===');
   L.setOn(false);
   L.render(true);
-  const host = L._test.markerNode();
-  const allNodes = host ? host.children : [];
-  const nodes = allNodes.filter(n => n.classList.contains('mk'));
+  const C = L._test.CANVAS;
   const drawn = L._test.markers();
-  console.log(`  Marken im DOM: ${nodes.length}, gezeichnete Fahrzeuge: ${drawn.length} (${allNodes.length} Knoten inkl. Halte)`);
-  check('für jedes gezeichnete Fahrzeug gibt es genau eine Marke', nodes.length === drawn.length && drawn.length > 0);
-  const markHtml = nodes.map(n => n.innerHTML || '').join(' | ');
-  const wantedLines = drawn.map(d => String(d.v.lineName));
-  // Markentext aus der API wird escaped (hier steht noch der XSS-Datensatz aus dem Test darüber).
-  const escHtml = x => String(x == null ? '' : x).replace(/[&<>"']/g,
-    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  console.log(`  Linien der Marken: ${JSON.stringify(wantedLines)}`);
-  check('Marken tragen ein SVG-Sinnbild und die Liniennummer (Text aus der API wird escaped)',
-    nodes.every(n => /<svg/.test(n.innerHTML) && /<span>/.test(n.innerHTML)) &&
-    wantedLines.every(l => markHtml.includes('<span>' + escHtml(l) + '</span>')) &&
-    !/<b onmouseover/.test(markHtml));
+  const feats = gl.features(C.VEHICLE_SOURCE);
+  // Kein einziges Marken-Element im DOM: weder in #markers noch irgendwo sonst als .mk/.stopmk.
+  const domMarks = Object.values(els).filter(n => n && n.classList && !n.removed &&
+    (n.classList.contains('mk') || n.classList.contains('stopmk')));
+  console.log(`  Features: ${feats.length}, gezeichnete Fahrzeuge: ${drawn.length}, DOM-Marken: ${domMarks.length}, #markers-Kinder: ${el('markers').children.length}`);
+  check('keine Fahrzeug- oder Haltemarke im DOM', domMarks.length === 0 && el('markers').children.length === 0);
+  check('Ebenen und Quellen liegen in der Karte (Quelle, Tippziel, Pillen, Halte)',
+    !!map.getSource(C.VEHICLE_SOURCE) && !!map.getSource(C.STOP_SOURCE) &&
+    map.getLayer(C.VEHICLE_PILLS).type === 'symbol' && map.getLayer(C.VEHICLE_HIT).type === 'circle' &&
+    !!map.getLayer(C.STOP_CIRCLES) && !!map.getLayer(C.STOP_LABELS) &&
+    JSON.stringify(map.getLayer(C.VEHICLE_PILLS).layout['icon-image']) === '["get","pillimg"]');
+  check('für jedes gezeichnete Fahrzeug gibt es genau ein Feature', feats.length === drawn.length && drawn.length > 0,
+    `${feats.length}/${drawn.length}`);
+  check('jedes Feature trägt label, mode, source und pillimg',
+    feats.every(f => f.properties.kind === 'vehicle' && typeof f.properties.label === 'string' && f.properties.label.length > 0 &&
+      ['tram', 'bus', 'rail'].includes(f.properties.mode) && ['open', 'operator'].includes(f.properties.source) &&
+      f.properties.pillimg === 'pill-' + f.properties.label));
+  const labels = [...new Set(feats.map(f => f.properties.label))];
+  const missing = labels.filter(l => !['pill-', 'pills-', 'pillf-'].every(pre => gl.images.has(pre + l)));
+  console.log(`  Linien: ${labels.length}, Bilder: ${gl.images.size}, ohne Bildsatz: ${JSON.stringify(missing)}`);
+  check('für jede Linie liegen alle drei Bilder vor (normal, kompakt, Fokus)', labels.length > 0 && missing.length === 0);
+  check('Bilder sind ImageData mit pixelRatio 2 (kein <canvas>)',
+    [...gl.images.values()].every(im => im.pixelRatio === 2 && im.data.data && im.data.data.length === im.data.width * im.data.height * 4));
+  // Die Liniennummer steht roh im Bild — es gibt kein HTML mehr, in das ein API-Text gelangen könnte.
+  const textOf = l => ((gl.images.get('pill-' + l) || { data: { ops: [] } }).data.ops.find(o => o.op === 'text') || {}).text;
+  check('jede Pille zeigt ihre Liniennummer als Text', labels.every(l => textOf(l) === l),
+    labels.slice(0, 6).map(l => `${l}=${textOf(l)}`).join(' '));
+  check('Pillenfarbe = Verkehrsart', feats.every(f => {
+    const im = gl.images.get(f.properties.pillimg);
+    const want = { tram: '#ff6b6b', bus: '#2ec4b6', rail: '#c77dff' }[f.properties.mode];
+    return im && im.data.ops.some(o => o.op === 'fill' && o.fillStyle === want);
+  }));
   // Die drei Verkehrsarten haben drei verschiedene Sinnbilder (direkt am Bauer geprüft, ohne Daten).
-  const t = L._test.markerHtml('tram', '3'), b = L._test.markerHtml('bus', 'F'), r = L._test.markerHtml('rail', 'S6');
-  const icons = [t, b, r].map(h => (h.match(/<svg[\s\S]*?<\/svg>/) || [''])[0]);
-  console.log(`  Sinnbilder: ${icons.map(i => i.length).join(' / ')} Zeichen`);
-  check('jede Verkehrsart hat ihr eigenes Sinnbild',
-    new Set(icons).size === 3 && icons.every(i => /^<svg/.test(i)) &&
-    /<span>3<\/span>/.test(t) && /<span>F<\/span>/.test(b) && /<span>S6<\/span>/.test(r));
-  check('Marken sind Schaltflächen mit Klasse .mk (rund und weiß per CSS)',
-    nodes.every(n => n.classList.contains('mk') && n.type === 'button'));
+  const iconOf = mode => (L._test.makeVehiclePill('3', mode, false, false, false).ops.find(o => o.op === 'fill' && o.path) || {}).path;
+  const icons = ['tram', 'bus', 'rail'].map(iconOf);
+  check('jede Verkehrsart hat ihr eigenes Sinnbild', icons.every(Boolean) && new Set(icons).size === 3);
+  const small = L._test.makeVehiclePill('S6', 'rail', false, true, false), big = L._test.makeVehiclePill('S6', 'rail', false, false, false);
+  const foc = L._test.makeVehiclePill('S6', 'rail', false, false, true), opP = L._test.makeVehiclePill('S6', 'rail', true, false, false);
+  console.log(`  Bildgrößen S6: kompakt ${small.width}x${small.height}, normal ${big.width}x${big.height}, Fokus ${foc.width}x${foc.height}`);
+  check('kompakte Pille ist kleiner als die normale, Fokus größer (Ring)',
+    small.width < big.width && small.height < big.height && foc.width > big.width && foc.height > big.height);
+  check('Betreiber-Pille trägt den grünen GPS-Punkt, die offene nicht',
+    opP.ops.some(o => o.fillStyle === '#78dca0') && !big.ops.some(o => o.fillStyle === '#78dca0'));
+
+  console.log('\n=== Zoom-14-Umschaltung über pillimg ===');
+  {
+    mapZoom = 13; L.render(true);
+    const lo = gl.features(C.VEHICLE_SOURCE);
+    mapZoom = 15; L.render(true);
+    const hi = gl.features(C.VEHICLE_SOURCE);
+    mapZoom = 14;
+    console.log(`  z13: ${lo.filter(f => /^pills-/.test(f.properties.pillimg)).length}/${lo.length} kompakt | z15: ${hi.filter(f => /^pill-/.test(f.properties.pillimg)).length}/${hi.length} normal`);
+    check('unter z14 tragen alle Features das kompakte Bild', lo.length > 0 && lo.every(f => f.properties.pillimg === 'pills-' + f.properties.label));
+    check('ab z14 wieder das normale Bild', hi.length > 0 && hi.every(f => f.properties.pillimg === 'pill-' + f.properties.label));
+  }
+
+  console.log('\n=== Tipp auf eine Pille öffnet genau dieses Fahrzeug ===');
+  {
+    L.render(true);
+    const f = gl.features(C.VEHICLE_SOURCE)[0];
+    const pt = map.project(f.geometry.coordinates);
+    const hits = map.queryRenderedFeatures([pt.x, pt.y], { layers: [C.VEHICLE_PILLS] });
+    check('queryRenderedFeatures auf der Pillenebene trifft die Pille', hits.some(h => h.properties.key === f.properties.key),
+      `${hits.length} Treffer`);
+    hideCalls = 0;
+    sandbox.matchMedia = () => ({ matches: true });             // Telefon-Layout: Panel geht weg
+    mapHandlers.click({ point: { x: pt.x, y: pt.y } });         // echter Klickweg der Karte
+    const inf = L.info();
+    const focusNow = gl.features(C.VEHICLE_SOURCE);
+    L.render(true);
+    const after = gl.features(C.VEHICLE_SOURCE);
+    console.log(`  getippt: Linie ${f.properties.label} (${f.properties.key}) | Karte ${inf.popupKind} | danach ${after.length} Feature(s)`);
+    check('der Tipp öffnet die Fahrzeugkarte und schickt das Panel weg', inf.popupOpen && inf.popupKind === 'vehicle' && hideCalls === 1);
+    check('die Karte zeigt das angetippte Fahrzeug (isoliert, Fokusbild)',
+      after.length === 1 && after[0].properties.key === f.properties.key && after[0].properties.pillimg === 'pillf-' + f.properties.label);
+    mapZoom = 13; L.render(true);
+    check('der Fokus behält unter z14 die volle Größe', gl.features(C.VEHICLE_SOURCE)[0].properties.pillimg === 'pillf-' + f.properties.label);
+    mapZoom = 14;
+    await wait(1500);
+    // Der Liniename kommt aus der API und steht escaped in der Karte (hier oft der XSS-Datensatz von oben).
+    const escL = String(f.properties.label).replace(/[&<>"']/g,
+      c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    check('die Karte nennt die angetippte Linie (escaped)', el('popup').innerHTML.includes(escL) &&
+      (escL === String(f.properties.label) || !el('popup').innerHTML.includes(String(f.properties.label))), escL);
+    void focusNow;
+    L.closePopup(); L._test.resetFollow();
+  }
 
   console.log('\n=== Haltestellen: Kreis mit H/S, Sprachwechsel ohne Neuladen, Linienlänge ===');
   const mPerLon3 = 111320 * Math.cos(49.87 * Math.PI / 180), n3 = Date.now();
@@ -721,17 +818,17 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     cd: [0, 0.01 * mPerLon3], total: 0.01 * mPerLon3, lineIdx: 0 }]);
   if (mapHandlers.moveend) mapHandlers.moveend();
   L.render(true);
-  const stops = host.children.filter(n => n.classList.contains('stopmk'));
-  check('Haltestellen sind Kreise mit einem Buchstaben', stops.length > 0);
-  const stopTexts = () => host.children.filter(n => n.classList.contains('stopmk')).map(n => n.textContent);
-  sandbox.I18N.set('en');
-  check('englisch: „H" im Kreis (Haltestelle, nicht „S" für S-Bahn)', stopTexts().every(t => t === 'H'));
-  sandbox.I18N.set('de');
-  L.setLang();                                            // Sprachwechsel im laufenden Betrieb
-  check('deutsch: „H" im Kreis — ohne Neuladen', stopTexts().every(t => t === 'H'));
+  const stopTexts = () => gl.features(C.STOP_SOURCE).map(f => f.properties.mark);
+  check('Haltestellen sind Kreise mit einem Buchstaben', stopTexts().length > 0 && map.getLayer(C.STOP_CIRCLES).type === 'circle');
   sandbox.I18N.set('en');
   L.setLang();
-  check('zurück auf englisch: wieder „H"', stopTexts().every(t => t === 'H'));
+  check('englisch: „H" im Kreis (Haltestelle, nicht „S" für S-Bahn)', stopTexts().length > 0 && stopTexts().every(t => t === 'H'));
+  sandbox.I18N.set('de');
+  L.setLang();                                            // Sprachwechsel im laufenden Betrieb
+  check('deutsch: „H" im Kreis — ohne Neuladen', stopTexts().length > 0 && stopTexts().every(t => t === 'H'));
+  sandbox.I18N.set('en');
+  L.setLang();
+  check('zurück auf englisch: wieder „H"', stopTexts().length > 0 && stopTexts().every(t => t === 'H'));
   check('Linienlänge = alle Halte der Fahrt (auch die schon durchfahrenen)',
     JSON.stringify(L._test.tripChain({ from: { lat: 1, lon: 1 }, intermediateStops: [{ lat: 2, lon: 2 }, { lat: 3, lon: 3 }], to: { lat: 4, lon: 4 } })) ===
     JSON.stringify([[1, 1], [2, 2], [3, 3], [4, 4]]));

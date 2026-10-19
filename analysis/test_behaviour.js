@@ -25,6 +25,7 @@
 const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
+const { canvas2d, installGl, Path2D } = require('./gl_stub');
 
 const DOCS = path.join(__dirname, '..', 'docs');
 const read = f => fs.readFileSync(path.join(DOCS, f), 'utf8');
@@ -54,7 +55,7 @@ function el(id) {
       contains(c) { return this._s.has(c); } },
     querySelector(sel) { return el(id + sel); },
     querySelectorAll() { return []; },
-    getContext() { return { setTransform() {}, clearRect() {}, fillRect() {}, fillText() {}, set fillStyle(v) {}, set font(v) {} }; },
+    getContext() { return canvas2d(o); },
   };
   let cn = '';
   Object.defineProperty(o, 'className', {
@@ -134,6 +135,7 @@ function fixtureFor(url) {
 const sandbox = {
   console, Math, JSON, Date, Number, String, Array, Object, Map, Set, parseInt, parseFloat, isNaN, isFinite,
   setTimeout, clearTimeout, setInterval, clearInterval, Promise, Float64Array, Error, Uint16Array, CustomEvent: class {},
+  Path2D,
   navigator: { language: 'en-GB' },
   localStorage: { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); },
                   removeItem: k => { delete store[k]; } },
@@ -178,6 +180,10 @@ const map = {
 };
 const overlay = { setProps(p) { overlay.cap = p; } };
 const state = { modes: { tram: true, bus: true, rail: true }, selLine: null, selAt: 0 };
+// Fahrzeug- und Haltemarken sind Kartenebenen: Quellen/Ebenen/Bilder auf demselben Stil wie die Gleise
+const gl = installGl(map, { style: dmapStyle });
+let mapZoom = 14;
+map.getZoom = () => mapZoom;
 
 sandbox.I18N.init();
 const L = sandbox.DarmstadtLive, X = L._test;
@@ -218,7 +224,7 @@ function openPage(seedFavs, opts = {}) {
         add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); }, contains(c) { return this._s.has(c); } },
       querySelector(sel) { return pageEl(id + sel); },
       querySelectorAll() { return []; },
-      getContext() { return { setTransform() {}, clearRect() {}, fillRect() {}, fillText() {}, set fillStyle(v) {}, set font(v) {} }; },
+      getContext() { return canvas2d(o); },
     };
     let cn = '';
     Object.defineProperty(o, 'className', {
@@ -232,7 +238,7 @@ function openPage(seedFavs, opts = {}) {
   const sb = {
     console, Math, JSON, Date, Number, String, Array, Object, Map, Set, parseInt, parseFloat, isNaN, isFinite,
     setTimeout, clearTimeout, setInterval, clearInterval, Promise, Float64Array, Uint16Array, Error,
-    CustomEvent: class { constructor(t) { this.type = t; } },
+    CustomEvent: class { constructor(t) { this.type = t; } }, Path2D,
     navigator: { language: 'en-GB', geolocation: { getCurrentPosition() {}, watchPosition: () => 1, clearWatch() {} } },
     localStorage: { getItem: k => (k in pstore ? pstore[k] : null), setItem: (k, v) => { pstore[k] = String(v); },
                     removeItem: k => { delete pstore[k]; } },
@@ -262,7 +268,7 @@ function openPage(seedFavs, opts = {}) {
   const container = { clientWidth: 1280, clientHeight: 800, addEventListener() {}, appendChild(c) { return c; } };
   // Karte mit einem kleinen, aber echten Stil: Quellen und Ebenen werden wirklich angelegt und
   // umgeschaltet, addControl ruft onAdd wie MapLibre (die Reihenfolge ist die Spalte unten rechts).
-  const controls = [], mh = {}, setStyleCalls = [];
+  const controls = [], mh = {}, setStyleCalls = [], pageMaps = [];
   const style = { sources: { carto: { url: 'x' } }, layers: [
     { id: 'background', type: 'background' },
     { id: 'water', type: 'fill', source: 'carto' },
@@ -270,7 +276,9 @@ function openPage(seedFavs, opts = {}) {
     { id: 'hidden-by-style', type: 'line', source: 'carto', layout: { visibility: 'none' } },
   ] };
   sb.maplibregl = {
-    Map: class { constructor(o) { Object.assign(this, o); }
+    // installGl: Quellen/Ebenen/Bilder wie MapLibre, auf DEMSELBEN Stil — so sieht der Test, was
+    // applyBasemap mit den Marken-Ebenen macht.
+    Map: class { constructor(o) { Object.assign(this, o); pageMaps.push(this); this.gl = installGl(this, { style }); }
       getCanvasContainer() { return container; } getCanvas() { return container; } getContainer() { return container; }
       getStyle() { return style; }
       addControl(c, pos) { const el = c && c.onAdd ? c.onAdd(this) : null; controls.push({ name: c && c.constructor && c.constructor.name, pos, el }); }
@@ -298,13 +306,13 @@ function openPage(seedFavs, opts = {}) {
   const blocks = [...html.matchAll(/<script(?![^>]*src)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
   blocks.forEach(b => vm.runInContext(b, sb));         // ALLE Inline-Skripte, in Reihenfolge wie im Browser
   return { el: pageEl, chips, chipFor, all: pall, fire: ev => (wh[ev] || []).forEach(f => f()),
-    sb, controls, style, store: pstore, setStyleCalls, mapFire: ev => (mh[ev] || []).forEach(f => f()),
+    sb, controls, style, store: pstore, setStyleCalls, map: () => pageMaps[0], mapFire: ev => (mh[ev] || []).forEach(f => f()),
     t: k => sb.I18N.t(k), ready: new Promise(r => setTimeout(r, 40)) };
 }
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
-const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
-  .filter(n => n.classList.contains('stopmk')).map(n => (n._geo || []).map(v => v.toFixed(4)).join(','));
+const shownStopGeo = () => gl.features(X.CANVAS.STOP_SOURCE)
+  .map(f => f.geometry.coordinates.map(v => v.toFixed(4)).join(','));
 
 (async () => {
   let fails = 0;
@@ -451,28 +459,47 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
 
   console.log('\n=== M3c: die Liniennummer steht in jedem Zoom in der Marke ===');
   {
-    const host = X.markerNode();
-    const el = host.children.find(n => n.dataset && n.dataset.key === 'v:' + vA.tripId) || host.children[0];
+    const C = X.CANVAS;
+    const pills = map.getLayer(C.VEHICLE_PILLS);
+    const featA = () => gl.features(C.VEHICLE_SOURCE).find(f => f.properties.key === String(vA.tripId));
+    L.render(true);
+    const fA = featA();
     check('kein Punkt-Modus und keine hochgezogene Sprechblase mehr (Betreiber-Wunsch)',
-      !host.classList.contains('dots') && !host.classList.contains('callout'));
-    check('die Marke sitzt mittig auf der Position', !!el && /translate\(-50%,-50%\)/.test(el.style.transform),
-      el ? el.style.transform : 'keine Marke');
-    check('die Marke trägt Liniennummer und Symbol', !!el && /<span>/.test(el.innerHTML) && el.innerHTML.includes(vA.lineName),
-      el ? el.innerHTML.slice(0, 60) : 'keine Marke');
+      !!pills && pills.layout['icon-anchor'] === 'center' && !('icon-offset' in pills.layout) &&
+      pills.layout['icon-allow-overlap'] === true && pills.layout['icon-ignore-placement'] === true);
+    check('die Marke sitzt mittig auf der Position', !!fA &&
+      Math.abs(fA.geometry.coordinates[0] - X.markers().find(m => m.v.tripId === vA.tripId).pos[0]) < 1e-12,
+      fA ? JSON.stringify(fA.geometry.coordinates) : 'keine Marke');
+    check('die Marke trägt Liniennummer und Symbol', !!fA && fA.properties.label === String(vA.lineName) &&
+      fA.properties.pillimg === 'pill-' + vA.lineName && gl.images.has('pill-' + vA.lineName) &&
+      gl.images.get('pill-' + vA.lineName).data.ops.some(o => o.op === 'text' && o.text === String(vA.lineName)) &&
+      gl.images.get('pill-' + vA.lineName).data.ops.some(o => o.op === 'fill' && o.path),
+      fA ? fA.properties.pillimg : 'keine Marke');
+    mapZoom = 10; L.render(true);
+    const far = featA();
+    check('auch weit herausgezoomt: kompaktes Bild, Liniennummer bleibt', !!far && far.properties.pillimg === 'pills-' + vA.lineName &&
+      gl.images.get('pills-' + vA.lineName).data.ops.some(o => o.op === 'text' && o.text === String(vA.lineName)));
+    mapZoom = 14; L.render(true);
+    check('kein DOM-Element für Marken (nicht in #markers, nirgends .mk/.stopmk)',
+      el('markers').children.length === 0 &&
+      !Object.values(els).some(n => n && n.classList && (n.classList.contains('mk') || n.classList.contains('stopmk'))));
   }
 
   console.log('\n=== M4: ein gewähltes Fahrzeug isoliert die Karte — auch beim Herauszoomen ===');
   {
-    const kids = () => (((X.markerNode() || {}).children) || []);
-    const mk = () => kids().filter(n => n.classList.contains('mk'));
-    const stops = () => kids().filter(n => n.classList.contains('stopmk'));
+    // Marken = Features der beiden Quellen; dataset.key entspricht properties.key.
+    const asNode = f => ({ dataset: { key: 'v:' + f.properties.key }, dim: f.properties.dim, focus: f.properties.focus });
+    const mk = () => gl.features(X.CANVAS.VEHICLE_SOURCE).map(asNode);
+    const stops = () => gl.features(X.CANVAS.STOP_SOURCE);
     const vB = Object.assign({}, vA, { tripId: 'T-FOKUS-B', lineName: '7', lon: vA.lon + 0.02 });
     const vC = Object.assign({}, vA, { tripId: 'T-FOKUS-C', lineName: 'H', lon: vA.lon - 0.02 });
     const vD = Object.assign({}, vA, { tripId: 'T-FOKUS-D', lineName: '9', lon: vA.lon + 0.04 });
     const vE = Object.assign({}, vA, { tripId: 'T-FOKUS-E', lineName: '5', lon: vA.lon - 0.04 });
 
     X.stops().length = 0;                       // Netz-Haltestelle einspeisen: „nichts anderes" muss messbar sein
-    X.stops().push({ name: 'Netzhalt', lat: vA.lat + 0.003, lon: vA.lon + 0.003, stopId: 'NET-1' });
+    // Echte Koordinaten neben dem Fahrzeug (vA trägt keine lat/lon, nur seinen Pfad): mit NaN, wie
+    // vorher, zählte nur das DOM-Element — die Kartenebene verwirft ungültige Punkte zu Recht.
+    X.stops().push({ name: 'Netzhalt', lat: vA.path[0][1] + 0.003, lon: vA.path[0][0] + 0.003, stopId: 'NET-1' });
     X.setVehicles([vA, vB, vC]); L.render(true);
     check('ohne Auswahl liegen alle Fahrzeuge auf der Karte', mk().length >= 3, `${mk().length} Marken`);
     check('ohne Auswahl ist auch die Netz-Haltestelle da', stops().length === 1, `${stops().length} Halte`);
@@ -480,7 +507,9 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     check('ein gewähltes Fahrzeug: nur EINES wird gezeichnet', mk().length === 1, `${mk().length} Marken`);
     check('und zwar genau das gewählte', mk()[0] && mk()[0].dataset.key === 'v:' + vA.tripId,
       mk()[0] ? mk()[0].dataset.key : 'keine');
-    check('die anderen werden nicht mehr blass mitgezeichnet', mk().every(n => !n.classList.contains('dim')));
+    check('die anderen werden nicht mehr blass mitgezeichnet', mk().every(n => n.dim === false));
+    check('das gewählte trägt das Fokusbild', mk()[0] && mk()[0].focus === true &&
+      gl.features(X.CANVAS.VEHICLE_SOURCE)[0].properties.pillimg === 'pillf-' + vA.lineName && gl.images.has('pillf-' + vA.lineName));
     check('die Linie bleibt sichtbar', X.chain().length === 1);
     check('die fremde Haltestelle verschwindet', stops().length === 0, `${stops().length} Halte`);
 
@@ -523,11 +552,25 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     check('alle fünf Kennungen sind gleich', new Set(tokens).size === 1 && !!tokens[0], tokens.join(' / '));
   }
 
-  console.log('\n=== M7: Marken hängen im Karten-Container ===');
-  check('das Marken-Element liegt im Markup', /<div id="markers" aria-hidden="true"><\/div>/.test(html));
-  check('index.html hängt es in den Karten-Container (Gesten erreichen MapLibre)',
-    /map\.getCanvasContainer\(\)/.test(html) && /canvasBox\.appendChild\(host\)/.test(html));
-  check('live.js findet die Marken weiterhin über die Kennung', /getElementById\('markers'\)/.test(liveSrc));
+  console.log('\n=== M7: Marken sind Kartenebenen (Gesten und Tipps gehören MapLibre) ===');
+  {
+    const C = X.CANVAS;
+    check('live.js fasst #markers nicht mehr an (keine DOM-Marken)', !/getElementById\('markers'\)/.test(liveSrc));
+    check('fünf Marken-Ebenen auf zwei GeoJSON-Quellen, über den Tramgleisen',
+      [C.STOP_HIT, C.STOP_CIRCLES, C.STOP_LABELS, C.VEHICLE_HIT, C.VEHICLE_PILLS].every(id => !!map.getLayer(id)) &&
+      map.getSource(C.VEHICLE_SOURCE).type === 'geojson' && map.getSource(C.STOP_SOURCE).type === 'geojson' &&
+      dmapStyle.layers.findIndex(l => l.id === 'corridors') < dmapStyle.layers.findIndex(l => l.id === C.VEHICLE_PILLS),
+      dmapStyle.layers.map(l => l.id).join(','));
+    check('Tipps laufen über den Klick der Karte, deck.gl hat kein onClick',
+      typeof mapHandlers.click === 'function' && overlay.cap && overlay.cap.onClick === null);
+    check('Zeiger über einer Marke: Ebenen-Ereignisse registriert',
+      !!gl.layerHandlers['mouseenter:' + C.VEHICLE_PILLS] && !!gl.layerHandlers['mouseleave:' + C.VEHICLE_PILLS]);
+    // Ein ausgeblendetes Ebenen-Layout (wie applyBasemap es früher tat) holt sich live.js zurück.
+    map.setLayoutProperty(C.VEHICLE_PILLS, 'visibility', 'none');
+    L.render(true);
+    check('eine ausgeblendete Pillenebene wird beim nächsten Zeichnen wieder sichtbar',
+      map.getLayoutProperty(C.VEHICLE_PILLS, 'visibility') === 'visible');
+  }
 
   console.log('\n=== Regression: Linienwahl und Sprachwechsel ohne Ausnahme (Stern + Auswahlfeld) ===');
   {
@@ -594,6 +637,15 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     check('the tile cap still runs exactly once (one setStyle, from the patch)',
       desk.setStyleCalls.length === 1 && desk.style.sources.carto.maxzoom === 14 && !desk.style.sources.carto.url);
     desk.style.layers.push({ id: 'me-dot', type: 'circle', source: 'me' });   // „Wo bin ich?“ ist an
+    // Fahrzeuge auf die Seite bringen: danach liegen die Marken-Ebenen im selben Stil, den applyBasemap
+    // umschaltet. Geprüft wird OHNE erneutes Zeichnen, sonst verdeckte live.js' Rückholung den Fehler.
+    desk.sb.DarmstadtLive._test.setVehicles([Object.assign({}, vA, { lineIdx: 0 })]);
+    desk.sb.DarmstadtLive.render(true);
+    const MARKER_IDS = ['live-stop-hit', 'live-stop-circles', 'live-stop-labels', 'live-vehicle-hit', 'live-vehicle-pills'];
+    const pillsUp = () => MARKER_IDS.every(id => vis(desk, id) === 'visible');
+    const pillFeats = () => desk.map().gl.features('live-vehicles').length;
+    check('the page draws the vehicle as a canvas pill (layers in the style, one feature)',
+      pillsUp() && pillFeats() === 1 && desk.el('markers').children.length === 0, `${pillFeats()} Features`);
     check('the cartographic state is flagged for pill contrast but is not the satellite state',
       desk.sb.basemap() === 'carto' &&
       desk.sb.document.documentElement.dataset.basemap === 'carto' && vis(desk, 'me-dot') === 'visible');
@@ -607,7 +659,10 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
       desk.sb.document.documentElement.dataset.basemap === 'normal' && btn.attrs['aria-pressed'] === 'false' &&
       btn.attrs['data-i18n-title'] === 'basemapToSatellite');
     check('the own location dot is never hidden by the switch', vis(desk, 'me-dot') === 'visible');
+    check('standard view: the marker layers stay visible', pillsUp(), MARKER_IDS.map(id => vis(desk, id)).join(','));
     btn.onclick();
+    check('satellite: the marker layers stay visible (they are content, not basemap)', pillsUp(),
+      MARKER_IDS.map(id => vis(desk, id)).join(','));
     check('the satellite image comes second, style layers hidden again',
       desk.sb.basemap() === 'satellite' && vis(desk, 'sat') === 'visible' && vis(desk, 'cartoimg') === 'none' &&
       ['background', 'water', 'roads'].every(id => vis(desk, id) === 'none') && !('dlm-basemap' in desk.store));
@@ -616,6 +671,7 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
       btn.attrs['data-i18n-title'] === 'basemapToMap');
     check('the own location dot is never hidden by the switch', vis(desk, 'me-dot') === 'visible');
     btn.onclick();
+    check('cartographic again: the marker layers stay visible', pillsUp(), MARKER_IDS.map(id => vis(desk, id)).join(','));
     check('the third click returns to the cartographic map, style layers still hidden',
       desk.sb.basemap() === 'carto' && vis(desk, 'cartoimg') === 'visible' && vis(desk, 'sat') === 'none' &&
       vis(desk, 'roads') === 'none' && vis(desk, 'water') === 'none' &&
@@ -656,6 +712,15 @@ const shownStopGeo = () => ((X.markerNode() || { children: [] }).children || [])
     check('?hybrid=0 keeps the slim view: no basemap toggle, no desktop location, location on phones',
       !names(prod).includes('BasemapButton') && !names(prod).includes('LocateButton') &&
       names(prodPhone).includes('LocateButton'), names(prod).join(' > '));
+    for (const [name, pg] of [['default page', hyb], ['?hybrid=0', prod]]) {
+      pg.sb.DarmstadtLive._test.setVehicles([Object.assign({}, vA, { lineIdx: 0 })]);
+      pg.sb.DarmstadtLive.render(true);
+      const m = pg.map(), f = m.gl.features('live-vehicles');
+      check(`${name}: vehicles are drawn as canvas pills (feature + all three images, no DOM marker)`,
+        f.length === 1 && f[0].properties.pillimg === 'pill-' + vA.lineName &&
+        ['pill-', 'pills-', 'pillf-'].every(pre => m.hasImage(pre + vA.lineName)) &&
+        pg.el('markers').children.length === 0, `${f.length} Features`);
+    }
     check('?hybrid=0 keeps the search inside the left panel and never flags hybrid',
       !prod.sb.document.documentElement.dataset.hybrid &&
       prod.el('searchbar').parentNode === prod.el('panelbar') &&

@@ -4,6 +4,7 @@
 const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
+const { canvas2d, installGl, Path2D } = require('./gl_stub');
 
 const DOCS = path.join(__dirname, '..', 'docs');
 const META = JSON.parse(fs.readFileSync(path.join(DOCS, 'data', 'meta.json'), 'utf8'));
@@ -30,10 +31,11 @@ function el(id) {
     remove() { const p = o.parentNode; if (p) { const i = p.children.indexOf(o); if (i >= 0) p.children.splice(i, 1); } o.removed = true; },
     querySelector() { return null; },
     getContext() {
-      return {
-        setTransform() {}, clearRect() {}, fillRect() { captured.canvasCalls++; },
-        fillText() { captured.canvasCalls++; }, set fillStyle(v) {}, set font(v) {},
-      };
+      // Canvas 2D mit Mitschrift (die Pillen werden damit gerastert); Zeichenaufrufe werden gezählt.
+      const c = canvas2d(o), fr = c.fillRect, ft = c.fillText;
+      c.fillRect = (...a) => { captured.canvasCalls++; return fr.apply(c, a); };
+      c.fillText = (...a) => { captured.canvasCalls++; return ft.apply(c, a); };
+      return c;
     },
   };
   let cn = '';
@@ -55,7 +57,7 @@ class Layer { constructor(props) { Object.assign(this, props); } }
 
 const sandbox = {
   console, Math, JSON, Date, Number, String, Array, Object, Map, Set, parseInt, parseFloat, isNaN, isFinite,
-  setTimeout, clearTimeout, setInterval, clearInterval, Promise, Float64Array, Error, Uint16Array,
+  setTimeout, clearTimeout, setInterval, clearInterval, Promise, Float64Array, Error, Uint16Array, Path2D,
   // Die API verlangt einen eigenen User-Agent; im Browser erledigt das der Browser selbst.
   fetch: (url, opts) => fetch(url, { ...(opts || {}), headers: { ...((opts && opts.headers) || {}), 'User-Agent': 'hermes-darmstadt-live-test/1.0' } }),
   document: { getElementById: el, addEventListener() {}, hidden: false,
@@ -79,6 +81,7 @@ const map = {
   easeTo() {},
   isMoving: () => false,
 };
+const gl = installGl(map);              // die Pillen sind Kartenebenen: Quellen/Ebenen/Bilder wie MapLibre
 const overlay = { setProps(p) { captured.layers = p.layers; captured.handlers = p; } };
 const state = { modes: { tram: true, bus: true, rail: true }, selLine: null };
 
@@ -109,8 +112,8 @@ sandbox.window.DarmstadtLive.attach({
 
   const L = sandbox.window.DarmstadtLive;
   L.render(true);
-  // Fahrzeugmarken und Halte sind jetzt DOM-Elemente, die Karte zeichnet nur noch Linien — die Daten
-  // kommen deshalb aus der Modul-API, die Ebenen sind Verlauf und (nach Klick) die Linienlänge.
+  // Fahrzeugmarken und Halte sind MapLibre-Ebenen (unten geprüft), deck.gl zeichnet nur noch Linien —
+  // die Daten kommen aus der Modul-API, die deck-Ebenen sind Verlauf und (nach Klick) die Linienlänge.
   const byId = id => captured.layers.find(l => l.id === id) || { data: [] };
   const trails = byId('live-trails'), heads = { data: L._test.markers() }, stations = { data: L._test.stops() };
   console.log('\n=== Ebenen ===');
@@ -169,6 +172,21 @@ sandbox.window.DarmstadtLive.attach({
     console.log(`  ${d.v.mode.padEnd(5)} ${String(d.v.lineName).padEnd(4)} ${String(d.v.delayMin).padStart(3)} min @ ${d.pos[0].toFixed(5)},${d.pos[1].toFixed(5)}  ${shortStop(d.v.fromName).slice(0, 24)} -> ${shortStop(d.v.dest).slice(0, 24)}  Restpunkte=${d.rest.length}`);
   }
 
+  // Kartenebenen statt DOM: jedes gezeichnete Fahrzeug ist ein Feature mit label/mode/source/pillimg,
+  // jede Linie hat ihr Bild in beiden Größen (und den Fokus), und im DOM steht keine Marke.
+  const C = L._test.CANVAS;
+  const feats = gl.features(C.VEHICLE_SOURCE), stopFeats = gl.features(C.STOP_SOURCE);
+  const labels = [...new Set(feats.map(f => f.properties.label))];
+  const noImg = labels.filter(l => !['pill-', 'pills-', 'pillf-'].every(pre => gl.images.has(pre + l)));
+  const domMarks = Object.values(elements).filter(n => n && n.classList && (n.classList.contains('mk') || n.classList.contains('stopmk'))).length;
+  const canvasOk = feats.length === heads.data.length && feats.length > 0 && noImg.length === 0 && domMarks === 0 &&
+    feats.every(f => typeof f.properties.label === 'string' && ['tram', 'bus', 'rail'].includes(f.properties.mode) &&
+      ['open', 'operator'].includes(f.properties.source) && f.properties.pillimg === 'pill-' + f.properties.label) &&
+    stopFeats.length === stations.data.length;
+  console.log('\n=== Kartenebenen ===');
+  console.log(`  ${canvasOk ? 'PASS' : 'FAIL'}  Features ${feats.length} (Fahrzeuge ${heads.data.length}), Linien ${labels.length},` +
+    ` Bilder ${gl.images.size}, Linien ohne Bildsatz ${noImg.length}, Halte-Features ${stopFeats.length}/${stations.data.length}, DOM-Marken ${domMarks}`);
+
   const rtOnly = heads.data.every(d => d.v.realTime === true);
   console.log('\n=== Geprüft ===');
   console.log(`  Fahrzeuge > 0: ${info.count > 0} | ungültige Koordinaten = 0: ${nan === 0} | alle im Raum Darmstadt: ${inBox === pos.length}`);
@@ -182,7 +200,7 @@ sandbox.window.DarmstadtLive.attach({
   let i18nFails = 0;
   require('./test_i18n').run((n, c, e) => { console.log(`  ${c ? 'PASS' : 'FAIL'}  ${n}${!c && e ? ' — ' + e : ''}`); if (!c) i18nFails++; });
 
-  const ok = lineStatusOk && info.count > 0 && nan === 0 && inBox === pos.length && trails.data.length === heads.data.length &&
+  const ok = lineStatusOk && canvasOk && info.count > 0 && nan === 0 && inBox === pos.length && trails.data.length === heads.data.length &&
     rtOnly && !off.active && !off.polling && i18nFails === 0 &&
     stations.data.length > 0 && stations.data.every(s => isFinite(s.lat) && isFinite(s.lon) && !!s.stopId);
   console.log('\nRESULT:', ok ? 'PASS' : 'FAIL');

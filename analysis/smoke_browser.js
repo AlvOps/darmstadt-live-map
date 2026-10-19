@@ -49,12 +49,43 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await send('Page.navigate', { url: URL_ });
   await sleep(14000);
 
+  // Start-Overlay wie ein Besucher bestätigen (Sprache, dann Hinweis) — es liegt sonst über den Pillen.
+  for (let i = 0; i < 3; i++) {
+    const shown = await ev("(function(){var w=document.getElementById('welcome');if(!w)return false;var cs=getComputedStyle(w);" +
+      "if(cs.display==='none'||cs.visibility==='hidden'||w.hidden)return false;" +
+      "var l=document.getElementById('wlang');if(l&&!l.hidden){var b=l.querySelector('button[data-lang=de]');if(b)b.click();}" +
+      "document.getElementById('wnav').click();return true;})()");
+    if (!shown) break;
+    await sleep(800);
+  }
   const r = { url: URL_ };
   r.badge = await ev("document.getElementById('livebadge').dataset.state");
   r.livestat = await ev("document.getElementById('livestat').textContent");
-  r.markersHostParent = await ev("(function(){var m=document.getElementById('markers');return m&&m.parentNode?(m.parentNode.className||m.parentNode.id||m.parentNode.tagName):'none'})()");
-  r.vehicleMarkers = await ev("document.querySelectorAll('#markers .mk').length");
-  r.clicked = await ev("(function(){var m=document.querySelector('#markers .mk');if(!m)return 'no .mk';m.dispatchEvent(new MouseEvent('click',{bubbles:true}));return m.textContent.slice(0,12)})()");
+  // Die Marken sind MapLibre-Ebenen (GPU), nicht DOM: gezählt wird in der Karte, getippt wird mit einem
+  // ECHTEN Mausklick (CDP Input) auf die Bildschirmposition einer gezeichneten Pille.
+  const MAP = "window.DarmstadtLive._test.map()", C = "window.DarmstadtLive._test.CANVAS";
+  r.domMarkers = await ev("document.querySelectorAll('.mk, .stopmk').length + document.getElementById('markers').children.length");
+  r.canvas = await ev(`(function(){var m=${MAP},C=${C};var src=m.getSource(C.VEHICLE_SOURCE);
+    var f=(src&&src._data&&src._data.features)||(src&&src.serialize&&src.serialize().data&&src.serialize().data.features)||[];
+    var labels=[...new Set(f.map(x=>x.properties.label))];
+    var missing=labels.filter(l=>!['pill-','pills-','pillf-'].every(p=>m.hasImage(p+l)));
+    var r=m.queryRenderedFeatures({layers:[C.VEHICLE_PILLS]});
+    return {features:f.length,labels:labels.length,missing:missing,rendered:r.length,
+      props:f.length?Object.keys(f[0].properties).sort().join(','):'',zoom:m.getZoom(),
+      vis:m.getLayoutProperty(C.VEHICLE_PILLS,'visibility')||'visible'};})()`);
+  const pill = await ev(`(function(){var m=${MAP},C=${C};var r=m.queryRenderedFeatures({layers:[C.VEHICLE_PILLS]});
+    var b=m.getCanvas().getBoundingClientRect();
+    for(var i=0;i<r.length;i++){var p=m.project(r[i].geometry.coordinates);
+      if(p.x>40&&p.y>40&&p.x<b.width-40&&p.y<b.height-40){
+        var top=document.elementFromPoint(b.left+p.x,b.top+p.y);
+        if(top&&top.tagName==='CANVAS')return {x:b.left+p.x,y:b.top+p.y,label:r[i].properties.label,key:r[i].properties.key};}}
+    return null;})()`);
+  if (pill && pill.x) {
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await send('Input.dispatchMouseEvent', { type, x: pill.x, y: pill.y, button: 'left', clickCount: 1 });
+    }
+    r.clicked = pill.label;
+  } else r.clicked = 'no rendered pill';
   await sleep(7000);
   r.popupVisible = await ev("(function(){var p=document.getElementById('popup');return !!(p&&p.classList.contains('on')&&p.textContent.trim())})()");
   r.popup = await ev("(function(){var p=document.getElementById('popup');return (p.textContent||'').replace(/\\s+/g,' ').slice(0,600)})()");
@@ -63,7 +94,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   r.selName = await ev("(function(){var e=document.getElementById('selinfo');return e?e.style.display||'unset':'missing'})()");
 
   // Linienwahl muss die Fahrzeugauswahl wegräumen (M3) — Zustand davor festhalten
-  r.followBefore = await ev("document.querySelectorAll('#markers .mk.focus').length");
+  const focusCount = `(function(){var m=${MAP},C=${C};return m.queryRenderedFeatures({layers:[C.VEHICLE_PILLS]}).filter(f=>f.properties.focus).length;})()`;
+  r.followBefore = await ev(focusCount);
   r.chipCount = await ev("document.querySelectorAll('.chip[data-line]').length");
   r.lineClick = await ev("(function(){var c=document.querySelector('.chip[data-line]');if(!c)return 'no chip';c.click();return c.dataset.line})()");
   await sleep(3000);
@@ -71,7 +103,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   r.selinfoAfterLine = await ev("(function(){var e=document.getElementById('selinfo');return e?(e.style.display||'unset'):'missing'})()");
   r.starAfterLine = await ev("document.getElementById('selfav').textContent");
   r.popupAfterLine = await ev("(function(){var p=document.getElementById('popup');return !!(p&&p.classList.contains('on'))})()");
-  r.followAfterLine = await ev("document.querySelectorAll('#markers .mk.focus').length");
+  r.followAfterLine = await ev(focusCount);
 
   // DE-Umschaltung, Wortlaut im Popup
   await ev("(function(){var b=document.querySelectorAll('#lang .seg button');if(b[1])b[1].click();return b.length})()");
@@ -91,7 +123,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   ck('die gewählte Linie ist markiert', Number(r.lineSelActive) >= 1, String(r.lineSelActive));
   ck('Linienwahl räumt die Fahrzeugauswahl weg (M3)', r.popupAfterLine === false && Number(r.followAfterLine) === 0,
     `popup=${r.popupAfterLine} follow=${r.followAfterLine}`);
-  ck('Marken hängen im Karten-Container (M7)', String(r.markersHostParent).includes('maplibregl-canvas-container'), String(r.markersHostParent));
+  const cv = r.canvas || {};
+  ck('keine Marke im DOM (Pillen sind Kartenebenen)', Number(r.domMarkers) === 0, String(r.domMarkers));
+  ck('die Fahrzeugquelle hat Features mit label/mode/source/pillimg', cv.features > 0 &&
+    ['label', 'mode', 'pillimg', 'source'].every(k => String(cv.props).split(',').includes(k)), `${cv.features} / ${cv.props}`);
+  ck('für jede Linie liegen alle drei Pillenbilder vor', cv.labels > 0 && Array.isArray(cv.missing) && cv.missing.length === 0,
+    `${cv.labels} Linien, fehlend ${JSON.stringify(cv.missing)}`);
+  ck('die Pillenebene zeichnet (queryRenderedFeatures > 0)', cv.rendered > 0 && cv.vis !== 'none', `${cv.rendered}`);
+  ck('ein echter Klick auf eine Pille öffnet die Karte dieser Linie', r.popupVisible === true && !!pill &&
+    String(r.popup).includes(String(pill.label)), `${r.clicked} -> ${String(r.popup).slice(0, 60)}`);
+  ck('die angetippte Pille ist hervorgehoben (Fokusbild)', Number(r.followBefore) === 1, String(r.followBefore));
   ck('Sprachwechsel setzt <html lang> auf de', r.lang === 'de', String(r.lang));
   console.log(`SMOKE: ${fails === 0 ? 'PASS' : 'FAIL (' + fails + ')'}`);
 

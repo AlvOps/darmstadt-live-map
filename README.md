@@ -91,13 +91,13 @@ which is why a tracked tram follows the rails instead of cutting across a buildi
   its mode** — tram red, bus turquoise, rail purple, the same colours as the switches in the panel —
   not the line's own colour: `meta.json` only carries three colours for 72 lines, so per-mode colour is
   the honest description and keeps the map readable on a dark basemap. In the overview the pills shrink
-  slightly so they do not pile up. They are DOM elements positioned over the map, and they live **inside
-  the MapLibre canvas container**: that way a tap on a vehicle still opens that vehicle first, while a
-  pan, pinch or wheel gesture *starting on* a marker reaches MapLibre and still moves the map (as
-  siblings of `#map` they used to swallow every gesture that began on a marker).
+  slightly below zoom 14 so they do not pile up. They are drawn **by MapLibre itself** (a GeoJSON source
+  plus a symbol layer whose image is one pill rasterised per line in `live.js`), not as DOM elements:
+  nothing is re-positioned per frame, a pan or pinch is plain map gesture, and a tap is resolved with
+  `queryRenderedFeatures` — vehicle before the stop behind it.
 - **Stops are circled letters,** like the sign on the street: **H** in German (*Haltestelle*), **S** in
-  English (*station*) — one per stop, never per platform. The visible circle is 13 px; its tap target is
-  33 px (WCAG 2.2 asks for 24 px).
+  English (*station*) — one per stop, never per platform. The visible circle is ~13 px; its tap target is
+  an invisible 26 px circle (WCAG 2.2 asks for 24 px).
 - **Click a vehicle: the whole run of its line.** Besides the card, the map draws every stop of that
   trip in order — the stretches already covered included — using the trip's own **street geometry**
   (`legGeometry`, decoded at 1e7), and removes it again when the card closes. Straight stop-to-stop
