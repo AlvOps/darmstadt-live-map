@@ -661,6 +661,7 @@
   let canvasEventsReady = false;
   let canvasVehicleById = new Map();
   let canvasStopByKey = new Map();
+  const canvasPillSignatures = new Map();
 
   // A tap on a vehicle belongs to the vehicle: clear line selection, focus and open its card.
   function tapVehicle(v) {
@@ -684,10 +685,86 @@
 
   function emptyFeatureCollection() { return { type: 'FeatureCollection', features: [] }; }
 
-  function ensureCanvasLayers() {
+  const PILL_COLORS = { tram: '#ff6b6b', bus: '#2ec4b6', rail: '#c77dff' };
+
+  // Rasterize the HTML pill once per line: this avoids depending on glyphs in the basemap style.
+  function makeVehiclePill(label, mode, hasOperator) {
+    const scale = 2, height = 26, radius = height / 2;
+    const canvas = document.createElement('canvas');
+    const draw = canvas.getContext('2d');
+    const font = '800 12.5px system-ui, sans-serif';
+    draw.font = font;
+    const width = Math.max(height, Math.ceil(draw.measureText(label).width + 16));
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    const c = canvas.getContext('2d');
+    c.scale(scale, scale);
+    c.font = font;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillStyle = PILL_COLORS[mode] || PILL_COLORS.bus;
+    c.strokeStyle = '#10131a';
+    c.lineWidth = 1;
+    c.beginPath();
+    c.moveTo(radius, 0.5);
+    c.lineTo(width - radius, 0.5);
+    c.quadraticCurveTo(width - 0.5, 0.5, width - 0.5, radius);
+    c.lineTo(width - 0.5, height - radius);
+    c.quadraticCurveTo(width - 0.5, height - 0.5, width - radius, height - 0.5);
+    c.lineTo(radius, height - 0.5);
+    c.quadraticCurveTo(0.5, height - 0.5, 0.5, height - radius);
+    c.lineTo(0.5, radius);
+    c.quadraticCurveTo(0.5, 0.5, radius, 0.5);
+    c.closePath();
+    c.fill();
+    c.stroke();
+    c.fillStyle = '#10131a';
+    c.fillText(label, width / 2, height / 2 + 0.25);
+    if (hasOperator) {
+      c.beginPath();
+      c.arc(width - 4.5, 4, 3.5, 0, Math.PI * 2);
+      c.fillStyle = '#78dca0';
+      c.fill();
+      c.lineWidth = 1.5;
+      c.strokeStyle = '#10131a';
+      c.stroke();
+    }
+    // MapLibre cannot read a <canvas> handed to addImage here (it sees 0x0 and throws
+    // "mismatched image size"); it does accept ImageData, so hand over the pixels instead.
+    return c.getImageData(0, 0, canvas.width, canvas.height);
+  }
+
+  function ensureCanvasPillImages(vis) {
+    const m = ctx.map, lines = new Map();
+    for (const item of vis || []) {
+      const v = item.v;
+      const label = String(v.lineName || '?');
+      let line = lines.get(label);
+      if (!line) { line = { mode: v.mode || 'bus', operator: false }; lines.set(label, line); }
+      if (isOp(v)) line.operator = true;
+    }
+    for (const [label, line] of lines) {
+      const id = 'pill-' + label;
+      const signature = line.mode + '|' + (line.operator ? 'operator' : 'open');
+      if (canvasPillSignatures.get(label) === signature && m.hasImage(id)) continue;
+      try {
+        const image = makeVehiclePill(label, line.mode, line.operator);
+        if (m.hasImage(id)) m.updateImage(id, image);
+        else m.addImage(id, image, { pixelRatio: 2 });
+        canvasPillSignatures.set(label, signature);
+      } catch (err) {
+        // A failed custom image should not prevent the map or its other features from rendering.
+        console.warn('vehicle-pill-image-failed', label, err);
+      }
+    }
+  }
+
+  function ensureCanvasLayers(vis) {
     if (!ctx || !ctx.map) return false;
     const m = ctx.map;
     if (typeof m.isStyleLoaded === 'function' && !m.isStyleLoaded()) return false;
+    // Images must exist before the GeoJSON features carrying their line labels are submitted.
+    ensureCanvasPillImages(vis);
     if (!m.getSource(STOP_SOURCE)) m.addSource(STOP_SOURCE, { type: 'geojson', data: emptyFeatureCollection() });
     if (!m.getLayer(STOP_CIRCLES)) m.addLayer({
       id: STOP_CIRCLES, type: 'circle', source: STOP_SOURCE,
@@ -711,7 +788,9 @@
         'circle-radius': ['case', ['get', 'focus'], 11, 9],
         'circle-color': ['match', ['get', 'mode'],
           'tram', '#ff6b6b', 'bus', '#2ec4b6', 'rail', '#c77dff', '#2ec4b6'],
-        'circle-opacity': ['case', ['get', 'dim'], 0.55, 1],
+        // The pill image is the visible marker; these circles stay invisible but are kept
+        // as a generous tap/hover target (hit testing ignores paint opacity).
+        'circle-opacity': 0,
         'circle-stroke-color': ['case', ['==', ['get', 'source'], 'operator'], '#34d058', '#10131a'],
         'circle-stroke-width': ['case', ['==', ['get', 'source'], 'operator'], 2.5, 1.25],
       },
@@ -719,15 +798,12 @@
     if (!m.getLayer(VEHICLE_LABELS)) m.addLayer({
       id: VEHICLE_LABELS, type: 'symbol', source: VEHICLE_SOURCE,
       layout: {
-        'text-field': ['get', 'line'], 'text-size': 11,
-        'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
-        'text-anchor': 'top', 'text-offset': [0, 1.15],
-        'text-allow-overlap': true, 'text-ignore-placement': true,
+        'icon-image': ['concat', 'pill-', ['get', 'label']],
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 12, 1, 17, 1.15],
+        'icon-anchor': 'center',
+        'icon-allow-overlap': true, 'icon-ignore-placement': true,
       },
-      paint: {
-        'text-color': '#10131a', 'text-halo-color': '#fff', 'text-halo-width': 1.4,
-        'text-opacity': ['case', ['get', 'dim'], 0.55, 1],
-      },
+      paint: { 'icon-opacity': ['case', ['get', 'dim'], 0.55, 1] },
     });
     registerCanvasEvents();
     return true;
@@ -766,7 +842,7 @@
   }
 
   function updateCanvasLayers(vis, shownStops, focusTrip) {
-    if (!ensureCanvasLayers()) return;
+    if (!ensureCanvasLayers(vis)) return;
     const vehiclesFC = emptyFeatureCollection();
     canvasVehicleById = new Map();
     for (const c of vis) {
@@ -776,7 +852,7 @@
       vehiclesFC.features.push({
         type: 'Feature', geometry: { type: 'Point', coordinates: c.pos },
         properties: {
-          kind: 'vehicle', key: id, line: String(v.lineName || '?'), mode: v.mode || 'bus',
+          kind: 'vehicle', key: id, label: String(v.lineName || '?'), mode: v.mode || 'bus',
           source: isOp(v) ? 'operator' : 'open', focus: id === String(focusTrip),
           dim: !!focusTrip && id !== String(focusTrip),
         },
