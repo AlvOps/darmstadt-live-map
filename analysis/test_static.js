@@ -61,7 +61,7 @@ function run(check, log = console.log) {
   // phones
   const mob = media('max-width: 700px');
   check('mobile: popup is a bottom sheet that clears the credits pill',
-    /bottom:\s*calc\(48px \+ env\(safe-area-inset-bottom\)\)/.test(rule('#popup', mob) || ''));
+    /bottom:\s*calc\(60px \+ env\(safe-area-inset-bottom\)\)/.test(rule('#popup', mob) || ''));
   check('mobile: popup uses safe-area inset', /safe-area-inset-bottom/.test(rule('#popup', mob) || ''));
   // Wunsch des Betreibers: die Telefonkarte zeigt — wie die Karte am Rechner — genau DREI Halte,
   // alles Weitere scrollt, und der Balken bleibt unsichtbar. Die Zeilen sind hier 44 px hoch.
