@@ -529,6 +529,36 @@
   }
 </style>
 </head>
+
+  <script>
+    // Diagnose: jeder Fehler und jede haengende Zusage wird sichtbar, statt hinter "Loading ..." zu verschwinden.
+    (function () {
+      function show(kind, msg) {
+        var box = document.getElementById('booterr');
+        if (!box) {
+          box = document.createElement('div');
+          box.id = 'booterr';
+          box.style.cssText = 'position:fixed;left:8px;right:8px;top:8px;z-index:99999;background:#3a0d0d;color:#ffd7d7;' +
+            'font:12px/1.4 monospace;padding:10px;border:1px solid #a33;border-radius:8px;white-space:pre-wrap;max-height:70vh;overflow:auto';
+          document.documentElement.appendChild(box);
+        }
+        box.textContent += '[' + kind + '] ' + msg + '\n';
+      }
+      window.addEventListener('error', function (e) {
+        show('error', (e.message || 'error') + (e.filename ? ' @ ' + e.filename.split('/').pop() + ':' + e.lineno : ''));
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        show('promise', String((e.reason && (e.reason.message || e.reason)) || 'rejected'));
+      });
+      window.addEventListener('load', function () {
+        setTimeout(function () {
+          if (document.getElementById('loading')) {
+            show('stuck', 'boot not finished after 10 s - loading screen still present');
+          }
+        }, 10000);
+      });
+    })();
+  </script>
 <body>
 <!-- Ohne JavaScript bliebe hier „Loading…" stehen: das ist das, was ein Crawler ohne Skript-Ausführung
      liest, und es ist genau dieselbe Aussage wie auf der Karte — keine andere Fassung für Suchmaschinen. -->
