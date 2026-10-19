@@ -36,7 +36,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-36"></script>
+<script src="i18n.js?v=20261015-37"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -339,9 +339,11 @@
   #welcome { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px;
     background: rgba(4, 6, 10, .72); opacity: 0; transition: opacity .35s ease; pointer-events: none; }
   #welcome.on { opacity: 1; pointer-events: auto; }
-  #welcome .wcard { position: relative; max-width: 430px; width: 100%; padding: 18px 18px 14px; }
-  #welcome h2 { margin: 0 0 8px; font-size: 17px; font-weight: 650; }
-  #welcome p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+  /* Startfenster ~30 % kleiner (Wunsch des Betreibers 2026-10-19): Breite, Schrift und Rand zusammen,
+     sonst würde eine nur schmalere Karte einfach höher stehen. */
+  #welcome .wcard { position: relative; max-width: 360px; width: 100%; padding: 13px 13px 10px; }
+  #welcome h2 { margin: 0 0 6px; font-size: 14.5px; font-weight: 650; }
+  #welcome p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.42; }
   .wrow { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
   /* Einwilligung: kleine Karte unten links, kein Overlay, blockiert nichts. Erscheint nur, solange keine
      Wahl gespeichert ist, und legt sich über keine Bedienelemente (unten rechts liegen die Kartenknöpfe). */
@@ -352,10 +354,10 @@
   #consent .crow { display: flex; gap: 8px; }
   #consent button { flex: 1 1 0; min-height: 38px; font-size: 13px; }
   /* Erste Frage beim Start: dieselbe EN/DE-Umschaltung wie oben rechts, nur größer zu treffen */
-  #wlang { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
-  #wlang .seg { border-radius: 11px; }
-  #wlang .seg button { padding: 12px 26px; font-size: 15px; font-weight: 650; min-width: 88px; }
-  #wlang .whint { font-size: 12.5px; }
+  #wlang { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; }
+  #wlang .seg { border-radius: 9px; }
+  #wlang .seg button { padding: 9px 17px; font-size: 12.5px; font-weight: 650; min-width: 64px; min-height: 40px; }
+  #wlang .whint { font-size: 10.5px; }
   .wnav { margin-left: auto; min-height: 44px; background: rgba(255,209,102,.18);
     border-color: rgba(255,209,102,.45); color: var(--accent); font-weight: 650; }
   #banner { position: absolute; z-index: 3; top: 16px; left: 50%; transform: translateX(-50%);
@@ -644,11 +646,11 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-36"></script>
+<script src="search.js?v=20261015-37"></script>
 <!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
      antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
-<script src="operator.js?v=20261015-36"></script>
-<script src="live.js?v=20261015-36"></script>
+<script src="operator.js?v=20261015-37"></script>
+<script src="live.js?v=20261015-37"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -1043,7 +1045,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-36';
+  const APP_V = '20261015-37';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {
