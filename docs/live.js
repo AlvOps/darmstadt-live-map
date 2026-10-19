@@ -69,7 +69,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261015-47';
+  const VERSION = '20261019-48';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -121,6 +121,9 @@
   let stops = [];                        // Haltestellen aus dem Feed (echte Koordinaten, mit stopId)
   let popupVehicle = null, popupLeg = null, popupTimer = null, popupSeq = 0;
   let popupStation = null, popupAnchor = null, popupDepartures = null;   // Haltestellenkarte
+  let popupRmvBoard = false, popupRmvTried = false;
+  let rmvNoticeItems = [], rmvExpanded = false, rmvBarEnabled = false;
+  const rmvLineById = new Map(), rmvModeColor = { tram: '#ff6b6b', bus: '#2ec4b6', rail: '#c77dff' };
   let popupStopList = [];                // Halte der gerade gezeigten Fahrzeugkarte (Klick-Ziele)
   let popupChain = null, chainCache = [];  // volle Länge der Linie der geöffneten Fahrt
   let dragOff = null;                    // vom Nutzer verschobene Karte: Versatz zur Auto-Position
@@ -1660,6 +1663,134 @@
       `<span class="st-dly ${cancelled ? 'cancelled' : delay === null ? 'unknown' : delayClass(delay)}">${dly}</span></li>`;
   }
 
+  function rmvLineInfo(line, mode) {
+    const name = String(line || '').trim();
+    const prefix = name.split(' ')[0].toLowerCase();
+    const shortName = prefix === 'bus' ? name.slice(4) : prefix === 'tram' ? name.slice(5) : name;
+    const prefixMode = prefix === 'bus' ? 'bus' : prefix === 'tram' ? 'tram' : '';
+    const metaLines = ctx && ctx.META && ctx.META.lines || [];
+    const found = metaLines.find(item => [name, shortName].some(candidate => String(item.name || '').toLowerCase() === candidate.toLowerCase()));
+    const resolvedMode = mode || prefixMode || (found && found.mode) || '';
+    return { line: name || '?', mode: resolvedMode, color: rmvModeColor[resolvedMode] || (found && found.color) || '#8a90a0' };
+  }
+
+  function rmvRelativeTime(value, now = Date.now()) {
+    const at = Date.parse(value);
+    if (!Number.isFinite(at)) return '';
+    const minutes = Math.max(0, Math.floor((now - at) / 60000));
+    if (minutes < 1) return T('rmv.relativeNow');
+    if (minutes < 60) return T('rmv.relativeMinutes', { n: minutes });
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return T('rmv.relativeHours', { n: hours });
+    return T('rmv.relativeDays', { n: Math.floor(hours / 24) });
+  }
+
+  function renderRmvBar(items, enabled) {
+    const bar = document.getElementById('rmvbar');
+    const toggle = document.getElementById('rmvbar-toggle');
+    const count = document.getElementById('rmvbar-count');
+    const content = document.getElementById('rmvbar-content');
+    const list = document.getElementById('rmvbar-list');
+    if (!bar) return [];
+    if (enabled !== undefined) rmvBarEnabled = !!enabled;
+    else if (window.DarmstadtRMV && window.DarmstadtRMV.enabled) rmvBarEnabled = !!window.DarmstadtRMV.enabled();
+    const active = rmvBarEnabled;
+    const sorted = active ? (items || []).filter(x => x && (x.headline || x.text)).slice().sort((a, b) => {
+      const aa = Date.parse(a.validFrom || 0), bb = Date.parse(b.validFrom || 0);
+      return (Number.isFinite(bb) ? bb : -Infinity) - (Number.isFinite(aa) ? aa : -Infinity);
+    }) : [];
+    if (!sorted.length) {
+      bar.hidden = true;
+      if (list) list.innerHTML = '';
+      rmvNoticeItems = [];
+      return sorted;
+    }
+    rmvNoticeItems = sorted;
+    bar.hidden = false;
+    if (bar.dataset) bar.dataset.expanded = String(rmvExpanded);
+    if (count) count.textContent = T(sorted.length === 1 ? 'rmv.noticeCount' : 'rmv.noticesCount', { n: sorted.length });
+    if (toggle) {
+      toggle.setAttribute && toggle.setAttribute('aria-expanded', String(rmvExpanded));
+      toggle.setAttribute && toggle.setAttribute('aria-label', T(rmvExpanded ? 'rmv.collapse' : 'rmv.expand'));
+      toggle.title = T(rmvExpanded ? 'rmv.collapse' : 'rmv.expand');
+    }
+    if (content) content.hidden = !rmvExpanded;
+    const caret = document.getElementById('rmvbar-caret');
+    if (caret) caret.textContent = rmvExpanded ? '⌄' : '⌃';
+    if (list) list.innerHTML = sorted.map(item => {
+      const associated = (item.lineIds || []).map(id => rmvLineById.get(id)).find(Boolean);
+      const rawLine = item.line && !String(item.line).startsWith('de:rmv:') ? item.line : (associated && associated.line) || item.line || '?';
+      const info = rmvLineInfo(rawLine, item.mode || (associated && associated.mode));
+      const text = item.headline || item.text || '';
+      return `<li><span class="rmv-line" style="background:${esc(info.color)}">${esc(info.line)}</span>` +
+        `<span class="rmv-text" title="${esc(text)}">${esc(text)}</span>` +
+        `<time datetime="${esc(item.validFrom || '')}">${esc(rmvRelativeTime(item.validFrom))}</time></li>`;
+    }).join('');
+    return sorted;
+  }
+
+  // Die Leiste laedt ihre Meldungen selbst: ein Abruf am Hauptbahnhof liefert die Linien-IDs,
+  // danach eine Meldungsabfrage fuer genau diese Linien (zwei Anfragen, kein Hintergrund-Polling).
+  let rmvBarLoaded = false;
+  async function initRmvBar() {
+    const client = window.DarmstadtRMV;
+    if (!client || rmvBarLoaded) return;
+    rmvBarLoaded = true;
+    try {
+      if (client.ready) await client.ready;          // erst nach der Erreichbarkeitspruefung
+      if (!client.enabled || !client.enabled()) { rmvBarLoaded = false; return; }
+      const board = await client.board('3004734');           // Darmstadt Hauptbahnhof
+      const rows = (board && (board.departures || board.rows)) || [];
+      if (!rows.length) { rmvBarLoaded = false; return; }
+      await fetchRmvNotices(rows);
+    } catch (_) { rmvBarLoaded = false; }
+  }
+
+  function bindRmvBar() {
+    const toggle = document.getElementById('rmvbar-toggle');
+    if (toggle) toggle.onclick = () => {
+      rmvExpanded = !rmvExpanded;
+      renderRmvBar(rmvNoticeItems);
+    };
+  }
+
+  async function fetchRmvNotices(rows) {
+    const client = window.DarmstadtRMV;
+    if (!client || !client.enabled || !client.enabled() || !client.notices) return;
+    const lineIds = [];
+    for (const row of rows || []) {
+      if (!row.lineId) continue;
+      const info = rmvLineInfo(row.line, row.mode);
+      rmvLineById.set(String(row.lineId), info);
+      lineIds.push(String(row.lineId));
+    }
+    if (!lineIds.length) return;
+    const data = await client.notices(Array.from(new Set(lineIds)).slice(0, 50));
+    if (!data || !Array.isArray(data.notices)) return;
+    renderRmvBar(data.notices);
+  }
+
+  function rmvDepartureRow(row) {
+    const info = rmvLineInfo(row.line, row.mode);
+    const planned = Date.parse(row.plannedTime);
+    const actual = Date.parse(row.actualTime || row.plannedTime);
+    const plannedTrack = String(row.plannedTrack || '').trim();
+    const track = String(row.track || plannedTrack).trim();
+    const trackChanged = !!(track && plannedTrack && track !== plannedTrack);
+    const hasActual = !!row.actualTime && Number.isFinite(actual);
+    const times = Number.isFinite(planned)
+      ? `<span class="st-rmv-times"><span>${esc(T('station.planned'))} ${clock(planned)}</span>` +
+        (hasActual ? `<span>${esc(T('station.realtime'))} ${clock(actual)}</span>` : '') + '</span>' : '';
+    const platform = plannedTrack || track;
+    const tracks = platform ? `<span class="st-track">${esc(T('station.platform'))} ${esc(platform)}` +
+      (trackChanged ? ` → <span class="st-track-live">${esc(T('station.liveTrack'))} ${esc(track)}</span>` :
+        (track && !plannedTrack ? ` <span class="st-track-live">${esc(T('station.liveTrack'))} ${esc(track)}</span>` : '')) + '</span>' : '';
+    return `<li class="st-rmv-row${row.cancelled ? ' st-cancel' : ''}">` +
+      `<span class="st-line" style="background:${esc(info.color)}">${esc(info.line)}</span>` +
+      `<span class="st-name">${esc(row.direction || '')}${row.cancelled ? ` <span class="st-tag">${esc(T('station.cancelled'))}</span>` : ''}</span>` +
+      `${times}${tracks}</li>`;
+  }
+
   // Stationsebene ("…:16017") oder Steig ("…:16017:2:3")? Der Stationshalt liefert das ganze
   // Abfahrtsbrett, ein Steig nur seine eigene Richtung — für Suche/Favoriten ist die Station besser.
   const stationLevel = id => String(id || '').replace(/^de-DELFI_/, '').split(':').length <= 3;
@@ -1677,11 +1808,22 @@
 
   function stationShell(stop, deps, loading) {
     const modes = (stop.modes || []).map(m => String(m).toLowerCase().replace(/_/g, ' ')).join(' · ');
-    let body;
-    if (deps && deps.error) body = `<div class="pop-sub">${esc(T('station.failed'))} (${esc(deps.error)})</div>`;
-    else if (loading) body = `<div class="pop-sub">${esc(T('station.loading'))}</div>`;
-    else if (!deps || !deps.length) body = `<div class="pop-sub">${esc(T('station.none'))}</div>`;
-    else body = `<ul class="pop-stops">${deps.slice(0, 4).map(departureRow).join('')}</ul>`;
+    let body, extra = '';
+    if (deps && deps.source === 'rmv') {
+      const rows = Array.isArray(deps.departures) ? deps.departures : [];
+      body = rows.length ? `<ul class="pop-stops">${rows.slice(0, 4).map(rmvDepartureRow).join('')}</ul>`
+        : `<div class="pop-sub">${esc(T('station.none'))}</div>`;
+      const messages = Array.from(new Set(rows.flatMap(row => row.messages || []).map(text => String(text || '').trim()).filter(Boolean)));
+      if (messages.length) extra += `<div class="pop-sub">${esc(T('station.notices'))}</div>` +
+        `<ul class="st-rmv-notices">${messages.slice(0, 4).map(text => `<li title="${esc(text)}">${esc(text)}</li>`).join('')}</ul>`;
+      extra += `<div class="st-rmv-source">${esc(T('station.rmvSource'))}</div>`;
+    } else {
+      if (deps && deps.error) body = `<div class="pop-sub">${esc(T('station.failed'))} (${esc(deps.error)})</div>`;
+      else if (loading) body = `<div class="pop-sub">${esc(T('station.loading'))}</div>`;
+      else if (!deps || !deps.length) body = `<div class="pop-sub">${esc(T('station.none'))}</div>`;
+      else body = `<ul class="pop-stops">${deps.slice(0, 4).map(departureRow).join('')}</ul>`;
+      extra = loading ? '' : `<div class="pop-note">${esc(T('station.note'))} ${esc(T('station.mapNote'))}</div>`;
+    }
     const fav = !!(ctx && ctx.fav && ctx.fav.has && ctx.fav.has(stop));
     return `
       <div class="pop-head">
@@ -1691,8 +1833,7 @@
         <button class="pop-close" aria-label="${esc(T('popup.close'))}">✕</button>
       </div>
       <div class="pop-sub">${esc(T('station.departures'))}${modes ? ' · ' + esc(modes) : ''}</div>
-      ${body}
-      <div class="pop-note">${esc(T('station.note'))} ${esc(T('station.mapNote'))}</div>`;
+      ${body}${extra}`;
   }
 
   function paintStation(loading) {
@@ -1736,6 +1877,26 @@
     return hit;
   }
 
+  async function fetchRmvBoard(stop) {
+    const client = window.DarmstadtRMV;
+    if (!client || !client.ready || !client.resolve || !client.board || !client.enabled) return null;
+    try {
+      await client.ready;
+      if (!client.enabled()) { renderRmvBar([], false); return null; }
+      let extId = String(stop && (stop.extId || stop.rmvId || '') || '').trim();
+      if (!/^\d+$/.test(extId) && /^\d+$/.test(String(stop && stop.stopId || ''))) extId = String(stop.stopId);
+      if (!/^\d+$/.test(extId)) {
+        const resolved = await client.resolve(stop.name, Number(stop.lat), Number(stop.lon));
+        const locations = resolved && Array.isArray(resolved.locations) ? resolved.locations : [];
+        const exact = locations.find(item => normStopName(item.name) === normStopName(stop.name));
+        extId = String((exact || locations[0] || {}).extId || '');
+      }
+      if (!/^\d+$/.test(extId)) return null;
+      const board = await client.board(extId);
+      return board && Array.isArray(board.departures) ? board : null;
+    } catch (_) { return null; }
+  }
+
   async function openStation(stop, refreshing, instant) {
     const el = document.getElementById('popup');
     if (!el || !stop) return;
@@ -1744,25 +1905,37 @@
     if (!refreshing) {
       stop = resolveStop(stop);             // Kennung/Position aus dem Feed nachziehen, falls vorhanden
       popupVehicle = null; popupLeg = null; popupDepartures = null;
+      popupRmvBoard = false; popupRmvTried = false;
       popupChain = null; chainCache = [];   // Haltestellenkarte: keine Linienlänge anzeigen
       popupStation = stop; popupAnchor = [stop.lon, stop.lat];
       ctx.map.easeTo({ center: [stop.lon, stop.lat], zoom: Math.max(ctx.map.getZoom(), 15.6),
                        duration: instant ? 0 : 600 });     // aus der Fahrzeugkarte: sofort dorthin
       el.classList.add('on');
       paintStation(true);
-      if (!stop.stopId) {                   // Ausschnitt kennt den Halt nicht -> Namen nachschlagen
-        lookupStop(stop.name).then(found => {
-          if (!found || popupStation !== stop) return;             // inzwischen etwas anderes angeklickt
-          openStation({ name: found.name || stop.name, lat: found.lat, lon: found.lon,
-                        stopId: found.id, modes: stop.modes || [] }, true);
-        });
-      }
     } else {
       popupStation = stop; popupAnchor = [stop.lon, stop.lat];
     }
+    if (!popupRmvTried && !popupRmvBoard) {
+      popupRmvTried = true;
+      const board = await fetchRmvBoard(stop);
+      if (seq !== popupSeq || !popupStation) return;
+      if (board) {
+        popupRmvBoard = true;
+        popupDepartures = { source: 'rmv', departures: board.departures };
+        paintStation(false);
+        fetchRmvNotices(board.departures).catch(() => {});
+        return;
+      }
+    }
+    if (popupRmvBoard) return;
     if (!stop.stopId) {                 // Halt ohne Kennung (z. B. aus Fahrtdaten) -> Karte ohne Abfahrten
       popupDepartures = [];
       paintStation(false);
+      if (!refreshing) lookupStop(stop.name).then(found => {
+        if (!found || popupStation !== stop) return;
+        openStation({ name: found.name || stop.name, lat: found.lat, lon: found.lon,
+                      stopId: found.id, modes: stop.modes || [] }, true);
+      });
       popupTimer = setTimeout(popupTick, POPUP_REFRESH_MS);
       return;
     }
@@ -1811,6 +1984,7 @@
     if (!refreshing) {                       // Fahrzeugkarte ersetzt eine eventuell offene Haltestellenkarte
       popupVehicle = v; popupLeg = null;
       popupStation = null; popupAnchor = null; popupDepartures = null;
+      popupRmvBoard = false; popupRmvTried = false;
     }
     else {                                   // aktuellen Datensatz der Fahrt übernehmen (Verspätung ändert sich)
       const fresh = drawn.find(x => x.tripId === v.tripId);
@@ -1877,6 +2051,7 @@
     popupVehicle = null; popupLeg = null; popupPos = null;
     popupChain = null; chainCache = [];
     popupStation = null; popupAnchor = null; popupDepartures = null;
+    popupRmvBoard = false; popupRmvTried = false;
     clearTimeout(popupTimer); popupTimer = null;
     const el = document.getElementById('popup');
     if (el) { el.classList.remove('on'); el.innerHTML = ''; el.style.left = ''; el.style.top = ''; }
@@ -2014,10 +2189,17 @@
     VERSION,
     HYBRID_ON,
     activateHybridCopy,
+    initRmvBar,                          // Leiste selbst anstossen (Testseite/Diagnose)
     lineStatus,                                 // Zustand je Linie für die Punkte in der Linienliste
     attach(context) {
       ctx = context;
       lineIndex = null;
+      bindRmvBar();
+      initRmvBar().catch(() => {});
+      const rmvClient = window.DarmstadtRMV;
+      if (rmvClient && rmvClient.ready) rmvClient.ready.then(() => {
+        if (!rmvClient.enabled()) renderRmvBar([], false);
+      }).catch(() => renderRmvBar([], false));
       // Tramgleise aus dem eigenen Bestand unter die Pillen legen (data/meta.json, 399 Polylinien).
       // Die dunkle Kachel zeichnet Gleise überhaupt nicht und Nebenstraßen erst ab z13 — deshalb
       // wirkten korrekt gesetzte Bahnpillen wie über Häusern schwebend. Reine Bestandsdaten, kein
@@ -2057,6 +2239,7 @@
     setLang() {                             // nach Sprachwechsel: Statistik, Histogramm, Popup neu beschriften
       paintBanner(true);                    // Rückfall-Banner in der neuen Sprache
       if (ctx) render(true);
+      renderRmvBar(rmvNoticeItems);
       if (popupVehicle) paintPopup(false);  // aus dem Zwischenspeicher, kein neuer Abruf
       else if (popupStation) paintStation(false);
     },
@@ -2089,7 +2272,7 @@
              HYBRID_ON, activateHybridCopy, selectSources, opPosAt, opTripFor, legStopsAhead, opShell, opModel, opKey, lineKey, OP_ALIAS, reselect: () => reselect(true), drawn: () => drawn,
              OP_FRESH_MS, OP_HOLD_MS, OP_SCOPE_M, OP_STALE_MS, OP_MAX_AGE_MS, OP_TICK_MS, OP_REPLAY_MS, OP_PATH_END_M, OP_PATH_MAX_M, opTrack, havM, resetOperator() { opSeen = new Map(); },
              setCoverage(o) { coverageLines = o; }, coverage: () => coverageLines,
-             departureRow, stationShell, freshness, focusLine, focusLineWide, CITY_BOX,
+             departureRow, stationShell, rmvDepartureRow, renderRmvBar, rmvRelativeTime, freshness, focusLine, focusLineWide, CITY_BOX,
              dedupeStops, markers: () => markerLog, canvasFeatures: () => canvasLog, canvasTap,
              makeVehiclePill, pillImageId, PILL_PREFIX, SCALED_BELOW_ZOOM,
              CANVAS: { VEHICLE_SOURCE, STOP_SOURCE, VEHICLE_HIT, VEHICLE_PILLS, STOP_CIRCLES, STOP_LABELS, STOP_HIT },

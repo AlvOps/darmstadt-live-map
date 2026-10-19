@@ -36,7 +36,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="i18n.js?v=20261015-47"></script>
+<script src="i18n.js?v=20261019-48"></script>
 <script>document.documentElement.lang = window.I18N.detect();</script>
 <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -271,6 +271,42 @@
     font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
     color: var(--muted); border: 1px solid var(--line); }
   .pop-note { color: var(--muted); font-size: 11px; margin-top: 10px; line-height: 1.4; }
+  /* On-demand RMV issue list: only controls receive pointer events, so the map stays usable around it. */
+  #rmvbar { position: absolute; z-index: 4; left: 50%; bottom: max(16px, env(safe-area-inset-bottom));
+    transform: translateX(-50%); width: max-content; max-width: calc(100vw - 32px); padding: 4px;
+    pointer-events: none; }
+  #rmvbar[data-expanded="true"] { width: min(620px, calc(100vw - 32px)); }
+  #rmvbar[hidden] { display: none; }
+  #rmvbar-toggle { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 40px;
+    padding: 4px 10px; text-align: left; pointer-events: auto; }
+  #rmvbar-count { flex: 1 1 auto; font-weight: 650; }
+  #rmvbar-source { flex: none; color: var(--muted); font-size: 10px; font-weight: 650; }
+  #rmvbar-caret { color: var(--muted); }
+  #rmvbar-content { max-height: min(35vh, 260px); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; }
+  #rmvbar-content[hidden] { display: none; }
+  #rmvbar-list { list-style: none; margin: 4px 0 0; padding: 0; }
+  #rmvbar-list li { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px 6px;
+    border-top: 1px solid var(--line); pointer-events: auto; }
+  #rmvbar-list .rmv-line { flex: none; min-width: 34px; text-align: center; padding: 2px 7px; border-radius: 6px;
+    color: #111; font-size: 11px; font-weight: 750; }
+  #rmvbar-list .rmv-text { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-size: 12px; }
+  #rmvbar-list time { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .st-rmv-times, .st-track { display: inline-flex; gap: 4px; align-items: baseline; color: var(--muted); font-size: 10.5px; }
+  .st-track-live { color: var(--accent); font-weight: 700; }
+  .st-track-plan { text-decoration: line-through; opacity: .75; }
+  .st-rmv-notices { list-style: none; margin: 5px 0 0; padding: 0; }
+  .st-rmv-notices li { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+    padding: 5px 0; border-top: 1px solid var(--line); font-size: 11.5px; line-height: 1.35; }
+  .st-rmv-source { color: var(--muted); font-size: 10.5px; margin-top: 8px; }
+  #popup .pop-stops .st-rmv-row { min-height: 42px; align-items: center; flex-wrap: wrap; gap: 3px 7px; }
+  #popup .st-rmv-row .st-name { flex: 1 1 95px; }
+  #popup .st-rmv-row .st-track { flex: 0 0 100%; margin-left: 2px; }
+  @media (max-width: 600px) {
+    #rmvbar { max-width: calc(100vw - 24px); bottom: max(12px, env(safe-area-inset-bottom)); }
+    #rmvbar[data-expanded="true"] { width: calc(100vw - 24px); }
+    #rmvbar-list li { min-height: 40px; }
+  }
   /* Herkunftshinweis (Position abgeleitet, kein GPS): gelb und fett — er ordnet die Genauigkeit ein
      und soll deshalb auffallen, nicht im Kleingedruckten verschwinden. Steht nach .pop-note,
      damit es dessen Farbe überschreibt. */
@@ -630,6 +666,12 @@
     </div>
   </div>
 </div>
+<section id="rmvbar" class="panel" hidden aria-live="polite">
+  <button id="rmvbar-toggle" type="button" aria-expanded="false" aria-controls="rmvbar-content">
+    <span id="rmvbar-count"></span><span id="rmvbar-source" data-i18n="rmv.source">RMV HAFAS</span><span id="rmvbar-caret" aria-hidden="true">⌃</span>
+  </button>
+  <div id="rmvbar-content" hidden><ul id="rmvbar-list"></ul></div>
+</section>
 <div id="tip"></div>
 <div id="banner" hidden></div>
 <div id="popup" class="panel" role="dialog" data-i18n-aria="popup.dialog" aria-label="Vehicle details"></div>
@@ -660,11 +702,12 @@
   </div>
 </div>
 
-<script src="search.js?v=20261015-47"></script>
+<script src="search.js?v=20261019-48"></script>
 <!-- Live-Positionen des Betreibers (GPS) für die Linien, die er meldet. Optional: fehlt die Datei oder
      antwortet der Betreiber nicht, zeichnet live.js alles aus dem offenen Strom (wie vorher). -->
-<script src="operator.js?v=20261015-47"></script>
-<script src="live.js?v=20261015-47"></script>
+<script src="operator.js?v=20261019-48"></script>
+<script src="rmv.js?v=20261019-48"></script>
+<script src="live.js?v=20261019-48"></script>
 <script>
 const MODE_RGB = { tram: [255,107,107], bus: [46,196,182], rail: [199,125,255] };
 const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
@@ -729,6 +772,12 @@ function inlineTileSource() {
 // Höchstens 1,5-fache Gerätepixel zeichnen: bei DPR 2 sind das 44 % weniger Pixel, und auf einer
 // bewegten Karte sieht man den Unterschied nicht. Betrifft nur die Grundkarte — Marken sind DOM.
 const RENDER_DPR = Math.min(window.devicePixelRatio || 1, 1.5);
+// MapLibre logs canceled in-flight style requests as errors; aborts are expected during style replacement.
+const mapConsoleError = console.error.bind(console);
+console.error = (...args) => {
+  if (args[0] && args[0].name === 'AbortError') return;
+  mapConsoleError(...args);
+};
 const map = new maplibregl.Map({
   container: 'map',
   pixelRatio: RENDER_DPR,
@@ -745,6 +794,14 @@ const map = new maplibregl.Map({
   maxBounds: [[7.85, 49.15], [9.45, 50.35]],
   minZoom: 9, renderWorldCopies: false,
   attributionControl: false             // Quellenangabe steckt im ⓘ im Balken (#attrib)
+});
+map.on('error', event => {
+  const error = event && event.error;
+  if (error && (error.name === 'AbortError' || String(error.message || '').includes('AbortError'))) {
+    if (typeof event.preventDefault === 'function') event.preventDefault();
+    return;
+  }
+  console.error(error || event);
 });
 // Satellitenquelle einhängen: verborgen, als unterste Ebene (unter allem, was der Stil zeichnet, und
 // unter „Wo bin ich?“). Läuft vor dem Kachel-Patch: dessen getStyle() nimmt sie dann einfach mit.
@@ -1066,7 +1123,7 @@ document.querySelectorAll('.tog').forEach(c => c.onclick = () => {
   // eine Versionskennung nur für Skripte reicht also nicht. Eine alte Seite kann mit neuem live.js laufen
   // und hat dann z. B. keinen Schalter, weil das Markup fehlt. live.js wird versioniert geladen und weiß,
   // welche Fassung aktuell ist — bei Abweichung einmal auf eine versionierte URL wechseln.
-  const APP_V = '20261015-47';
+  const APP_V = '20261019-48';
   try {
     const fresh = window.DarmstadtLive && window.DarmstadtLive.VERSION;
     if (fresh && fresh !== APP_V && sessionStorage.getItem('dlm-v') !== fresh) {
