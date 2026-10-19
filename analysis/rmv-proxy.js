@@ -187,6 +187,28 @@ function requestUpstream(key, endpoint, params) {
   });
 }
 
+// Gebiet Darmstadt: die Linien-IDs kommen aus den Abfahrtstafeln von fuenf Haltestellen. Die Tabelle wird
+// NUR bei einer echten Anfrage erneuert und hoechstens alle 15 Minuten - kein Hintergrund-Polling (RMV §6d).
+const AREA_STOPS = ['3004734', '3004736', '3004720', '3011226', '3011320'];
+const AREA_TTL_MS = 15 * 60 * 1000;
+const areaTable = { at: 0, ids: [] };
+
+async function areaLineIds(key) {
+  if (areaTable.ids.length && Date.now() - areaTable.at < AREA_TTL_MS) return areaTable.ids;
+  const ids = new Set(areaTable.ids);
+  for (const stop of AREA_STOPS) {
+    try {
+      const data = await requestUpstream(key, 'departureBoard', { id: stop, duration: 60 });
+      for (const row of listAt(data, ['Departure', 'departures', 'departure'])) {
+        const id = row && (row.lineId || (row.ProductAtStop && row.ProductAtStop.lineId));
+        if (id) ids.add(String(id));
+      }
+    } catch (_) { /* eine Haltestelle ohne Antwort soll die anderen nicht blockieren */ }
+  }
+  if (ids.size) { areaTable.ids = Array.from(ids).slice(0, 80); areaTable.at = Date.now(); }
+  return areaTable.ids;
+}
+
 function createServer(key, options = {}) {
   const upstream = options.upstream || requestUpstream;
   const serverCache = options.cache || cache;
@@ -208,6 +230,19 @@ function createServer(key, options = {}) {
     let url;
     try { url = new URL(req.url, `http://${HOST}:${PORT}`); } catch (_) { send(res, 400, { error: 'bad request' }); return; }
     if (req.method !== 'GET') { send(res, 405, { error: 'method not allowed' }); return; }
+    if (url.pathname === '/notices/area') {
+      areaLineIds(key).then(ids => {
+        if (!ids.length) { send(res, 502, { error: 'no line ids available' }); return; }
+        return requestUpstream(key, 'himsearch', { lineids: ids.join(',') })
+          .then(data => {
+            const result = slimNotices(data, ids);
+            result.lineIds = ids.length;
+            result.builtAt = new Date(areaTable.at).toISOString();
+            send(res, 200, result);
+          });
+      }).catch(err => send(res, 502, { error: String((err && err.message) || err) }));
+      return;
+    }
     if (url.pathname === '/health') {
       const u = usage(Date.now(), callLog);
       send(res, 200, { ok: true, upstreamCallsHour: u.hour, upstreamCallsDay: u.day, cacheEntries: serverCache.size });

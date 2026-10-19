@@ -5,6 +5,7 @@
   // Ohne erreichbaren Proxy bleibt alles aus - die Karte verhaelt sich dann genau wie vorher.
   (function () {
     var BASE = 'https://talos.taild11d3b.ts.net';
+    // Ein Abruf genuegt: der Proxy haelt die Linien-IDs des Gebiets und fragt die Meldungen.
     var RMV_URL = 'https://www.rmv.de/c/de/fahrplan/verbindungssuche-hinweise/verkehrsmeldungen';
     var items = [], expanded = false, lang = null;
 
@@ -102,13 +103,7 @@
         .finally(function () { if (timer) clearTimeout(timer); });
     }
 
-    get('/board?stop=3004734&duration=60').then(function (board) {
-      var rows = (board && (board.departures || board.rows)) || [];
-      var ids = [];
-      rows.forEach(function (r) { if (r.lineId && ids.indexOf(r.lineId) < 0) ids.push(r.lineId); });
-      if (!ids.length) throw new Error('no lines');
-      return get('/notices?lineIds=' + encodeURIComponent(ids.slice(0, 50).join('|')));
-    }).then(function (data) {
+    get('/notices/area').then(function (data) {
       var cutoff = Date.now() - 30 * 86400000;
       items = ((data && data.notices) || []).filter(function (n) {
         var t = Date.parse(n.validFrom || '');
