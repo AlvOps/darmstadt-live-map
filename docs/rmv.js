@@ -16,7 +16,13 @@
     checked = true;
     try {
       if (typeof window.fetch !== 'function') return false;
-      const response = await window.fetch(base + '/health', { cache: 'no-store' });
+      // Nie auf die Erreichbarkeitspruefung warten: nach 3 s gilt der Proxy als aus.
+      const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(() => ctrl.abort(), 3000) : null;
+      let response;
+      try {
+        response = await window.fetch(base + '/health', { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined });
+      } finally { if (timer) clearTimeout(timer); }
       online = !!response.ok;
     } catch (_) { online = false; }
     return online;
