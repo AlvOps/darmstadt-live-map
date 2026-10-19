@@ -69,7 +69,7 @@
   const RELAX_MS = 10000;          // gewählte Linie: nach 10 s ohne Interaktion Haltestellen wieder zeigen
   // Muss mit dem APP_V in index.html übereinstimmen. GitHub Pages cached auch das HTML (max-age=600),
   // deshalb kann eine alte Seite mit neuem live.js laufen; index.html gleicht das über diese Kennung ab.
-  const VERSION = '20261015-45';
+  const VERSION = '20261015-46';
   const LEG_GRACE_MS = 90000;      // so lange nach Abschnittsende bleibt ein Fahrzeug stehen (> REFRESH_MS),
                                    // danach verschwindet es, statt aus veralteten Daten "live" zu wirken
   const FRAME_MS = 33;             // ~30 Bilder/s: die Punkte sollen gleiten, nicht springen.
@@ -821,7 +821,7 @@
     }
     const shownStops = stopCache;
 
-    const layers = !ctx.overlay ? [] : [
+    const layers = [
       // Verlauf: der Rest der Fahrt, dünn in der Linienfarbe (deck.gl zeichnet nur Linien, die
       // Fahrzeugmarken und Halte sind DOM-Elemente).
       new ctx.deck.PathLayer({
@@ -840,7 +840,7 @@
     // Marken und Halte zuletzt: als DOM-Elemente liegen sie über der Karte und bekommen den Tipp
     // zuerst — deshalb öffnet ein Tipp auf ein Fahrzeug immer das Fahrzeug, nie den Halt dahinter.
     renderMarkers(vis, shownStops, focusTrip);
-    if (ctx.overlay) ctx.overlay.setProps({ layers, onHover: hover, onClick: click, getCursor: cursor });
+    ctx.overlay.setProps({ layers, onHover: hover, onClick: click, getCursor: cursor });
     if (force || Date.now() - lastPaint > 1000) {     // Statistik nur ~1x je Sekunde neu zeichnen
       lastPaint = Date.now();
       paintStats(cur);
