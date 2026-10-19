@@ -10,3 +10,7 @@ Sitemap: https://darmstadtmap.com/sitemap.xml
 # RMV-Testseite (nicht indexieren)
 User-agent: *
 Disallow: /rmvtest/
+
+# RMV-Testseite 2 (nicht indexieren)
+User-agent: *
+Disallow: /rmv2/
