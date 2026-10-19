@@ -134,11 +134,12 @@ which is why a tracked tram follows the rails instead of cutting across a buildi
   no dragging there.
 - **Stations on the map.** Live mode draws the stops the feed publishes for the current view
   (`/api/v1/map/stops`) — real stop coordinates and stop ids, not our timetable dump. Tapping one
-  moves the camera onto it and opens a card with the **next departures**: line badge in the mode
-  colour, destination, clock time, relative arrival and delay (from `/api/v1/stoptimes`). A departure
-  that the operator reports as **cancelled** is struck through and labelled, and a row without realtime
-  data is tagged *scheduled* instead of pretending to be a live prediction. Tapping a
-  stop inside a vehicle card jumps **instantly** (no camera animation) to that station and opens it.
+  moves the camera onto it. With the optional local RMV proxy, the card uses RMV HAFAS rows exclusively:
+  line, direction, planned and realtime time, platform/changed track, cancellation and board-message text,
+  with RMV attribution. If the proxy is off or cannot resolve that stop, the existing MOTIS card remains
+  the fallback; sources are never mixed within a card. The RMV proxy is called only on a visible card
+  action, with a 60-second cache and no background polling. Tapping a stop inside a vehicle card jumps
+  **instantly** (no camera animation) to that station and opens it.
 - **Short camera follow (desktop only).** On a computer, tapping a vehicle zooms onto it and follows
   it for 2 s, then releases; a wheel, drag, tap or Escape releases it immediately. On a phone there
   is **no sticky follow** — a tap centres the vehicle once, **above the bottom sheet** so the bus you
@@ -153,7 +154,8 @@ which is why a tracked tram follows the rails instead of cutting across a buildi
 - **The corner.** Bottom left: a small pill with the live clock (tabular figures, so it does not jitter
   between minutes) and the ⓘ that opens the source and licence list — BMVI/DELFI (CC BY-SA 4.0),
   OpenStreetMap (ODbL), CARTO, Esri for the satellite layer, and HEAG mobilo/IVANTO for the operator
-  positions. Deliberately not a bar: no delay histogram, no hint line, nothing that eats map.
+  positions. The optional RMV issue bar appears only when the local RMV proxy is reachable and filtered
+  notices are returned; it collapses to one compact row and is never polled in the background.
 - **Phone-first UI.** Touch is detected by **pointer**, not just width — a landscape phone is wider
   than 700 px and used to miss the drawer entirely. The panel is a **drawer** with a handle that
   always sits in the same place (top-left, directly above the panel) and says what it does:
@@ -187,8 +189,9 @@ which is why a tracked tram follows the rails instead of cutting across a buildi
   afterwards and only returns when that key is gone (private window, cleared storage).
 - **Everything else stays on your device.** This is a static page with no server of its own: language
   (`darmstadt-live-lang`), favourites (`darmstadt-live-favs`) and the consent answer live in
-  `localStorage`. The page itself sets no cookies; the only outbound requests are map tiles, the transit
-  feeds, and — after consent — Google.
+  `localStorage`. The page itself sets no cookies; the hosted map requests map tiles and transit feeds,
+  and — after consent — Google. In local development only, the optional RMV proxy receives on-demand
+  station requests and keeps the access key on the machine running the proxy.
 - **Search engines and sharing.** `docs/robots.txt` allows the whole site and points at
   `docs/sitemap.xml`; the map page carries a canonical URL, a description and Open Graph tags
   (`docs/og-image.png` for link previews, German as `og:locale` with English as the alternate), and
@@ -200,6 +203,8 @@ which is why a tracked tram follows the rails instead of cutting across a buildi
 docs/index.html      UI, map (MapLibre + deck.gl), line browser, drawer, card + connector
 docs/i18n.js         EN/DE strings + toggle + apply/set logic
 docs/live.js         realtime module (polling, vehicles, stations, popup, camera follow, layers, stats)
+docs/rmv.js          optional browser client for the key-holding local RMV proxy
+analysis/rmv-proxy.js local Node proxy for on-demand RMV HAFAS boards and notices
 docs/data/meta.json  lines, colours, endpoints — the only data file left (no timetable data)
 docs/favicon.svg     site icon (vector, used for the browser tab and the manifest)
 docs/apple-touch-icon.png, docs/icon-192.png, docs/icon-512.png   opaque PNG icons
@@ -281,10 +286,20 @@ Established by direct measurement; every claim is reproducible with the scripts 
 
 ## Run locally
 
+The map runs without RMV: station cards fall back to MOTIS and the notice bar stays hidden. For optional
+RMV HAFAS departures and service notices, start the local proxy in one terminal and the static site in another:
+
 ```bash
-cd docs && python3 -m http.server 8080
-# http://localhost:8080/
+node analysis/rmv-proxy.js                   # reads ~/.config/rmv/accessId; never serves the key
+cd docs && python3 -m http.server 8099
+# http://127.0.0.1:8099/
 ```
+
+The proxy listens on `127.0.0.1:8790`, allows only the two local origins on port 8099, caches each query
+for 60 seconds and enforces the RMV limits (600 upstream calls/hour, 5000/day). It makes RMV requests only
+when a visible station card is opened; it does not poll in the background. The browser sees only the proxy's
+slim board/notices response and has no RMV credential. The proxy is optional; stop it and the map continues
+working with MOTIS. Its address can be overridden with `?rmv=URL` or `window.DLM_RMV`.
 
 No build step; MapLibre and deck.gl come from jsDelivr.
 
@@ -301,6 +316,7 @@ node analysis/test_behaviour.js   # OFFLINE, deterministic: one end-to-end check
 node analysis/test_static.js      # OFFLINE: CSS for phones/scrollbars/legend sizing, status-pill contrast,
                                   # assets, icons, basemap zoom cap
 node analysis/test_i18n.js        # OFFLINE: EN/DE key coverage + hardcoded-string scan
+node analysis/test_rmv.js         # OFFLINE: proxy shaping, cache, CORS, limits, disabled client
 node analysis/test_live.js        # ONLINE: loads docs/live.js, fetches real data, checks vehicles/positions/layers
 node analysis/test_ui.js          # ONLINE (real API): realtime-only filtering, popup (races, timers,
                                   # failures), XSS escaping, malformed API records, polling stop,

@@ -11,15 +11,20 @@ docs/index.html   markup + CSS + the app shell: creates the MapLibre map, the de
                   It owns `state` (mode switches, selected line index, quiet-timer `state.selAt`).
 docs/live.js      the realtime module (one IIFE, exposed as `window.DarmstadtLive`):
                   feed client → vehicle model → interpolation → map-layer markers → cards → camera → stats.
+docs/rmv.js       optional browser client for the key-holding local RMV proxy.
 docs/i18n.js      EN/DE string table, `I18N.t/detect/apply/set`, `langchange` event.
 docs/search.js    pure functions: stop matching + favourites in localStorage (`darmstadt-live-favs`).
 docs/data/meta.json  72 lines (name, mode, agency, colour, endpoints) and the station dump.
 docs/manifest.webmanifest, favicon.svg, icon-192/512.png, apple-touch-icon.png
-analysis/         measurement scripts, the four suites, and `test_behaviour.js` (offline behaviour).
+analysis/rmv-proxy.js optional localhost-only Node proxy; reads `~/.config/rmv/accessId` and holds it server-side.
+analysis/         measurement scripts, the offline suites, and `test_behaviour.js` (offline behaviour).
 ```
 
-No build step, no bundler, no server: every file is a classic `window.*` script loaded by
-`index.html` (they are **not** ES modules), and GitHub Pages serves `master`/`docs` as-is.
+No build step or bundler: the page uses classic `window.*` scripts loaded by `index.html` (not ES modules)
+and GitHub Pages serves `main`/`docs` as-is. The optional `analysis/rmv-proxy.js` is a separate local
+Node process for development only; `docs/rmv.js` checks `/health` once, hides RMV features when it cannot
+reach the proxy, and never receives the credential. The page remains usable with the existing MOTIS station
+card fallback when the proxy is absent.
 
 ## Data flow
 
@@ -40,7 +45,18 @@ Every request goes through `timedFetch()` with a 12 s deadline (`AbortController
 must not keep `refreshInFlight` set and block all later polls. A refresh requested while another is in
 flight is remembered (`pendingRefresh`) and repeated once the current one finishes.
 
-## Rules that are not negotiable
+## Optional RMV station data
+
+`docs/rmv.js` performs one local `/health` check. When it is unavailable, it disables itself quietly and
+makes no subsequent fetches. On a station-card action, `live.js` resolves the station name to an RMV external
+id, then requests `/board?stop=…&duration=60`; if that board succeeds, every departure row in that card is
+RMV-derived. Only an unsuccessful/unresolvable board uses the existing MOTIS card, so the sources are never
+mixed per card. Each board row's `ProductAtStop.lineId` feeds a line-filtered `/notices` request for the issue
+bar; station messages in the board are also shown in that station card. The Node proxy reads the access id
+from `~/.config/rmv/accessId`, holds it off-browser, caches upstream results for 60 seconds and enforces
+600/hour and 5000/day. All RMV calls are caused by the visible station action; there is no RMV polling.
+
+## Rules that are not negotiable.
 
 1. **No invented positions.** Only `realTime === true` hops are drawn; the position is the progress
    `u = (now − departure) / (arrival − departure)` along the hop's *real* polyline. Vehicles without
@@ -93,8 +109,8 @@ canvas, so those lines paint over the pills.
 
 ## Tests and CI
 
-* `analysis/test_behaviour.js` — offline, deterministic, one end-to-end check per fixed defect
-  (fixtures instead of the live API). This is where a new feature gets its behaviour check.
+* `analysis/test_behaviour.js` — offline, deterministic behavior checks with fixtures, including the RMV
+  notice bar/card rendering; it also runs `analysis/test_rmv.js` against local stub upstream responses.
 * `analysis/test_static.js`, `test_i18n.js` — offline source/markup checks (CSS facts, key parity).
 * `analysis/test_live.js`, `test_ui.js` — hit the real API; `test_live` is time-of-day dependent.
 * `.github/workflows/tests.yml` — the three offline suites on every push and pull request, plus a
