@@ -146,9 +146,10 @@ which is why a tracked tram follows the rails instead of cutting across a buildi
   the vehicles of that line.
 - **Delay histogram.** The bar under the map shows the live clock and the current spread of delays
   across the vehicles in view (`#tl`, drawn by `live.js`).
-- **EN/DE toggle** in the top-right corner. English is the default (also for German browsers);
-  the choice is remembered (`localStorage`). Everything switches — panels, legend, tooltips, popup,
-  banner, histogram caption, `aria-label`s, document title and the map attribution.
+- **EN/DE toggle** in the top-right corner. **German is the default** — it is a Darmstadt map, and the
+  first visit asks before anything else is shown; English comes after an explicit choice. The choice is
+  remembered (`localStorage`). Everything switches — panels, legend, tooltips, popup, banner, histogram
+  caption, `aria-label`s, document title and the map attribution.
   `analysis/test_i18n.js` fails if a key is missing in one language or if markup/JS contains
   hardcoded human-readable text.
 - **Phone-first UI.** Touch is detected by **pointer**, not just width — a landscape phone is wider
@@ -175,6 +176,21 @@ which is why a tracked tram follows the rails instead of cutting across a buildi
   over a grid wider than the expected data space and reports where the lines we draw really end.
   Note that the feed returns *whole trips*, so a through-running train brings hop geometry from far
   away — another reason to bound the view (our own metadata spans lat 49.29–50.23, lon 8.24–9.28).
+
+## Privacy, measurement and sharing
+
+- **Nothing is measured before you agree.** Google Analytics 4 (`G-GTEHNPPMW6`) is not part of the page:
+  the consent card at the bottom left loads the tag only after *Accept*, and *Only necessary* leaves it
+  out completely. The answer is stored in `localStorage` (`darmstadt-live-consent`); the card stays away
+  afterwards and only returns when that key is gone (private window, cleared storage).
+- **Everything else stays on your device.** This is a static page with no server of its own: language
+  (`darmstadt-live-lang`), favourites (`darmstadt-live-favs`) and the consent answer live in
+  `localStorage`. The page itself sets no cookies; the only outbound requests are map tiles, the transit
+  feeds, and — after consent — Google.
+- **Search engines and sharing.** `docs/robots.txt` allows the whole site and points at
+  `docs/sitemap.xml`; the map page carries a canonical URL, a description and Open Graph tags
+  (`docs/og-image.png` for link previews, German as `og:locale` with English as the alternate), and
+  `/hybrid/` is a short cut marked `noindex` so it never competes with the real address.
 
 ## Files
 
