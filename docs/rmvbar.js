@@ -5,7 +5,7 @@
   // Ohne erreichbaren Proxy bleibt alles aus - die Karte verhaelt sich dann genau wie vorher.
   (function () {
     var BASE = 'https://talos.taild11d3b.ts.net';
-    var RMV_URL = 'https://www.rmv.de/c/de/fahrplan/verkehrsmeldungen';
+    var RMV_URL = 'https://www.rmv.de/c/de/fahrplan/verbindungssuche-hinweise/verkehrsmeldungen';
     var items = [], expanded = false, lang = null;
 
     var GLOSSARY = [
