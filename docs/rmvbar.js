@@ -27,14 +27,14 @@
     // Nur die Meldungen fehlen - nicht die Karte. Das muss dastehen, sonst wirkt die Karte unzuverlaessig.
     var OFFLINE = {
       // short = die eine Zeile in der zugeklappten Leiste, head = ausgeschrieben in der geoeffneten Zeile.
-      de: { short: 'Meldungen derzeit nicht verfügbar',
+      de: { short: 'Meldungen nicht verfügbar',
             head: 'Verspätungs- und Störungsmeldungen sind derzeit nicht verfügbar.',
             sub: 'Die Fahrzeugpositionen auf der Karte sind davon nicht betroffen.',
-            link: 'Meldungen auf rmv.de ansehen', meta: 'RMV HAFAS antwortet nicht' },
-      en: { short: 'Notices currently unavailable',
+            link: 'Meldungen auf rmv.de ansehen', meta: 'RMV HAFAS offline' },
+      en: { short: 'Notices unavailable',
             head: 'Delay and disruption notices are currently unavailable.',
             sub: 'Vehicle positions on the map are unaffected.',
-            link: 'View notices on rmv.de', meta: 'RMV HAFAS not responding' }
+            link: 'View notices on rmv.de', meta: 'RMV HAFAS offline' }
     };
 
     function pageLang() {
