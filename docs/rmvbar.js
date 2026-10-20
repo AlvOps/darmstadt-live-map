@@ -27,11 +27,11 @@
     // Nur die Meldungen fehlen - nicht die Karte. Das muss dastehen, sonst wirkt die Karte unzuverlaessig.
     var OFFLINE = {
       // short = die eine Zeile in der zugeklappten Leiste, head = ausgeschrieben in der geoeffneten Zeile.
-      de: { short: 'Verspätungs-/Störungsmeldungen nicht verfügbar',
+      de: { short: 'Meldungen derzeit nicht verfügbar',
             head: 'Verspätungs- und Störungsmeldungen sind derzeit nicht verfügbar.',
             sub: 'Die Fahrzeugpositionen auf der Karte sind davon nicht betroffen.',
             link: 'Meldungen auf rmv.de ansehen', meta: 'RMV HAFAS antwortet nicht' },
-      en: { short: 'Delay/disruption notices unavailable',
+      en: { short: 'Notices currently unavailable',
             head: 'Delay and disruption notices are currently unavailable.',
             sub: 'Vehicle positions on the map are unaffected.',
             link: 'View notices on rmv.de', meta: 'RMV HAFAS not responding' }
@@ -145,7 +145,7 @@
       list.hidden = !expanded;
       head.setAttribute('aria-expanded', String(expanded));
       caret.textContent = expanded ? '\u2304' : '\u2303';
-      if (!expanded) syncHeight();     // aufgeklappt darf die Liste darueber liegen
+      syncHeight();                    // auch aufgeklappt: Uhr und Panel bleiben frei
     };
 
     function get(path) {
