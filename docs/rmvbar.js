@@ -60,6 +60,14 @@
       return '#2ec4b6';
     }
 
+    // Die Leiste darf nie eine feste Hoehe annehmen: gemessene Hoehe in --rmvbar-h schreiben,
+    // damit Karte, Uhr und Panel genau um diesen Betrag nachruecken.
+    function syncHeight() {
+      var h = bar.offsetHeight;
+      if (h > 0) document.body.style.setProperty('--rmvbar-h', h + 'px');   // body, sonst gewinnt die CSS-Regel auf body
+    }
+    window.addEventListener('resize', function () { setTimeout(syncHeight, 60); });
+
     var bar = document.createElement('div');
     bar.id = 'rmvbar';
     bar.innerHTML = '<button id="rmvbar-head" type="button" aria-expanded="false">' +
@@ -107,24 +115,21 @@
       strong.className = 'rmv-text';
       strong.style.webkitLineClamp = 'none';
       strong.textContent = m.head;
-      var sub = document.createElement('div');
-      sub.className = 'when';
-      sub.style.webkitLineClamp = 'none';
-      sub.textContent = m.sub;
       var a = document.createElement('a');
       a.className = 'rmv-text'; a.href = RMV_URL; a.target = '_blank'; a.rel = 'noopener noreferrer';
       a.style.marginTop = '3px'; a.style.display = 'inline-block';
       a.textContent = m.link + ' \u2197';
-      body.appendChild(strong); body.appendChild(sub); body.appendChild(a);
+      body.appendChild(strong); body.appendChild(a);
       li.appendChild(body);
       list.appendChild(li);
       countEl.textContent = m.head.replace(/^(Hinweis|Notice):\s*/, '');
       bar.querySelector('#rmvbar-meta').textContent = m.meta;
-      head.title = String(reason || '');
+      head.title = m.head + ' ' + m.sub + ' (' + String(reason || '') + ')';
       expanded = true; list.hidden = false;
       head.setAttribute('aria-expanded', 'true');
       caret.textContent = '\u2304';
       document.body.classList.add('rmv-on');
+      syncHeight();
     }
 
     head.onclick = function () {
@@ -132,6 +137,7 @@
       list.hidden = !expanded;
       head.setAttribute('aria-expanded', String(expanded));
       caret.textContent = expanded ? '\u2304' : '\u2303';
+      if (!expanded) syncHeight();     // aufgeklappt darf die Liste darueber liegen
     };
 
     function get(path) {
@@ -153,6 +159,7 @@
       if (!items.length) return;
       document.body.classList.add('rmv-on');
       render();
+      syncHeight();
     }).catch(function (e) { showUnavailable((e && e.message) || 'unreachable'); });
 
     // Sprache folgt dem EN/DE-Knopf der Karte.
@@ -161,7 +168,7 @@
       if (lang === null) { lang = next; return; }
       if (next !== lang) {
         lang = next;
-        if (head.getAttribute('aria-expanded') === 'true' && !items.length && list.children.length) {
+        if (!items.length && list.children.length && head.title) {
           showUnavailable(head.title);
         } else { render(); }
       }
