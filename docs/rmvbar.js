@@ -4,7 +4,10 @@
   (function () {
     var BASE = 'https://talos.taild11d3b.ts.net';
     // Ein Abruf genuegt: der Proxy haelt die Linien-IDs des Gebiets und fragt die Meldungen.
+    // Der Klick fuehrt auf die eigene, auf Darmstadt-Dieburg/Darmstadt gefilterte Liste;
+    // von dort geht es je Meldung weiter zu rmv.de.
     var RMV_URL = 'https://www.rmv.de/c/de/fahrplan/verbindungssuche-hinweise/verkehrsmeldungen';
+    var LIST_URL = '/meldungen/';
     var items = [], expanded = false, lang = null;
 
     var GLOSSARY = [
@@ -94,7 +97,7 @@
         chip.style.background = colour(n.line);
         var body = document.createElement('div'); body.className = 'body';
         var a = document.createElement('a');
-        a.className = 'rmv-text'; a.href = RMV_URL; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        a.className = 'rmv-text'; a.href = LIST_URL;
         var original = n.headline || n.text || '';
         a.textContent = tr(original) + ' \u2197';
         a.title = original + ' \u2014 ' + (en ? 'open RMV notices' : 'RMV-Meldungen oeffnen');

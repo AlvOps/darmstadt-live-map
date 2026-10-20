@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0e14">
+<title>Verkehrsmeldungen Darmstadt | Darmstadt Public Transport Map</title>
+<meta name="description" content="Aktuelle Verkehrsmeldungen fuer Darmstadt und den Landkreis Darmstadt-Dieburg: Baustellen, Umleitungen, Teilausfaelle - gefiltert auf die Region.">
+<link rel="canonical" href="https://darmstadtmap.com/meldungen/">
+<link rel="icon" href="../favicon.svg">
+<style>
+  :root { --bg:#0b0e14; --panel:#121722; --line:rgba(255,255,255,.09); --fg:#e6e9ef; --muted:#93a0b4; --accent:#ffd166; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position:sticky; top:0; z-index:2; background:rgba(11,14,20,.96); border-bottom:1px solid var(--line);
+    padding:14px 16px calc(10px + env(safe-area-inset-bottom,0px)); }
+  .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  a.home { color:var(--fg); text-decoration:none; font-weight:800; letter-spacing:.01em; }
+  a.home span { color:var(--accent); }
+  .spacer { flex:1; }
+  .toggle { display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .toggle button { background:none; border:0; color:var(--muted); font:inherit; font-size:12px; font-weight:800;
+    padding:5px 10px; cursor:pointer; }
+  .toggle button[aria-pressed="true"] { background:rgba(255,255,255,.10); color:var(--fg); }
+  h1 { font-size:17px; margin:10px 0 4px; }
+  p.lead { margin:0; color:var(--muted); font-size:12.5px; }
+  main { padding:12px 16px 40px; max-width:900px; margin:0 auto; }
+  ul { list-style:none; margin:0; padding:0; }
+  li { border:1px solid var(--line); border-radius:12px; background:var(--panel); padding:12px 14px; margin-bottom:10px; }
+  .head { display:flex; gap:9px; align-items:baseline; flex-wrap:wrap; }
+  .chip { flex:none; min-width:38px; text-align:center; font-weight:800; font-size:11px; color:#10131a;
+    background:#2ec4b6; padding:2px 7px; border-radius:6px; }
+  .where { font-weight:700; }
+  .kind { color:var(--muted); }
+  .when { color:var(--muted); font-size:12px; margin:6px 0 0; }
+  .text { margin:8px 0 0; font-size:13.5px; color:#d7dce5; }
+  .links { margin-top:8px; font-size:12px; }
+  .links a { color:var(--accent); text-decoration:none; }
+  .empty { color:var(--muted); }
+  footer { color:var(--muted); font-size:12px; padding:0 16px 30px; max-width:900px; margin:0 auto; }
+  footer a { color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <a class="home" href="../"><span>&#9632;</span> Darmstadt Public Transport Map</a>
+    <span class="spacer"></span>
+    <div class="toggle">
+      <button id="de" type="button" aria-pressed="false">DE</button>
+      <button id="en" type="button" aria-pressed="true">EN</button>
+    </div>
+  </div>
+  <h1 id="title"></h1>
+  <p class="lead" id="lead"></p>
+</header>
+<main><ul id="list"></ul><p class="empty" id="empty" hidden></p></main>
+<footer id="foot"></footer>
+<script>
+  // Gefilterte Meldungsliste fuer Darmstadt-Dieburg/Darmstadt. Quelle ist der eigene Proxy:
+  // primaer die lizenzierte RMV-HAFAS-Schnittstelle, bei Ausfall die Meldungsseite von rmv.de.
+  (function () {
+    var API = 'https://talos.taild11d3b.ts.net/notices/area';
+    var RMV = 'https://www.rmv.de/c/de/fahrplan/verbindungssuche-hinweise/verkehrsmeldungen';
+    var lang = 'en', items = [];
+
+    var T = {
+      de: { title: 'Verkehrsmeldungen Darmstadt-Dieburg / Darmstadt',
+            lead: 'Gefiltert auf die Region; Quelle wird unter der Liste genannt.',
+            all: 'Alle Meldungen auf rmv.de', back: 'Zur Karte', open: 'Auf rmv.de öffnen',
+            none: 'Zurzeit liegen keine Meldungen für diese Region vor.',
+            loading: 'Meldungen werden geladen …', until: 'bis', from: 'seit',
+            srcHafas: 'Quelle: RMV HAFAS (lizenziert)', srcSite: 'Quelle: Meldungsseite von rmv.de (HAFAS antwortet nicht)',
+            srcFail: 'Quelle nicht erreichbar – bitte später erneut versuchen.' },
+      en: { title: 'Service notices Darmstadt-Dieburg / Darmstadt',
+            lead: 'Filtered to the region; the source is named below the list.',
+            all: 'All notices on rmv.de', back: 'To the map', open: 'Open on rmv.de',
+            none: 'There are currently no notices for this region.',
+            loading: 'Loading notices …', until: 'until', from: 'since',
+            srcHafas: 'Source: RMV HAFAS (licensed)', srcSite: 'Source: rmv.de notices page (HAFAS not responding)',
+            srcFail: 'Source unreachable – please try again later.' }
+    };
+    var GLOSSARY = [['Haltestellenänderung','stop change'],['Haltestellenverlegung','stop relocation'],
+      ['Haltestellen','stops'],['Haltestelle','stop'],['Fahrplanänderungen','schedule changes'],
+      ['Teilausfälle','partial cancellations'],['Zugausfälle','train cancellations'],['Ausfälle','cancellations'],
+      ['Streckensperrung','line closure'],['Umleitungen','diversions'],['Umleitung','diversion'],
+      ['Baumaßnahme','construction works'],['Bauarbeiten','construction works'],['Baustelle','roadworks'],
+      ['Fahrplan','timetable'],['Verspätungen','delays'],['entfällt','cancelled'],['entfallen','cancelled'],
+      ['verlegt','relocated'],['Ersatzverkehr','replacement service'],['SEV','rail replacement service'],
+      ['Nächten','nights'],['nachts','at night'],['Wegen','Due to'],['wegen','due to'],['Störung','disruption']];
+    function tr(s) { var o = String(s || ''); if (lang !== 'en') return o;
+      GLOSSARY.forEach(function (p) { o = o.split(p[0]).join(p[1]); }); return o; }
+
+    function d(iso) { var t = Date.parse(iso || ''); return isFinite(t) ? new Date(t) : null; }
+    function day(iso) { var x = d(iso); if (!x) return '';
+      var p = n => String(n).padStart(2, '0');
+      return (lang === 'en' ? x.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                            : x.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })); }
+    function when(n) {
+      var a = day(n.validFrom), b = day(n.validUntil);
+      if (a && b) return a + ' – ' + b; if (a) return T[lang].from + ' ' + a; if (b) return T[lang].until + ' ' + b; return '';
+    }
+    function colour(line) { var l = String(line || '').trim();
+      if (/^\d/.test(l)) return '#ff6b6b';
+      if (/^(S\d|SEV|RE|RB|IC|ICE|HLB)/i.test(l)) return '#c77dff';
+      return '#2ec4b6'; }
+
+    function render() {
+      var t = T[lang];
+      document.documentElement.setAttribute('lang', lang);
+      document.getElementById('title').textContent = t.title;
+      document.getElementById('lead').textContent = t.lead + ' ' + items.length + ' ×';
+      document.getElementById('foot').innerHTML = '';
+      var list = document.getElementById('list');
+      list.textContent = '';
+      items.slice().sort(function (a, b) { return (Date.parse(b.validFrom) || 0) - (Date.parse(a.validFrom) || 0); })
+        .forEach(function (n) {
+          var li = document.createElement('li');
+          var head = document.createElement('div'); head.className = 'head';
+          var chip = document.createElement('span'); chip.className = 'chip'; chip.textContent = n.line || '?';
+          chip.style.background = colour(n.line);
+          var title = document.createElement('span'); title.className = 'where';
+          var parts = String(n.headline || '').split(':');
+          title.textContent = tr((parts.length > 1 ? parts[0] : '').trim());
+          var kind = document.createElement('span'); kind.className = 'kind';
+          kind.textContent = tr(parts.length > 1 ? parts.slice(1).join(':').trim() : String(n.headline || ''));
+          head.appendChild(chip); if (title.textContent) head.appendChild(title); head.appendChild(kind);
+          var w = document.createElement('div'); w.className = 'when'; w.textContent = when(n);
+          var body = document.createElement('p'); body.className = 'text'; body.textContent = tr(n.text || '');
+          body.hidden = !n.text || n.text === n.headline;
+          var links = document.createElement('div'); links.className = 'links';
+          var a = document.createElement('a'); a.href = RMV; a.target = '_blank'; a.rel = 'noopener noreferrer';
+          a.textContent = t.open + ' \u2197';
+          links.appendChild(a);
+          li.appendChild(head); li.appendChild(w); li.appendChild(body); li.appendChild(links);
+          list.appendChild(li);
+        });
+      document.getElementById('empty').hidden = items.length > 0;
+      document.getElementById('empty').textContent = t.none;
+      var f = document.getElementById('foot');
+      var src = document.createElement('p');
+      src.textContent = document.getElementById('empty').textContent === t.none && !items.length ? t.none : t.lead;
+      var line2 = document.createElement('p'); line2.id = 'src'; line2.textContent = t.loading;
+      var all = document.createElement('p');
+      var al = document.createElement('a'); al.href = RMV; al.target = '_blank'; al.rel = 'noopener noreferrer'; al.textContent = t.all + ' \u2197';
+      var back = document.createElement('a'); back.href = '../'; back.textContent = t.back;
+      all.appendChild(al); all.appendChild(document.createTextNode(' · ')); all.appendChild(back);
+      f.appendChild(line2); f.appendChild(all);
+    }
+
+    function setLang(next) {
+      lang = next === 'de' ? 'de' : 'en';
+      document.getElementById('de').setAttribute('aria-pressed', String(lang === 'de'));
+      document.getElementById('en').setAttribute('aria-pressed', String(lang === 'en'));
+      try { localStorage.setItem('darmstadtmap.lang', lang); } catch (e) {}
+      render();
+    }
+    document.getElementById('de').onclick = function () { setLang('de'); };
+    document.getElementById('en').onclick = function () { setLang('en'); };
+    try { var saved = localStorage.getItem('darmstadtmap.lang'); if (saved) lang = saved; } catch (e) {}
+
+    fetch(API, { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (data) {
+        items = (data && data.notices) || [];
+        setLang(lang);
+        var s = document.getElementById('src');
+        if (s) s.textContent = data && data.source === 'website' ? T[lang].srcSite : T[lang].srcHafas;
+      })
+      .catch(function () {
+        setLang(lang);
+        var s = document.getElementById('src'); if (s) s.textContent = T[lang].srcFail;
+      });
+  })();
+</script>
+</body>
+</html>
