@@ -156,7 +156,14 @@
         .finally(function () { if (timer) clearTimeout(timer); });
     }
 
-    get('/notices/area').then(function (data) {
+    // Ein zweiter Versuch nach 20 s: startet der Proxy gerade neu, kam sonst nie eine Leiste.
+    function fetchArea(attempt) {
+      return get('/notices/area').catch(function (e) {
+        if (attempt < 1) return new Promise(function (r) { setTimeout(r, 20000); }).then(function () { return fetchArea(attempt + 1); });
+        throw e;
+      });
+    }
+    fetchArea(0).then(function (data) {
       var cutoff = Date.now() - 30 * 86400000;
       items = ((data && data.notices) || []).filter(function (n) {
         var t = Date.parse(n.validFrom || '');

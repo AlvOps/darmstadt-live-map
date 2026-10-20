@@ -193,6 +193,135 @@ const AREA_STOPS = ['3004734', '3004736', '3004720', '3011226', '3011320'];
 const AREA_TTL_MS = 15 * 60 * 1000;
 const areaTable = { at: 0, ids: [] };
 
+
+// ---------------------------------------------------------------------------
+// Notfall-Quelle: die Verkehrsmeldungs-Seite von rmv.de.
+// Wird NUR benutzt, wenn der lizenzierte HAFAS-Dienst nicht antwortet. Sie ist
+// kein zugesicherter Endpunkt (cHash/type koennen sich aendern) und wird deshalb
+// selten und gecacht abgefragt. Ausgabe hat exakt die Form von slimNotices,
+// damit die Leiste nichts anderes lernen muss.
+// ---------------------------------------------------------------------------
+const SITE_PAGE = 'https://www.rmv.de/c/de/fahrplan/verbindungssuche-hinweise/verkehrsmeldungen';
+const AREA_REGION = Number(process.env.RMV_AREA_REGION || 1);   // 1 = Darmstadt-Dieburg/Darmstadt
+const SITE_CACHE_MS = 5 * 60 * 1000;
+let siteFetches = [];
+
+function fetchText(url, headers) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: Object.assign({ 'User-Agent': 'darmstadt-live-map/1.0 (+https://darmstadtmap.com/)' }, headers || {}) }, res => {
+      if (res.statusCode !== 200) { res.resume(); reject(new Error('HTTP ' + res.statusCode)); return; }
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', c => { body += c; });
+      res.on('end', () => resolve(body));
+    });
+    req.setTimeout(15000, () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+  });
+}
+
+// "20.10.2026 04:00" (CEST/CET) -> ISO. Ende ohne Datum erbt das Startdatum.
+function siteTime(value) {
+  // "20.10.2026 04:00 - 10:30" / "11.10.2026 20:00 - 26.10.2026 05:00"
+  const m = /(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})/.exec(value || '');
+  if (!m) return { from: '', until: '' };
+  const stamp = (d, mo, y, h, mi) => {
+    const nums = [d, mo, y, h, mi].map(Number);
+    if (nums.some(n => !isFinite(n)) || nums[2] < 2000 || nums[1] < 1 || nums[1] > 12 || nums[0] < 1 || nums[0] > 31) return '';
+    const offset = (nums[1] >= 4 && nums[1] <= 9) ? 2 : 1;      // grob CEST/CET
+    return new Date(Date.UTC(nums[2], nums[1] - 1, nums[0], nums[3] - offset, nums[4])).toISOString();
+  };
+  const from = stamp(m[1], m[2], m[3], m[4], m[5]);
+  const rest = /-\s*(?:(\d{1,2})\.(\d{2})\.(\d{4})\s*)?(\d{1,2}):(\d{2})/.exec(value || '');
+  let until = '';
+  if (rest) {
+    const day = rest[1] || m[1], mon = rest[2] || m[2], yr = rest[3] || m[3];
+    until = stamp(day.padStart ? day.padStart(2, '0') : day, mon, yr, rest[4], rest[5]);
+    if (until && from && Date.parse(until) <= Date.parse(from)) {
+      const t = new Date(Date.parse(until) + 86400000);          // nur Uhrzeit -> naechster Tag
+      until = t.toISOString();
+    }
+  }
+  return { from, until };
+}
+
+function siteNotices(html, regionId, lineNames) {
+  const blocks = String(html).split(/(?=<div class="message js-message)/).filter(b => b.indexOf('js-message') >= 0);
+  const wanted = new Set((lineNames || []).map(n => String(n).trim().toUpperCase()).filter(Boolean));
+  const out = [];
+  for (const block of blocks) {
+    const regions = (/data-regions="([^"]*)"/.exec(block) || [, ''])[1].split(',').map(x => x.trim());
+    if (regionId && regions.indexOf(String(regionId)) < 0) continue;
+    const pick = cls => {
+      const m = new RegExp('class="' + cls + '"[^>]*>([\\s\\S]*?)<\\/', '').exec(block);
+      return m ? stripHtml(textValue(m[1])) : '';
+    };
+    // Aufbau der Bloecke (gemessen): message__title = Ort, message__subtitle = "Busse 45, 46 - Baustellenfahrplan",
+    // data-lines = numerische Linien-Ids der Seite, data-begin/-end = YYYYMMDD.
+    const place = pick('message__title');
+    const subtitle = pick('message__subtitle');
+    const kind = pick('message__type');
+    const info = pick('message__info');
+    const when = pick('message__time');
+    // Die Bloecke sind nicht einheitlich: mal traegt der Untertitel die Linien ("Busse 45, 46 - ..."),
+    // mal der Titel direkt ("S8, S9"), mal nur die Meta-Zeile. Der Reihe nach probieren.
+    const lineFrom = value => {
+      const head = String(value || '').split(/[-–:]/)[0];
+      const tokens = (head.match(/[A-Z]{1,3}\s?\d{1,3}[A-Z]?|\b\d{1,3}\b/g) || []).map(x => x.replace(/\s+/g, ''));
+      return tokens[0] || '';
+    };
+    const line = lineFrom(subtitle) || lineFrom(place) || lineFrom(pick('message__meta')) || '';
+    if (wanted.size && line && !wanted.has(line.toUpperCase())) continue;
+    let t = { from: '', until: '' };
+    try { t = siteTime(when); } catch (_) { t = { from: '', until: '' }; }
+    const begin = (/data-begin="(\d{4})(\d{2})(\d{2})"/.exec(block) || []);
+    const end = (/data-end="(\d{4})(\d{2})(\d{2})"/.exec(block) || []);
+    const ymd = m => m ? new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))).toISOString() : '';
+    if (!t.from && begin.length) t.from = ymd(begin);
+    if (!t.until && end.length) t.until = ymd(end);
+    const headline = (place ? place + ': ' : '') + (subtitle || kind);
+    out.push({
+      id: 'site:' + ((/data-id="([^"]*)"/.exec(block) || [, ''])[1]),
+      line,
+      mode: '',
+      headline,
+      text: info || subtitle,
+      validFrom: t.from,
+      validUntil: t.until,
+      lineIds: (/(data-lines)="([^"]*)"/.exec(block) || [, '', ''])[2].split(',').filter(Boolean).map(x => 'site:' + x),
+      source: 'website',
+    });
+  }
+  const unique = new Map();
+  for (const item of out) if (!unique.has(item.id)) unique.set(item.id, item);
+  return Array.from(unique.values()).sort((a, b) => (Date.parse(b.validFrom) || 0) - (Date.parse(a.validFrom) || 0));
+}
+
+async function siteAreaNotices(regionId, lineNames) {
+  const now = Date.now();
+  siteFetches = siteFetches.filter(t => now - t < 3600000);
+  if (siteFetches.length >= 20) throw new Error('site fallback rate limited');
+  const page = await fetchText(SITE_PAGE);
+  const ajax = (/data-ajax-url="([^"]+)"/.exec(page) || [, ''])[1];
+  if (!ajax) throw new Error('site fallback: no ajax url');
+  const url = ajax.startsWith('http') ? ajax : 'https://www.rmv.de' + ajax.replace(/&amp;/g, '&');
+  const payload = await fetchText(url, { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json, text/javascript, */*; q=0.01' });
+  siteFetches.push(now);
+  const data = JSON.parse(payload);
+  const notices = siteNotices(data.messages || '', regionId, lineNames);
+  return { notices, builtAt: new Date().toISOString(), source: 'website', region: regionId };
+}
+
+function areaLineNames(ids) {
+  const rows = (areaTable && areaTable.rows) || [];
+  const names = [];
+  for (const row of rows) {
+    const short = String(row.name || row.line || '').trim();
+    if (short && names.indexOf(short) < 0) names.push(short);
+  }
+  return names;
+}
+
 async function areaLineIds(key) {
   if (areaTable.ids.length && Date.now() - areaTable.at < AREA_TTL_MS) return areaTable.ids;
   const ids = new Set(areaTable.ids);
@@ -232,13 +361,42 @@ function createServer(key, options = {}) {
     if (req.method !== 'GET') { send(res, 405, { error: 'method not allowed' }); return; }
     if (url.pathname === '/notices/area') {
       areaLineIds(key).then(ids => {
-        if (!ids.length) { send(res, 502, { error: 'no line ids available' }); return; }
+        // Ohne HAFAS gibt es auch keine Linien-IDs - dann direkt auf die Website-Quelle,
+        // gefiltert allein ueber die Region (1 = Darmstadt-Dieburg/Darmstadt).
+        if (!ids.length) {
+          const cachedSite0 = serverCache.get('area-site');
+          if (cachedSite0 && Date.now() - cachedSite0.at < SITE_CACHE_MS) {
+            send(res, 200, cachedSite0.value); return;
+          }
+          return siteAreaNotices(AREA_REGION, [])
+            .then(fallback => {
+              serverCache.set('area-site', { at: Date.now(), value: fallback });
+              send(res, 200, fallback);
+            })
+            .catch(err => send(res, 502, { error: 'no line ids available', fallback: String((err && err.message) || err) }));
+        }
         return requestUpstream(key, 'himsearch', { lineids: ids.join(',') })
           .then(data => {
             const result = slimNotices(data, ids);
             result.lineIds = ids.length;
             result.builtAt = new Date(areaTable.at).toISOString();
+            result.source = 'hafas';
             send(res, 200, result);
+          })
+          .catch(async err => {
+            // HAFAS antwortet nicht: Notfall-Quelle Website, gleiche Form.
+            const cachedSite = serverCache.get('area-site');
+            if (cachedSite && Date.now() - cachedSite.at < SITE_CACHE_MS) {
+              send(res, 200, Object.assign({}, cachedSite.value, { hafasError: String((err && err.message) || err) }));
+              return;
+            }
+            try {
+              const fallback = await siteAreaNotices(AREA_REGION, areaLineNames(ids));
+              serverCache.set('area-site', { at: Date.now(), value: fallback });
+              send(res, 200, Object.assign({}, fallback, { lineIds: ids.length, hafasError: String((err && err.message) || err) }));
+            } catch (siteErr) {
+              send(res, 502, { error: String((err && err.message) || err), fallback: String((siteErr && siteErr.message) || siteErr) });
+            }
           });
       }).catch(err => send(res, 502, { error: String((err && err.message) || err) }));
       return;
