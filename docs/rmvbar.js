@@ -1,8 +1,6 @@
 // RMV-Meldungsleiste (HAFAS) fuer die Hauptkarte.
-// Laedt einmal beim Seitenaufbau ueber den eigenen Proxy (zwei Abrufe), kein Polling.
-// Ohne erreichbaren Proxy bleibt die Leiste aus - die Karte verhaelt sich dann wie vorher.
-  // RMV-Meldungsleiste (HAFAS): laedt einmal beim Seitenaufbau, zwei Abrufe ueber den eigenen Proxy.
-  // Ohne erreichbaren Proxy bleibt alles aus - die Karte verhaelt sich dann genau wie vorher.
+// Ein Abruf beim Seitenaufbau ueber den eigenen Proxy, kein Polling. Antwortet die Quelle nicht,
+// bleibt die Leiste nicht einfach weg, sondern sagt sichtbar, dass die Live-Daten fehlen.
   (function () {
     var BASE = 'https://talos.taild11d3b.ts.net';
     // Ein Abruf genuegt: der Proxy haelt die Linien-IDs des Gebiets und fragt die Meldungen.
@@ -24,6 +22,16 @@
       ['Ersatzverkehr', 'replacement service'], ['SEV', 'rail replacement service'],
       ['Rathaus', 'town hall'], ['Hauptbahnhof', 'main station'], ['Bahnhof', 'station']
     ];
+
+    // Wenn die Quelle nicht antwortet: Klartext statt stiller leerer Karte.
+    var OFFLINE = {
+      de: { head: 'Hinweis: Live-Daten (RMV/HEAG) sind derzeit nicht verfügbar.',
+            sub: 'Die Karte zeigt vorübergehend keine Fahrzeuge. Bitte später erneut versuchen.',
+            link: 'RMV-Verkehrsmeldungen', meta: 'Quelle antwortet nicht' },
+      en: { head: 'Notice: live data (RMV/HEAG) is currently unavailable.',
+            sub: 'The map temporarily shows no vehicles. Please try again later.',
+            link: 'RMV service notices', meta: 'source not responding' }
+    };
 
     function pageLang() {
       var l = String((document.documentElement.getAttribute('lang') || 'de')).slice(0, 2).toLowerCase();
@@ -88,6 +96,37 @@
       caret.textContent = expanded ? '\u2304' : '\u2303';
     }
 
+    // Ausfallzustand: Leiste sichtbar, eine Zeile mit Hinweis + Link, standardmaessig aufgeklappt.
+    function showUnavailable(reason) {
+      var m = OFFLINE[pageLang()] || OFFLINE.de;
+      items = [];
+      list.textContent = '';
+      var li = document.createElement('li');
+      var body = document.createElement('div'); body.className = 'body';
+      var strong = document.createElement('div');
+      strong.className = 'rmv-text';
+      strong.style.webkitLineClamp = 'none';
+      strong.textContent = m.head;
+      var sub = document.createElement('div');
+      sub.className = 'when';
+      sub.style.webkitLineClamp = 'none';
+      sub.textContent = m.sub;
+      var a = document.createElement('a');
+      a.className = 'rmv-text'; a.href = RMV_URL; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.style.marginTop = '3px'; a.style.display = 'inline-block';
+      a.textContent = m.link + ' \u2197';
+      body.appendChild(strong); body.appendChild(sub); body.appendChild(a);
+      li.appendChild(body);
+      list.appendChild(li);
+      countEl.textContent = m.head.replace(/^(Hinweis|Notice):\s*/, '');
+      bar.querySelector('#rmvbar-meta').textContent = m.meta;
+      head.title = String(reason || '');
+      expanded = true; list.hidden = false;
+      head.setAttribute('aria-expanded', 'true');
+      caret.textContent = '\u2304';
+      document.body.classList.add('rmv-on');
+    }
+
     head.onclick = function () {
       expanded = !expanded;
       list.hidden = !expanded;
@@ -114,13 +153,18 @@
       if (!items.length) return;
       document.body.classList.add('rmv-on');
       render();
-    }).catch(function () { /* Proxy nicht erreichbar: Leiste bleibt aus */ });
+    }).catch(function (e) { showUnavailable((e && e.message) || 'unreachable'); });
 
     // Sprache folgt dem EN/DE-Knopf der Karte.
     setInterval(function () {
       var next = pageLang();
       if (lang === null) { lang = next; return; }
-      if (next !== lang) { lang = next; render(); }
+      if (next !== lang) {
+        lang = next;
+        if (head.getAttribute('aria-expanded') === 'true' && !items.length && list.children.length) {
+          showUnavailable(head.title);
+        } else { render(); }
+      }
     }, 1200);
   })();
   
