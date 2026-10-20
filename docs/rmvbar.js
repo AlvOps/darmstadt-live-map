@@ -24,13 +24,17 @@
     ];
 
     // Wenn die Quelle nicht antwortet: Klartext statt stiller leerer Karte.
+    // Nur die Meldungen fehlen - nicht die Karte. Das muss dastehen, sonst wirkt die Karte unzuverlaessig.
     var OFFLINE = {
-      de: { head: 'Hinweis: Live-Daten (RMV/HEAG) sind derzeit nicht verfügbar.',
-            sub: 'Die Karte zeigt vorübergehend keine Fahrzeuge. Bitte später erneut versuchen.',
-            link: 'RMV-Verkehrsmeldungen', meta: 'Quelle antwortet nicht' },
-      en: { head: 'Notice: live data (RMV/HEAG) is currently unavailable.',
-            sub: 'The map temporarily shows no vehicles. Please try again later.',
-            link: 'RMV service notices', meta: 'source not responding' }
+      // short = die eine Zeile in der zugeklappten Leiste, head = ausgeschrieben in der geoeffneten Zeile.
+      de: { short: 'Verspätungs-/Störungsmeldungen nicht verfügbar',
+            head: 'Verspätungs- und Störungsmeldungen sind derzeit nicht verfügbar.',
+            sub: 'Die Fahrzeugpositionen auf der Karte sind davon nicht betroffen.',
+            link: 'Meldungen auf rmv.de ansehen', meta: 'RMV HAFAS antwortet nicht' },
+      en: { short: 'Delay/disruption notices unavailable',
+            head: 'Delay and disruption notices are currently unavailable.',
+            sub: 'Vehicle positions on the map are unaffected.',
+            link: 'View notices on rmv.de', meta: 'RMV HAFAS not responding' }
     };
 
     function pageLang() {
@@ -115,19 +119,23 @@
       strong.className = 'rmv-text';
       strong.style.webkitLineClamp = 'none';
       strong.textContent = m.head;
+      var sub = document.createElement('div');
+      sub.className = 'when';
+      sub.style.webkitLineClamp = 'none';
+      sub.textContent = m.sub;
       var a = document.createElement('a');
       a.className = 'rmv-text'; a.href = RMV_URL; a.target = '_blank'; a.rel = 'noopener noreferrer';
       a.style.marginTop = '3px'; a.style.display = 'inline-block';
       a.textContent = m.link + ' \u2197';
-      body.appendChild(strong); body.appendChild(a);
+      body.appendChild(strong); body.appendChild(sub); body.appendChild(a);
       li.appendChild(body);
       list.appendChild(li);
-      countEl.textContent = m.head.replace(/^(Hinweis|Notice):\s*/, '');
+      countEl.textContent = m.short;
       bar.querySelector('#rmvbar-meta').textContent = m.meta;
       head.title = m.head + ' ' + m.sub + ' (' + String(reason || '') + ')';
-      expanded = true; list.hidden = false;
-      head.setAttribute('aria-expanded', 'true');
-      caret.textContent = '\u2304';
+      expanded = false; list.hidden = true;
+      head.setAttribute('aria-expanded', 'false');
+      caret.textContent = '\u2303';
       document.body.classList.add('rmv-on');
       syncHeight();
     }
