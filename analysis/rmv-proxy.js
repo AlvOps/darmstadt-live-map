@@ -143,10 +143,26 @@ function slimNotices(data, lineIds) {
       };
     });
   }).filter(item => item.headline || item.text);
+  // Eine Meldung betrifft oft hunderte Linien; vorher entstand pro Linie eine eigene Zeile
+  // (1058 Zeilen aus 16 Meldungen). Jetzt: eine Zeile pro Meldung, alle Linien in `lines`.
   const unique = new Map();
   for (const item of notices) {
-    const key = [item.id, item.line, item.headline, item.text, item.validFrom].join('|');
-    if (!unique.has(key)) unique.set(key, item);
+    const key = item.id || [item.headline, item.text, item.validFrom].join('|').slice(0, 200);
+    const seen = unique.get(key);
+    if (!seen) {
+      unique.set(key, Object.assign({}, item, {
+        lines: item.line ? [item.line] : [],
+        lineCount: item.line ? 1 : 0,
+      }));
+      continue;
+    }
+    if (item.line && seen.lines.indexOf(item.line) < 0) seen.lines.push(item.line);
+    for (const id of item.lineIds || []) if (seen.lineIds.indexOf(id) < 0) seen.lineIds.push(id);
+    if (!seen.headline && item.headline) seen.headline = item.headline;
+    if (!seen.text && item.text) seen.text = item.text;
+    if (!seen.validFrom && item.validFrom) seen.validFrom = item.validFrom;
+    if (!seen.validUntil && item.validUntil) seen.validUntil = item.validUntil;
+    seen.lineCount = seen.lines.length;
   }
   return { notices: Array.from(unique.values()).sort((a, b) => Date.parse(b.validFrom || 0) - Date.parse(a.validFrom || 0)) };
 }

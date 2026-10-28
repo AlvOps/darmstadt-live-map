@@ -118,14 +118,25 @@
         .forEach(function (n) {
           var li = document.createElement('li');
           var head = document.createElement('div'); head.className = 'head';
-          var chip = document.createElement('span'); chip.className = 'chip'; chip.textContent = n.line || '?';
-          chip.style.background = colour(n.line);
+          var lines = (n.lines && n.lines.length ? n.lines : [n.line || '?']);
+          var shown = lines.slice(0, 6);
+          shown.forEach(function (name) {
+            var chip = document.createElement('span'); chip.className = 'chip'; chip.textContent = name;
+            chip.style.background = colour(name); head.appendChild(chip);
+          });
+          if (lines.length > shown.length) {
+            var more = document.createElement('span'); more.className = 'chip';
+            more.style.background = 'rgba(255,255,255,.14)'; more.style.color = 'var(--fg)';
+            more.textContent = '+' + (lines.length - shown.length);
+            more.title = lines.slice(shown.length).join(', ');
+            head.appendChild(more);
+          }
           var title = document.createElement('span'); title.className = 'where';
           var parts = String(n.headline || '').split(':');
           title.textContent = tr((parts.length > 1 ? parts[0] : '').trim());
           var kind = document.createElement('span'); kind.className = 'kind';
           kind.textContent = tr(parts.length > 1 ? parts.slice(1).join(':').trim() : String(n.headline || ''));
-          head.appendChild(chip); if (title.textContent) head.appendChild(title); head.appendChild(kind);
+          if (title.textContent) head.appendChild(title); head.appendChild(kind);
           var w = document.createElement('div'); w.className = 'when'; w.textContent = when(n);
           var body = document.createElement('p'); body.className = 'text'; body.textContent = tr(n.text || '');
           body.hidden = !n.text || n.text === n.headline;

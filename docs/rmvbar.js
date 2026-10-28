@@ -100,7 +100,10 @@
         a.className = 'rmv-text'; a.href = LIST_URL;
         var original = n.headline || n.text || '';
         a.textContent = tr(original) + ' \u2197';
-        a.title = original + ' \u2014 ' + (en ? 'open RMV notices' : 'RMV-Meldungen oeffnen');
+        var extra = (n.lines && n.lines.length > 1)
+          ? (en ? ' (' + n.lines.length + ' lines affected)' : ' (' + n.lines.length + ' Linien betroffen)')
+          : '';
+        a.title = original + extra + ' \u2014 ' + (en ? 'open the notices list' : 'Meldungsliste oeffnen');
         var when = document.createElement('div'); when.className = 'when'; when.textContent = rel(n.validFrom);
         body.appendChild(a); body.appendChild(when);
         li.appendChild(chip); li.appendChild(body);
