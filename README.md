@@ -348,3 +348,21 @@ opt-in smoke that is not part of the checks above; it fails on any uncaught exce
 cd docs && python3 -m http.server 8099 &       # Pages-style static server
 node analysis/smoke_browser.js http://127.0.0.1:8099/    # CHROME=/path/to/chrome to override
 ```
+
+## Operations and exposure (2026-10-28)
+
+- **Public surface:** `darmstadtmap.com` (GitHub Pages) for the map and `/meldungen/`, plus
+  `api.darmstadtmap.com` for the RMV proxy. Both go through Cloudflare; the proxy origin is
+  reachable only through its own tunnel (`darmstadtmap-api`). **Tailscale Funnel on 443 is off and
+  should stay off** — the only other route (8443 → agent UI) is tailnet-only.
+- **Proxy service:** `deploy/darmstadtmap-rmv-proxy.service`, installed with
+  `sudo systemctl link <path>` + `systemctl enable --now darmstadtmap-rmv-proxy`. `Restart=always`,
+  logs at `~/.local/state/rmv-proxy.log`. Do not bring back the old cron keepalive.
+- **Abuse control:** per-IP bucket, 40 cache-miss requests per 10 minutes, in front of the shared
+  RMV quota (600/hour, 5 000/day). CORS is not a security boundary — it only keeps browsers honest.
+- **Sources:** HAFAS endpoints for notices and boards; when HAFAS fails, the proxy maps the
+  operator's public notices page to the same shape and filters to region 1
+  (Darmstadt-Dieburg/Darmstadt). Responses carry `source: hafas | website`.
+- **Deploy loop:** one cache token across `docs/*.js` and `docs/*.html`, five suites green, push to
+  `main` + the private mirror, then poll `https://darmstadtmap.com/?cb=$RANDOM` for the token
+  (Pages caches for 600 s).
