@@ -1,0 +1,21 @@
+[Unit]
+Description=Darmstadt map RMV/HAFAS proxy (api.darmstadtmap.com origin)
+Documentation=https://github.com/AlvOps/darmstadt-live-map
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=talos
+Group=talos
+WorkingDirectory=/home/talos/workspace/darmstadt-live-map
+Environment=RMV_PROXY_PORT=8790
+Environment=NODE_ENV=production
+ExecStart=/home/talos/.local/bin/node analysis/rmv-proxy.js
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/talos/.local/state/rmv-proxy.log
+StandardError=append:/home/talos/.local/state/rmv-proxy.log
+
+[Install]
+WantedBy=multi-user.target
