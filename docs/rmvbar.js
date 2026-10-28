@@ -2,7 +2,7 @@
 // Ein Abruf beim Seitenaufbau ueber den eigenen Proxy, kein Polling. Antwortet die Quelle nicht,
 // bleibt die Leiste nicht einfach weg, sondern sagt sichtbar, dass die Live-Daten fehlen.
   (function () {
-    var BASE = 'https://talos.taild11d3b.ts.net';
+    var BASE = 'https://api.darmstadtmap.com';
     // Ein Abruf genuegt: der Proxy haelt die Linien-IDs des Gebiets und fragt die Meldungen.
     // Der Klick fuehrt auf die eigene, auf Darmstadt-Dieburg/Darmstadt gefilterte Liste;
     // von dort geht es je Meldung weiter zu rmv.de.

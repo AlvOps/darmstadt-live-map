@@ -175,6 +175,36 @@ function readAccessId() {
   return key;
 }
 
+
+// Per-IP-Deckel VOR dem gemeinsamen RMV-Kontingent. Ohne das kann jeder Fremde mit
+// durchwechselnden stop-IDs das Stundenkontingent (600) in Minuten verbrennen und
+// damit unsere eigenen Abfragen mit 429 abschiessen. CORS hilft dagegen nicht: curl
+// ignoriert es. Bewusst simpel gehalten (Token-Bucket pro IP, gleitendes Fenster).
+const IP_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+const IP_LIMIT_MAX = 40;                 // Anfragen pro IP je 10 Minuten (Cache-Misses zaehlen)
+const ipLog = new Map();                 // ip -> [timestamps]
+
+function clientIp(req) {
+  const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  const ip = fwd || req.socket.remoteAddress || 'unknown';
+  return ip.replace(/^::ffff:/, '');
+}
+
+function ipAllowed(req, now) {
+  const ip = clientIp(req);
+  let hits = ipLog.get(ip);
+  if (!hits) { hits = []; ipLog.set(ip, hits); }
+  while (hits.length && hits[0] < now - IP_LIMIT_WINDOW_MS) hits.shift();
+  if (hits.length >= IP_LIMIT_MAX) return { ok: false, ip, used: hits.length };
+  hits.push(now);
+  if (ipLog.size > 5000) {                 // Hausputz, damit die Map nicht waechst
+    for (const [key, list] of ipLog) {
+      if (!list.length || list[list.length - 1] < now - IP_LIMIT_WINDOW_MS) ipLog.delete(key);
+    }
+  }
+  return { ok: true, ip, used: hits.length };
+}
+
 function usage(now = Date.now(), log = calls) {
   while (log.length && log[0] < now - 86400000) log.shift();
   const hour = log.filter(t => t > now - 3600000).length;
@@ -463,6 +493,12 @@ function createServer(key, options = {}) {
       (endpoint === 'location.name' ? `&lat=${url.searchParams.get('lat') || ''}&lon=${url.searchParams.get('lon') || ''}` : '');
     const cached = serverCache.get(cacheKey);
     if (cached && Date.now() - cached.at < CACHE_MS) { send(res, 200, cached.value); return; }
+    const gate = ipAllowed(req, Date.now());
+    if (!gate.ok) {
+      console.warn(`rate limit: ${gate.ip} hit ${gate.used}/${IP_LIMIT_MAX} in ${IP_LIMIT_WINDOW_MS / 60000} min`);
+      send(res, 429, { error: 'too many requests from this address' });
+      return;
+    }
     const u = usage(Date.now(), callLog);
     if (u.hour >= MAX_HOUR || u.day >= MAX_DAY) { send(res, 429, { error: 'RMV request limit reached' }); return; }
     callLog.push(Date.now());
@@ -485,7 +521,7 @@ function createServer(key, options = {}) {
 function start() {
   const key = readAccessId();
   const server = createServer(key);
-  server.listen(PORT, HOST, () => console.log(`RMV development proxy listening on http://${HOST}:${PORT}`));
+  server.listen(PORT, HOST, () => console.log(`RMV proxy listening on http://${HOST}:${PORT}`));
   return server;
 }
 
